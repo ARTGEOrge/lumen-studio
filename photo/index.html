@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Photo</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="l2a" color-interpolation-filters="sRGB"><feColorMatrix type="luminanceToAlpha"/></filter>
+  <defs>
+    <linearGradient id="gBlue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd0ff"/><stop offset=".5" stop-color="#3a8fe0"/><stop offset="1" stop-color="#1c5fb4"/></linearGradient>
+    <linearGradient id="gGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b8f28a"/><stop offset=".5" stop-color="#4cb82c"/><stop offset="1" stop-color="#2a7f14"/></linearGradient>
+    <linearGradient id="gRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9a8a"/><stop offset=".5" stop-color="#e0402c"/><stop offset="1" stop-color="#a81c10"/></linearGradient>
+    <linearGradient id="gPaper" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d8e4f0"/></linearGradient>
+    <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9a0"/><stop offset="1" stop-color="#e3a21a"/></linearGradient>
+  </defs>
+</svg>
+<div id="app">
+  <div id="titlebar">
+    <img id="appicon" src="icon.png" alt="">
+    <span id="wintitle">Lumen Photo</span>
+    <div id="caption">
+      <button data-c="min" title="Minimize"><svg viewBox="0 0 10 10"><rect x="1" y="6" width="8" height="2.2"/></svg></button><button data-c="max" title="Maximize"><svg viewBox="0 0 10 10"><path d="M1 1.5h8v7H1z M2.6 3.4v3.5h4.8V3.4z" fill-rule="evenodd"/></svg></button><button data-c="close" title="Close"><svg viewBox="0 0 10 10"><path d="M1.6 1.6 8.4 8.4M8.4 1.6 1.6 8.4"/></svg></button>
+    </div>
+  </div>
+  <div id="menubar"></div>
+  <div id="body">
+    <div id="toolbar">
+      <div id="tools"></div>
+      <div id="swatches"><div id="bgsw" class="sw" title="Background color"></div><div id="fgsw" class="sw" title="Foreground color"></div></div>
+      <div class="mini" id="swapc" title="Swap colors (X)">⇄ swap</div>
+      <div class="mini" id="resetc" title="Default colors (D)">◩ reset</div>
+      <input type="color" id="fgpick" style="position:absolute;opacity:0;pointer-events:none;width:0;height:0">
+      <input type="color" id="bgpick" style="position:absolute;opacity:0;pointer-events:none;width:0;height:0">
+    </div>
+    <div id="client">
+      <div id="options"></div>
+      <div id="main">
+        <div id="viewport">
+          <canvas id="view"></canvas><canvas id="overlay"></canvas>
+          <div id="cmpbar" hidden></div>
+          <div id="drophint">Drop images, PSD or RAW files to open / place as layers</div>
+        </div>
+        <div id="panels">
+          <div class="ph"><span class="phi" style="background:linear-gradient(135deg,#ff5f5f,#ffd23f 35%,#3fd06a 65%,#3f8cff)"></span>Color</div>
+          <div id="colorpanel">
+            <div class="crow"><input type="color" id="fgin"><input type="text" id="fghex" style="width:80px" spellcheck="false"><span class="dim">Foreground</span></div>
+            <div id="palette"></div>
+          </div>
+          <div class="ph"><span class="phi" style="background:linear-gradient(#bfe3ff,#4a90d9)"></span>Layers</div>
+          <div id="layerctl">
+            <span>Blend</span><select id="blend"></select>
+            <span>Opacity</span><div style="display:flex;gap:6px;align-items:center"><input type="range" id="lopacity" min="0" max="100"><span id="lopv" class="dim" style="width:34px"></span></div>
+          </div>
+          <div id="target"></div>
+          <div id="layers"></div>
+          <div id="layerbtns">
+            <button id="lb-new" title="New layer"><svg viewBox="0 0 16 16"><path d="M3 1.5h6l3.5 3.5v9.5H3z" fill="url(#gPaper)" stroke="#5a7a9a"/><circle cx="11.5" cy="11.5" r="3.6" fill="url(#gGreen)" stroke="#2a6a14" stroke-width=".8"/><path d="M11.5 9.6v3.8M9.6 11.5h3.8" stroke="#fff" stroke-width="1.4"/></svg></button>
+            <button id="lb-adj" title="New adjustment layer"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="#fff" stroke="#1c4f8a"/><path d="M8 1.8a6.2 6.2 0 0 1 0 12.4z" fill="url(#gBlue)"/></svg></button>
+            <button id="lb-mask" title="Add layer mask (from selection if any)"><svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="#6d7d8d" stroke="#3a4a5a"/><circle cx="8" cy="8" r="3.4" fill="#fff"/></svg></button>
+            <button id="lb-dup" title="Duplicate layer"><svg viewBox="0 0 16 16"><path d="M5 4.5h8v10H5z" fill="url(#gPaper)" stroke="#5a7a9a"/><path d="M3 1.5h8v10H3z" fill="url(#gPaper)" stroke="#5a7a9a"/></svg></button>
+            <button id="lb-up" title="Move up"><svg viewBox="0 0 16 16"><path d="M8 2 14 9h-3.5v5h-5V9H2z" fill="url(#gBlue)" stroke="#174a85" stroke-linejoin="round"/></svg></button>
+            <button id="lb-down" title="Move down"><svg viewBox="0 0 16 16"><path d="M8 14 2 7h3.5V2h5v5H14z" fill="url(#gBlue)" stroke="#174a85" stroke-linejoin="round"/></svg></button>
+            <button id="lb-merge" title="Merge down"><svg viewBox="0 0 16 16"><path d="M8 11 3.5 6H6V1.5h4V6h2.5z" fill="url(#gGold)" stroke="#8a5a0a" stroke-linejoin="round"/><rect x="2" y="12.3" width="12" height="2.4" rx=".8" fill="url(#gBlue)" stroke="#174a85" stroke-width=".7"/></svg></button>
+            <button id="lb-del" title="Delete layer"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" fill="url(#gRed)" stroke="#8a1a10"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+          </div>
+          <div class="ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#e3a21a)"></span>History <span id="histinfo"></span></div>
+          <div id="history"></div>
+        </div>
+      </div>
+      <div id="status"><span id="st-zoom"></span><span id="st-size"></span><span id="st-pos"></span><span id="st-msg"></span></div>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+<input type="file" id="filein" accept="image/*,.lumen,.psd,.psb,.cr2,.cr3,.crw,.nef,.nrw,.arw,.srf,.sr2,.dng,.raf,.orf,.rw2,.rwl,.pef,.srw,.3fr,.erf,.kdc,.dcr,.mrw,.x3f,.iiq,.mos,.raw" style="display:none">
+<script src="vendor/ag-psd.js"></script>
+<script src="js/core.js"></script>
+<script src="js/filters.js"></script>
+<script src="js/paint.js"></script>
+<script src="js/tools.js"></script>
+<script src="js/ops.js"></script>
+<script src="js/io.js"></script>
+<script src="js/extras.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/vista.js"></script>
+</body>
+</html>

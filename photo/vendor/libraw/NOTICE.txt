@@ -1,0 +1,6 @@
+LibRaw (https://www.libraw.org) - Copyright (C) 2008-2024 LibRaw LLC
+Dual-licensed under the GNU LGPL 2.1 or the CDDL 1.0 (you may choose either).
+This folder contains LibRaw compiled to WebAssembly by the libraw-wasm project
+(https://www.npmjs.com/package/libraw-wasm, ISC license), shipped unmodified as
+separate files (libraw.js, libraw.wasm, worker.js, index.js). You may replace
+these files with your own build of LibRaw. Source: https://github.com/LibRaw/LibRaw

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Layout</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <linearGradient id="gBlue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd0ff"/><stop offset=".5" stop-color="#3a8fe0"/><stop offset="1" stop-color="#1c5fb4"/></linearGradient>
+  <linearGradient id="gGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b8f28a"/><stop offset=".5" stop-color="#4cb82c"/><stop offset="1" stop-color="#2a7f14"/></linearGradient>
+  <linearGradient id="gRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9a8a"/><stop offset=".5" stop-color="#e0402c"/><stop offset="1" stop-color="#a81c10"/></linearGradient>
+  <linearGradient id="gPaper" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d8e4f0"/></linearGradient>
+  <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9a0"/><stop offset="1" stop-color="#e3a21a"/></linearGradient>
+  <symbol id="i-new" viewBox="0 0 16 16"><path d="M3 1.5h6l3.5 3.5v9.5H3z" fill="url(#gPaper)" stroke="#5a7a9a"/><circle cx="11.5" cy="11.5" r="3.6" fill="url(#gGreen)" stroke="#2a6a14" stroke-width=".8"/><path d="M11.5 9.6v3.8M9.6 11.5h3.8" stroke="#fff" stroke-width="1.4"/></symbol>
+  <symbol id="i-dup" viewBox="0 0 16 16"><path d="M5 4.5h8v10H5z" fill="url(#gPaper)" stroke="#5a7a9a"/><path d="M3 1.5h8v10H3z" fill="url(#gPaper)" stroke="#5a7a9a"/></symbol>
+  <symbol id="i-up" viewBox="0 0 16 16"><path d="M8 2 14 9h-3.5v5h-5V9H2z" fill="url(#gBlue)" stroke="#174a85" stroke-linejoin="round"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="M8 14 2 7h3.5V2h5v5H14z" fill="url(#gBlue)" stroke="#174a85" stroke-linejoin="round"/></symbol>
+  <symbol id="i-del" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" fill="url(#gRed)" stroke="#8a1a10"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-master" viewBox="0 0 16 16"><path d="M2 2.5h12v11H2z" fill="url(#gPaper)" stroke="#5a7a9a"/><path d="M2 2.5h12v3H2z" fill="url(#gGold)" stroke="#8a5a0a" stroke-width=".7"/><text x="8" y="12.4" font-size="6.5" font-family="Segoe UI" font-weight="700" text-anchor="middle" fill="#1e395b">A</text></symbol>
+  <symbol id="i-edit" viewBox="0 0 16 16"><path d="M3 13l1-3.5 7.5-7.5 2.5 2.5L6.5 12z" fill="url(#gGold)" stroke="#8a5a0a"/><path d="M3 13l1-3.5 2.5 2.5z" fill="#5a3a0a"/></symbol>
+  <symbol id="i-to" viewBox="0 0 16 16"><rect x="2" y="9" width="12" height="5" rx="1" fill="url(#gBlue)" stroke="#174a85"/><path d="M8 1.5v6M5.5 5.2 8 7.7l2.5-2.5" fill="none" stroke="#2a7f14" stroke-width="1.6"/></symbol>
+</defs></svg>
+<div class="aero-app">
+  <div class="aero-body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd"></div>
+      <div class="aero-work" style="grid-template-columns:1fr 292px">
+        <div class="aero-stage" id="stage">
+          <div id="corner" title="Rulers"></div><canvas id="rh"></canvas><canvas id="rv"></canvas>
+          <div id="stagewrap"><canvas id="cv"></canvas><canvas id="ov" tabindex="-1"></canvas><textarea id="ta" spellcheck="false" autocomplete="off" aria-label="Text editor"></textarea>
+            <div id="welcome" class="aero-pill" hidden><span>New here? Draw a text frame with <b>T</b>, drop images onto a page, or</span><button class="aero-btn small" id="w-sample">Open Sample</button><button class="aero-btn small" id="w-new">New Document…</button></div></div>
+        </div>
+        <div class="aero-side">
+          <div class="aero-ph"><span class="phi" style="background:linear-gradient(#fff,#cfdcec)"></span>Pages<span class="right" id="pcount"></span></div>
+          <div class="aero-list" id="pages"></div>
+          <div class="aero-iconbar">
+            <button class="aero-iconbtn" id="pg-add" title="Add page after current"><svg><use href="#i-new"/></svg></button>
+            <button class="aero-iconbtn" id="pg-dup" title="Duplicate page"><svg><use href="#i-dup"/></svg></button>
+            <button class="aero-iconbtn" id="pg-up" title="Move page earlier"><svg><use href="#i-up"/></svg></button>
+            <button class="aero-iconbtn" id="pg-down" title="Move page later"><svg><use href="#i-down"/></svg></button>
+            <button class="aero-iconbtn" id="pg-master" title="New master page"><svg><use href="#i-master"/></svg></button>
+            <span style="flex:1"></span>
+            <button class="aero-iconbtn" id="pg-del" title="Delete page"><svg><use href="#i-del"/></svg></button>
+          </div>
+          <div class="aero-tabs" id="ptabs"><div class="aero-tab on" data-p="tp-props">Properties</div><div class="aero-tab" data-p="tp-layers">Layers</div><div class="aero-tab" data-p="tp-styles">Styles</div><div class="aero-tab" data-p="tp-hist">History</div></div>
+          <div class="tabpane" id="tp-props"><div id="props"></div></div>
+          <div class="tabpane" id="tp-layers" hidden>
+            <div class="aero-list grow" id="layers"></div>
+            <div class="aero-iconbar">
+              <button class="aero-iconbtn" id="ly-add" title="New layer"><svg><use href="#i-new"/></svg></button>
+              <button class="aero-iconbtn" id="ly-up" title="Move layer up"><svg><use href="#i-up"/></svg></button>
+              <button class="aero-iconbtn" id="ly-down" title="Move layer down"><svg><use href="#i-down"/></svg></button>
+              <button class="aero-iconbtn" id="ly-to" title="Move selected objects to the active layer"><svg><use href="#i-to"/></svg></button>
+              <span style="flex:1"></span>
+              <button class="aero-iconbtn" id="ly-del" title="Delete layer"><svg><use href="#i-del"/></svg></button>
+            </div>
+          </div>
+          <div class="tabpane" id="tp-styles" hidden>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#e3a21a)"></span>Paragraph Styles</div>
+            <div class="aero-list grow" id="pstyles"></div>
+            <div class="aero-iconbar">
+              <button class="aero-iconbtn" id="ps-new" title="New paragraph style from selection"><svg><use href="#i-new"/></svg></button>
+              <button class="aero-iconbtn" id="ps-edit" title="Edit style (or double-click)"><svg><use href="#i-edit"/></svg></button>
+              <button class="aero-iconbtn" id="ps-dup" title="Duplicate style"><svg><use href="#i-dup"/></svg></button>
+              <span style="flex:1"></span>
+              <button class="aero-iconbtn" id="ps-del" title="Delete style"><svg><use href="#i-del"/></svg></button>
+            </div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffb8b0,#d9534f)"></span>Character Styles</div>
+            <div class="aero-list grow" id="cstyles"></div>
+            <div class="aero-iconbar">
+              <button class="aero-iconbtn" id="cs-new" title="New character style"><svg><use href="#i-new"/></svg></button>
+              <button class="aero-iconbtn" id="cs-edit" title="Edit style (or double-click)"><svg><use href="#i-edit"/></svg></button>
+              <span style="flex:1"></span>
+              <button class="aero-iconbtn" id="cs-del" title="Delete style"><svg><use href="#i-del"/></svg></button>
+            </div>
+          </div>
+          <div class="tabpane" id="tp-hist" hidden><div class="aero-list grow" id="hist"></div></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st-zoom"></span><span id="st-page"></span><span id="st-pos"></span><span id="st-sel"></span><span id="st-over"></span></div>
+    </div>
+  </div>
+</div>
+<datalist id="sizes"><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option><option>14</option><option>18</option><option>24</option><option>30</option><option>36</option><option>48</option><option>60</option><option>72</option></datalist>
+<div id="printroot"></div>
+<script src="../kit/aero.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="vendor/fontkit.umd.min.js"></script>
+<script src="vendor/hyphen.js"></script>
+<script src="vendor/en-us.js"></script>
+<script src="js/fonts.js"></script>
+<script src="js/model.js"></script>
+<script src="js/layout.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/render.js"></script>
+<script src="js/pdf.js"></script>
+<script src="js/app.js"></script>
+<script src="js/tools.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/io.js"></script>
+<script src="js/sample.js"></script>
+</body></html>

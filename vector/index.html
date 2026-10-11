@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Vector</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd"></div>
+      <div class="aero-work" style="grid-template-columns:1fr 292px">
+        <div class="aero-stage" id="stage">
+          <canvas id="rulerH" class="ruler"></canvas><canvas id="rulerV" class="ruler"></canvas><div id="rulerCorner" title="Rulers (Ctrl+R)"></div>
+          <div id="view">
+            <canvas id="cvBoard"></canvas><canvas id="cvArt" data-paper-hidpi="on"></canvas><canvas id="cvOver"></canvas>
+            <textarea id="textEdit" spellcheck="false" hidden></textarea>
+          </div>
+          <div id="welcome" hidden></div>
+        </div>
+        <div class="aero-side" id="side">
+          <div class="aero-tabs" id="tabsTop"><div class="aero-tab on" data-t="props">Properties</div><div class="aero-tab" data-t="align">Align &amp; Pathfinder</div></div>
+          <div id="pProps" class="pane-scroll"></div>
+          <div id="pAlign" class="pane-scroll" hidden></div>
+          <div class="aero-ph"><span class="phi" style="background:linear-gradient(135deg,#ff5f5f,#ffd23f 35%,#3fd06a 65%,#3f8cff)"></span>Swatches<span class="right" id="swCount"></span></div>
+          <div id="swatches"></div>
+          <div class="aero-tabs" id="tabsBot"><div class="aero-tab on" data-t="layers">Layers</div><div class="aero-tab" data-t="boards">Artboards</div><div class="aero-tab" data-t="hist">History</div></div>
+          <div class="aero-list" id="layers"></div>
+          <div class="aero-list" id="boards" hidden></div>
+          <div class="aero-list" id="hist" hidden></div>
+          <div class="aero-iconbar" id="bar-layers"></div>
+          <div class="aero-iconbar" id="bar-boards" hidden></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="stZoom"></span><span id="stPos"></span><span id="stSel"></span><span id="stBoard"></span><span id="stMsg"></span></div>
+    </div>
+  </div>
+</div>
+<input type="color" id="colorPick" style="position:fixed;left:-100px;top:-100px;opacity:0">
+<script src="vendor/paper-core.min.js"></script>
+<script src="vendor/paperjs-offset.min.js"></script>
+<script src="vendor/opentype.min.js"></script>
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="vendor/svg2pdf.umd.min.js"></script>
+<script src="../kit/aero.js"></script>
+<script src="js/core.js"></script>
+<script src="js/text.js"></script>
+<script src="js/render.js"></script>
+<script src="js/tools.js"></script>
+<script src="js/ops.js"></script>
+<script src="js/panels.js"></script>
+<script src="js/io.js"></script>
+<script src="js/sample.js"></script>
+<script src="js/main.js"></script>
+</body></html>

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Paint</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="gBlue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd0ff"/><stop offset=".5" stop-color="#3a8fe0"/><stop offset="1" stop-color="#1c5fb4"/></linearGradient>
+    <linearGradient id="gGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b8f28a"/><stop offset=".5" stop-color="#4cb82c"/><stop offset="1" stop-color="#2a7f14"/></linearGradient>
+    <linearGradient id="gRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9a8a"/><stop offset=".5" stop-color="#e0402c"/><stop offset="1" stop-color="#a81c10"/></linearGradient>
+    <linearGradient id="gPaper" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d8e4f0"/></linearGradient>
+    <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9a0"/><stop offset="1" stop-color="#e3a21a"/></linearGradient>
+    <linearGradient id="gFolder" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe7a3"/><stop offset="1" stop-color="#e8b443"/></linearGradient>
+  </defs>
+</svg>
+<div class="aero-app">
+  <div class="aero-body" id="body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd"></div>
+      <div class="aero-work" id="work">
+        <div class="aero-side left" id="brushside">
+          <div class="aero-ph"><span class="phi" style="background:linear-gradient(135deg,#ffd27a,#e0602c)"></span>Brushes<span class="right" id="brushcount"></span></div>
+          <div class="brushcats" id="brushcats"></div>
+          <div class="aero-list" id="brushlist"></div>
+          <div class="aero-iconbar">
+            <button class="aero-iconbtn" id="bb-edit" title="Brush settings…"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="url(#gBlue)" stroke="#174a85"/><circle cx="8" cy="8" r="2" fill="#fff"/><path d="M8 .8v2.4M8 12.8v2.4M.8 8h2.4M12.8 8h2.4" stroke="#174a85" stroke-width="1.6"/></svg></button>
+            <button class="aero-iconbtn" id="bb-dup" title="Duplicate as custom brush"><svg viewBox="0 0 16 16"><path d="M5 4.5h8v10H5z" fill="url(#gPaper)" stroke="#5a7a9a"/><path d="M3 1.5h8v10H3z" fill="url(#gPaper)" stroke="#5a7a9a"/></svg></button>
+            <button class="aero-iconbtn" id="bb-reset" title="Reset brush to defaults"><svg viewBox="0 0 16 16"><path d="M3.5 8a4.5 4.5 0 1 0 1.4-3.3" fill="none" stroke="#2a7f14" stroke-width="2"/><path d="M2 2v4h4z" fill="#2a7f14"/></svg></button>
+            <button class="aero-iconbtn" id="bb-del" title="Delete custom brush"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" fill="url(#gRed)" stroke="#8a1a10"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+          </div>
+        </div>
+        <div class="aero-stage" id="stage">
+          <canvas id="glc"></canvas><canvas id="ovl"></canvas>
+          <div id="refpanel" class="refpanel" hidden><div class="rp-title"><span>Reference</span><button class="rp-x" title="Close">×</button></div><div class="rp-body"><canvas id="refcv"></canvas><div class="rp-empty">Drop an image here or use File › Place Reference Image…</div></div><div class="rp-foot"><button class="aero-btn small" id="rp-open">Open…</button><button class="aero-btn small" id="rp-fit">Fit</button><span class="dim">Click image to pick color</span></div></div>
+          <div class="aero-pill zenpill" id="zenpill" hidden><span>Zen mode</span><button class="aero-btn small" id="zenexit">Exit (Tab)</button></div>
+          <div class="aero-pill tfpill" id="tfpill" hidden></div>
+        </div>
+        <div class="aero-side" id="rightside">
+          <div class="aero-ph"><span class="phi" style="background:linear-gradient(135deg,#ff5f5f,#ffd23f 35%,#3fd06a 65%,#3f8cff)"></span>Color<span class="right"><span class="fgbg"><span id="fgsw" title="Foreground color"></span><span id="bgsw" title="Background color (X to swap)"></span></span></span></div>
+          <div class="colorpane" id="colorpane"></div>
+          <div class="aero-tabs" id="rtabs"><div class="aero-tab on" data-t="layers">Layers</div><div class="aero-tab" data-t="history">History</div></div>
+          <div id="layerpane" class="tabpane">
+            <div class="layerctl" id="layerctl"></div>
+            <div class="aero-list" id="layers"></div>
+            <div class="aero-iconbar" id="layerbtns"></div>
+          </div>
+          <div id="histpane" class="tabpane" hidden><div class="aero-list" id="history"></div></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st-zoom">100%</span><span id="st-size"></span><span id="st-pos"></span><span id="st-rec"></span><span id="st-msg">Ready</span></div>
+    </div>
+  </div>
+</div>
+<script src="vendor/fflate.js"></script>
+<script src="vendor/ag-psd.js"></script>
+<script src="vendor/mp4-muxer.js"></script>
+<script src="vendor/webm-muxer.js"></script>
+<script src="../kit/aero.js"></script>
+<script src="js/util.js"></script>
+<script src="js/doc.js"></script>
+<script src="js/brushes.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/wet.js"></script>
+<script src="js/wetgl.js"></script>
+<script src="js/gl.js"></script>
+<script src="js/view.js"></script>
+<script src="js/color.js"></script>
+<script src="js/tools.js"></script>
+<script src="js/panels.js"></script>
+<script src="js/io.js"></script>
+<script src="js/timelapse.js"></script>
+<script src="js/sample.js"></script>
+<script src="js/app.js"></script>
+</body></html>

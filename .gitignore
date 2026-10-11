@@ -1,0 +1,6 @@
+.vercel
+node_modules/
+tools/deps/
+dist/
+dist-apps/
+*.log

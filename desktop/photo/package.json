@@ -1,0 +1,85 @@
+{
+  "name": "lumen-photo",
+  "productName": "Lumen Photo",
+  "version": "4.0.0",
+  "description": "Lumen Photo - a layered, Photoshop-style image editor for the desktop",
+  "author": "Lumen Photo",
+  "main": "main.js",
+  "scripts": {
+    "postinstall": "node scripts/vendor.js",
+    "start": "electron .",
+    "serve": "node scripts/serve.js 5178",
+    "icon": "node scripts/make-icon.js",
+    "dist": "node scripts/vendor.js && electron-builder --win"
+  },
+  "devDependencies": {
+    "ag-psd": "^31.0.3",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "libraw-wasm": "^1.6.0"
+  },
+  "build": {
+    "appId": "com.lumenphoto.app",
+    "productName": "Lumen Photo",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "LumenPhoto-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "LumenPhoto-Portable-${version}.exe"
+    },
+    "fileAssociations": [
+      {
+        "ext": "lumen",
+        "name": "Lumen Project",
+        "description": "Lumen Photo project",
+        "role": "Editor"
+      },
+      {
+        "ext": "psd",
+        "name": "Photoshop Document",
+        "description": "Photoshop document",
+        "role": "Editor"
+      }
+    ],
+    "electronLanguages": [
+      "en-US"
+    ],
+    "compression": "maximum"
+  },
+  "allowScripts": {
+    "electron@44.7.0": true
+  }
+}

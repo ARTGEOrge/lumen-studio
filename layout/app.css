@@ -1,0 +1,93 @@
+/* Lumen Layout — app styles on top of the Aero kit */
+#stage{display:grid;grid-template-columns:18px 1fr;grid-template-rows:18px 1fr}
+#stage.norulers{grid-template-columns:0 1fr;grid-template-rows:0 1fr}
+#stage.norulers #rh,#stage.norulers #rv,#stage.norulers #corner{visibility:hidden}
+#corner{background:linear-gradient(135deg,#fbfdff,#dfe8f3);border-right:1px solid #9fb2c8;border-bottom:1px solid #9fb2c8}
+#rh,#rv{width:100%;height:100%;display:block;cursor:default}
+#rh{cursor:s-resize} #rv{cursor:e-resize}
+#stagewrap{position:relative;min-width:0;min-height:0;overflow:hidden}
+#cv,#ov{position:absolute;inset:0;width:100%;height:100%;display:block}
+#ov{outline:none;touch-action:none}
+#ta{position:absolute;left:-9999px;top:0;width:200px;height:40px;opacity:0;pointer-events:none;resize:none}
+.celled{position:absolute;z-index:20;border:2px solid #1f6fd6;border-radius:2px;padding:2px 4px;font-family:Montserrat,"Segoe UI",sans-serif;resize:none;box-shadow:0 2px 8px rgba(0,0,0,.25);background:#fff;min-width:60px}
+
+/* command bar groups */
+#cmd{gap:10px}
+#cmd .cg{display:flex;align-items:center;gap:5px}
+#cmd .ic{font:600 11px "Segoe UI";opacity:.9;min-width:10px;text-align:center}
+#cmd input[type=text],#cmd input[type=number]{height:22px;padding:1px 4px}
+#cmd select{height:22px}
+#cmd input[type=color]{width:28px;height:22px}
+#cmd .aero-btn.small{min-width:24px;height:22px;padding:0 6px;display:inline-grid;place-items:center}
+#cmd .al svg{display:block}
+#cmd label{gap:4px}
+
+/* side panes */
+.aero-side{min-width:0}
+#pages{flex:0 0 272px;overflow-y:auto;padding:4px 6px;background:linear-gradient(#fff,#f6f9fd)}
+.tabpane{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.tabpane .grow{flex:1}
+#tp-props{overflow-y:auto}
+#tp-styles .aero-list{min-height:60px}
+.pp-masters{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;padding:2px 2px 6px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.pp-m{display:flex;flex-direction:column;align-items:center;gap:2px;padding:3px;border:1px solid transparent;border-radius:3px;cursor:default;min-width:46px}
+.pp-m:hover,.pp-p:hover{border-color:var(--hov-border);background:linear-gradient(var(--hov-top),var(--hov-bot))}
+.pp-m.sel,.pp-p.sel{border-color:var(--sel-border);background:linear-gradient(var(--sel-top),var(--sel-bot))}
+.pp-mt{font-size:10.5px;color:var(--navy);white-space:nowrap}
+.pp-m>.pp-mt:only-child{padding:10px 4px;border:1px dashed #a9b9cc;border-radius:2px;color:var(--dim)}
+.pp-pages{display:flex;flex-direction:column;gap:3px;align-items:center}
+.pp-row{display:flex;justify-content:center;width:100%}
+.pp-row.facing.right{padding-left:42px}
+.pp-row.facing.left{padding-right:42px}
+.pp-spread{display:flex;gap:0;box-shadow:0 1px 3px rgba(20,40,70,.25)}
+.pp-p{position:relative;padding:2px 2px 14px;border:1px solid transparent;border-radius:3px;cursor:default}
+.pp-p canvas,.pp-m canvas{display:block;box-shadow:0 0 0 1px #b7c4d4}
+.pp-n{position:absolute;bottom:1px;left:0;right:0;text-align:center;font-size:10px;color:var(--navy)}
+.pp-pre{position:absolute;top:3px;left:4px;font:700 9px "Segoe UI";color:#fff;background:rgba(30,57,91,.75);padding:0 3px;border-radius:2px}
+.pp-p.drop{outline:2px solid #3c7fb1}
+.pp-spread .pp-p{padding-left:1px;padding-right:1px}
+
+/* properties */
+#props{padding:0 0 10px}
+.psec{border-bottom:1px solid #e3eaf3}
+.psh{padding:6px 10px 2px;font-weight:600;color:var(--navy);font-size:11.5px}
+.pform{display:grid;grid-template-columns:118px 1fr;gap:4px 8px;align-items:center;padding:4px 10px 8px}
+.pform>label{color:#33475e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pform .pc{display:flex;align-items:center;gap:4px;min-width:0}
+.pform .pc input[type=text],.pform .pc input[type=number],.pform .pc select{width:100%;min-width:0}
+.pform .pc input[type=checkbox]{margin:0}
+.pnote{color:var(--dim);font-size:11px;line-height:1.4;padding:2px 0}
+.pbtns{display:flex;flex-wrap:wrap;gap:4px;padding:2px 10px 8px}
+.pform .pbtns{padding:2px 0}
+.pbtns .aero-btn{min-width:0}
+.pbtns .aero-iconbtn svg{width:16px;height:16px}
+.swatches{display:flex;flex-wrap:wrap;gap:3px;padding:2px 0}
+.swatches .sw{width:17px;height:17px;padding:0;border:1px solid #6d7d8d;border-radius:2px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.5);cursor:default}
+.swatches .sw:hover{outline:2px solid #3c7fb1}
+.swatches .sw.none{background:linear-gradient(135deg,#fff 45%,#d42020 45% 55%,#fff 55%)}
+
+/* layers */
+.lrow{gap:4px}
+.lrow .lb{width:20px;height:18px;padding:0;border:1px solid #c9d5e3;border-radius:2px;background:#fff;display:grid;place-items:center;flex:none}
+.lrow .lb svg{width:13px;height:13px}
+.lrow .lc{width:10px;height:10px;border-radius:2px;box-shadow:0 0 0 1px rgba(0,0,0,.35);flex:none}
+.lrow .lsel{width:7px;height:7px;flex:none}
+.sti{width:16px;text-align:center;color:var(--navy);font-weight:600}
+
+/* status */
+#st-over.err{color:#b81818;font-weight:600}
+#st-over.ok{color:#2a7f14}
+
+table.kbd{border-collapse:collapse;width:100%;font-size:12px}
+table.kbd td{padding:3px 8px;border-bottom:1px solid #edf1f6}
+table.kbd td:first-child{font-family:var(--mono);color:var(--navy);white-space:nowrap}
+
+#printroot{display:none}
+@media print{
+  html,body{background:#fff!important;overflow:visible!important;height:auto!important}
+  body>*:not(#printroot){display:none!important}
+  #printroot{display:block}
+  #printroot img{display:block;break-after:page;page-break-after:always}
+}
+#welcome{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:5;color:var(--navy)}
+#welcome .aero-btn{min-width:0}

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Darkroom</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="gBlue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd0ff"/><stop offset=".5" stop-color="#3a8fe0"/><stop offset="1" stop-color="#1c5fb4"/></linearGradient>
+    <linearGradient id="gGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b8f28a"/><stop offset=".5" stop-color="#4cb82c"/><stop offset="1" stop-color="#2a7f14"/></linearGradient>
+    <linearGradient id="gRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9a8a"/><stop offset=".5" stop-color="#e0402c"/><stop offset="1" stop-color="#a81c10"/></linearGradient>
+    <linearGradient id="gPaper" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d8e4f0"/></linearGradient>
+    <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9a0"/><stop offset="1" stop-color="#e3a21a"/></linearGradient>
+  </defs>
+</svg>
+<div class="aero-app">
+  <div class="aero-body no-toolbox">
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd">
+        <div class="modsw"><button class="aero-btn on" id="m-lib" title="Library (G)">Library</button><button class="aero-btn" id="m-dev" title="Develop (D)">Develop</button></div>
+        <span class="sep"></span>
+        <div class="cmdgrp" id="cmd-lib">
+          <button class="aero-btn" id="b-import" title="Import photos (Ctrl+Shift+I)">Import…</button>
+          <button class="aero-btn" id="b-export" title="Export selected (Ctrl+Shift+E)">Export…</button>
+          <span class="sep"></span>
+          <button class="aero-btn" id="v-grid" title="Grid (G)">Grid</button><button class="aero-btn" id="v-loupe" title="Loupe (E)">Loupe</button>
+          <span class="sep"></span>
+          <label>Sort <select id="sort"><option value="date">Capture time</option><option value="added">Import order</option><option value="name">File name</option><option value="rating">Rating</option><option value="edited">Edit time</option><option value="label">Color label</option></select></label>
+          <button class="aero-btn" id="sortdir" title="Sort direction">↑</button>
+          <label class="tsize">Thumbnails <input type="range" id="tsize" min="100" max="320" value="170"></label>
+        </div>
+        <div class="cmdgrp" id="cmd-dev" hidden>
+          <button class="aero-btn" id="d-crop" title="Crop & straighten (R)">Crop</button>
+          <button class="aero-btn" id="d-wb" title="White balance selector (W)">WB picker</button>
+          <span class="sep"></span>
+          <label>Before/After <select id="d-ba"><option value="off">Off</option><option value="split">Split</option><option value="side">Side by side</option></select></label>
+          <span class="sep"></span>
+          <button class="aero-btn" id="d-fit" title="Fit (Ctrl+0)">Fit</button><button class="aero-btn" id="d-100" title="100% (Ctrl+1)">1:1</button>
+          <span class="v" id="d-zoom">Fit</span>
+          <span class="sep"></span>
+          <button class="aero-btn" id="d-copy" title="Copy settings (Ctrl+Shift+C)">Copy</button><button class="aero-btn" id="d-paste" title="Paste settings (Ctrl+Shift+V)">Paste</button><button class="aero-btn" id="d-sync" title="Sync settings to selected photos (Ctrl+Alt+S)">Sync…</button>
+          <button class="aero-btn" id="d-reset" title="Reset all settings (Ctrl+Shift+R)">Reset</button>
+        </div>
+      </div>
+      <div class="aero-work" id="work">
+        <div class="aero-side left" id="left">
+          <div id="lib-left">
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#e3a21a)"></span>Catalog</div>
+            <div class="aero-list" id="catlist"></div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#b8f28a,#2a7f14)"></span>Collections<span class="right" id="collcount"></span></div>
+            <div class="aero-list fill" id="colllist"></div>
+            <div class="aero-iconbar">
+              <button class="aero-iconbtn" id="c-new" title="New collection (from selection)"><svg viewBox="0 0 16 16"><rect x="1.5" y="3.5" width="11" height="10" rx="1" fill="url(#gGold)" stroke="#8a5a0a"/><circle cx="11.5" cy="11.5" r="3.6" fill="url(#gGreen)" stroke="#2a6a14" stroke-width=".8"/><path d="M11.5 9.6v3.8M9.6 11.5h3.8" stroke="#fff" stroke-width="1.4"/></svg></button>
+              <button class="aero-iconbtn" id="c-add" title="Add selected photos to collection"><svg viewBox="0 0 16 16"><path d="M8 2v9M4 7l4 4 4-4" fill="none" stroke="url(#gBlue)" stroke-width="2.4" stroke-linecap="round"/><rect x="2" y="12" width="12" height="2.6" rx="1" fill="url(#gGold)" stroke="#8a5a0a" stroke-width=".7"/></svg></button>
+              <button class="aero-iconbtn" id="c-rem" title="Remove selected photos from collection"><svg viewBox="0 0 16 16"><path d="M8 11V2M4 6l4-4 4 4" fill="none" stroke="url(#gBlue)" stroke-width="2.4" stroke-linecap="round"/><rect x="2" y="12" width="12" height="2.6" rx="1" fill="url(#gGold)" stroke="#8a5a0a" stroke-width=".7"/></svg></button>
+              <button class="aero-iconbtn" id="c-ren" title="Rename collection"><svg viewBox="0 0 16 16"><path d="M3 13l1-3 7-7 2 2-7 7z" fill="url(#gGold)" stroke="#8a5a0a" stroke-linejoin="round"/></svg></button>
+              <button class="aero-iconbtn" id="c-del" title="Delete collection"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" fill="url(#gRed)" stroke="#8a1a10"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+            </div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#e0c8ff,#8a4ad8)"></span>Keywords<span class="right" id="kwcount"></span></div>
+            <div class="aero-list fill" id="kwlist"></div>
+          </div>
+          <div id="dev-left" hidden>
+            <div class="aero-ph"><span class="phi"></span>Navigator<span class="right" id="navzoom">Fit</span></div>
+            <div id="nav"><canvas id="navc"></canvas></div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffd1a0,#e3731a)"></span>Presets<span class="right"><button class="aero-btn small" id="p-new" title="Save current settings as a preset">+ New</button></span></div>
+            <div class="aero-list fill" id="presetlist"></div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#e3a21a)"></span>History<span class="right" id="histinfo"></span></div>
+            <div class="aero-list" id="histlist"></div>
+          </div>
+        </div>
+        <div class="aero-stage" id="stage">
+          <div id="filterbar">
+            <input type="search" id="f-text" placeholder="Search name, keyword, camera, lens…" spellcheck="false">
+            <label>Rating <select id="f-rating"><option value="0">Any</option><option value="1">≥ ★</option><option value="2">≥ ★★</option><option value="3">≥ ★★★</option><option value="4">≥ ★★★★</option><option value="5">★★★★★</option><option value="-1">Unrated</option></select></label>
+            <label>Flag <select id="f-flag"><option value="all">All</option><option value="picked">Picked</option><option value="unflagged">Unflagged</option><option value="rejected">Rejected</option><option value="notrej">Not rejected</option></select></label>
+            <label>Label <span id="f-labels"></span></label>
+            <span class="kwchip" id="f-kw" hidden></span>
+            <button class="aero-btn small" id="f-clear">Clear filters</button>
+            <span class="fcount" id="f-count"></span>
+          </div>
+          <div id="grid" tabindex="0"></div>
+          <div id="viewer" hidden>
+            <canvas id="beforec" hidden></canvas>
+            <div id="glwrap"></div>
+            <canvas id="overlay"></canvas>
+            <div class="vlabel" id="lbl-before" hidden>Before</div><div class="vlabel" id="lbl-after" hidden>After</div>
+            <div class="aero-pill" id="croppill" hidden>
+              <b>Crop</b>
+              <select id="cp-aspect"></select>
+              <button class="aero-btn small" id="cp-swap" title="Swap orientation (X)">⇄</button>
+              <span>Angle</span><input type="range" id="cp-angle" min="-45" max="45" step="0.1" value="0"><span id="cp-anglev" class="mono">0.0°</span>
+              <button class="aero-btn small" id="cp-rl" title="Rotate left">⟲</button><button class="aero-btn small" id="cp-rr" title="Rotate right">⟳</button>
+              <button class="aero-btn small" id="cp-fh" title="Flip horizontal">⇋</button><button class="aero-btn small" id="cp-fv" title="Flip vertical">⥮</button>
+              <button class="aero-btn small" id="cp-reset">Reset</button><button class="aero-btn small pri" id="cp-done">Done</button>
+            </div>
+            <div class="hint-pill" id="wbhint" hidden>Click a neutral grey or white area to set white balance · Esc to cancel</div>
+            <div class="loupe-info" id="loupeinfo"></div>
+          </div>
+          <div id="empty" hidden>
+            <img src="../kit/icons/darkroom.png" alt="">
+            <h2>Welcome to Lumen Darkroom</h2>
+            <p>Your catalog is empty. Import photos (JPEG, PNG, WebP, camera RAW…) or try the sample catalog.</p>
+            <div class="row"><button class="aero-btn pri" id="e-import">Import Photos…</button><button class="aero-btn" id="e-sample">Open Sample Catalog</button><button class="aero-btn" id="e-open">Open Backup (.ldarkroom)…</button></div>
+            <p class="dim">Tip: you can also drop photos or whole folders anywhere on this window.</p>
+          </div>
+        </div>
+        <div class="aero-side" id="right">
+          <div id="lib-right">
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(135deg,#ff5f5f,#3fd06a 50%,#3f8cff)"></span>Histogram</div>
+            <canvas id="lhist" class="hist"></canvas>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#e3a21a)"></span>Metadata<span class="right" id="metasel"></span></div>
+            <div class="aero-pane" id="metapane"></div>
+            <div class="aero-ph"><span class="phi"></span>EXIF &amp; file info</div>
+            <div class="aero-pane fill" id="exifpane"></div>
+          </div>
+          <div id="dev-right" hidden>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(135deg,#ff5f5f,#3fd06a 50%,#3f8cff)"></span>Histogram<span class="right" id="clipinfo"></span></div>
+            <canvas id="dhist" class="hist"></canvas>
+            <div class="exifline" id="exifline"></div>
+            <div id="panels"></div>
+          </div>
+        </div>
+        <div id="filmstrip"></div>
+      </div>
+      <div class="aero-status"><span id="st-count"></span><span id="st-sel"></span><span id="st-name"></span><span id="st-info"></span><span id="st-save"></span></div>
+    </div>
+  </div>
+</div>
+<script src="../kit/aero.js"></script>
+<script src="vendor/exifr.lite.umd.js"></script>
+<script src="vendor/fflate.umd.js"></script>
+<script src="js/model.js"></script>
+<script src="js/db.js"></script>
+<script src="js/decode.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/catalog.js"></script>
+<script src="js/develop.js"></script>
+<script src="js/io.js"></script>
+<script src="js/sample.js"></script>
+<script src="js/app.js"></script>
+</body></html>

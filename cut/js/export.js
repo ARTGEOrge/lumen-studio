@@ -1,0 +1,213 @@
+'use strict';
+/* Lumen Cut — frame-accurate offline export: every output frame is composited from exactly-decoded source frames
+   (WebCodecs VideoDecoder, or per-frame seeking as a fallback), encoded with VideoEncoder/AudioEncoder (WebAudio
+   OfflineAudioContext mixdown) and muxed to MP4 (mp4-muxer) or WebM (webm-muxer). Also: still frame → PNG. */
+(function () {
+  const even = n => Math.max(2, Math.round(n / 2) * 2);
+
+  function avcCodec(w, h, fps) {
+    const fs = Math.ceil(w / 16) * Math.ceil(h / 16), mbps = fs * fps;
+    const levels = [[31, 3600, 108000], [40, 8192, 245760], [42, 8704, 522240], [50, 22080, 589824], [51, 36864, 983040], [52, 36864, 2073600]];
+    const L = levels.find(([, f, r]) => fs <= f && mbps <= r) || levels[levels.length - 1];
+    return 'avc1.6400' + L[0].toString(16).padStart(2, '0');
+  }
+  const BITRATE = { high: 0.22, medium: 0.12, low: 0.06 };   // bits per pixel per frame
+
+  async function pickCodecs(fmt, W, H, fps, q, wantAudio) {
+    const bitrate = Math.round(Math.min(80e6, Math.max(1e6, W * H * fps * BITRATE[q])));
+    const base = { width: W, height: H, bitrate, framerate: fps, latencyMode: 'quality' };
+    const aBase = { sampleRate: 48000, numberOfChannels: 2, bitrate: 192000 };
+    const sup = async (k, cfg) => { try { return (await (k === 'v' ? VideoEncoder : AudioEncoder).isConfigSupported(cfg)).supported; } catch (e) { return false; } };
+    if (fmt === 'mp4') {
+      for (const codec of [avcCodec(W, H, fps), 'avc1.640033', 'avc1.4d0033']) {
+        const v = { ...base, codec, avc: { format: 'avc' } };
+        if (await sup('v', v)) {
+          let a = null;
+          if (wantAudio) { if (await sup('a', { ...aBase, codec: 'mp4a.40.2' })) a = { cfg: { ...aBase, codec: 'mp4a.40.2' }, mux: 'aac' }; else if (await sup('a', { ...aBase, codec: 'opus' })) a = { cfg: { ...aBase, codec: 'opus' }, mux: 'opus' }; }
+          return { fmt: 'mp4', v, vmux: 'avc', a };
+        }
+      }
+    }
+    for (const [codec, vmux] of [['vp09.00.41.08', 'V_VP9'], ['vp8', 'V_VP8']]) {
+      const v = { ...base, codec };
+      if (await sup('v', v)) { const a = wantAudio && await sup('a', { ...aBase, codec: 'opus' }) ? { cfg: { ...aBase, codec: 'opus' }, mux: 'A_OPUS' } : null; return { fmt: 'webm', v, vmux, a, fellBack: fmt === 'mp4' }; }
+    }
+    throw new Error('No supported video encoder (H.264 / VP9 / VP8) is available');
+  }
+
+  /* exact-frame source provider used by export and still-frame */
+  class ExactFrames {
+    constructor() { this.srcs = new Map(); this.demux = new Map(); this.cur = new Map(); this.slow = false; }
+    async source(c) {
+      let s = this.srcs.get(c.id); if (s) return s;
+      const rt = LC.rt.media.get(c.media);
+      s = (async () => {
+        try {
+          let d = this.demux.get(c.media); if (!d) { d = LC.demux(rt.blob); this.demux.set(c.media, d); }
+          return await LC.DecodedSource.create(await d);
+        } catch (e) { console.info('Lumen Cut: falling back to seek decoding for', LC.mediaOf(c)?.name, '-', e.message); this.slow = true; return new LC.SeekSource(rt.url); }
+      })();
+      this.srcs.set(c.id, s); return s;
+    }
+    async prepare(t) {
+      this.cur.clear();
+      for (const tr of LC.videoTracks()) {
+        if (tr.mute) continue;
+        for (const L of LC.Compositor.layersAt(tr, t)) {
+          const c = L.clip; if (c.type !== 'video') continue;
+          const rt = LC.rt.media.get(c.media); if (!rt || rt.status !== 'ok') continue;
+          const m = LC.mediaOf(c); const st = Math.min(Math.max(LC.srcTime(c, t), 0), Math.max(0, m.duration - 1e-3));
+          const src = await this.source(c); const f = await src.frameAt(st);
+          if (f) this.cur.set(c.id, { src: f, w: f.displayWidth || f.videoWidth, h: f.displayHeight || f.videoHeight, key: 'x:' + c.id });
+        }
+      }
+      // release decoders of clips that are finished
+      for (const [id, p] of this.srcs) { const c = LC.clip(id); if (!c || c.start + c.dur + 2 < t) { p.then(s => s.close()); this.srcs.delete(id); } }
+    }
+    get(c, st) {
+      const m = LC.mediaOf(c), rt = m && LC.rt.media.get(m.id);
+      if (!rt || rt.status !== 'ok') return 'offline';
+      if (c.type === 'image') return rt.img ? { src: rt.img, w: m.w, h: m.h, key: 'img:' + m.id, version: 1 } : null;
+      return this.cur.get(c.id) || null;
+    }
+    close() { for (const p of this.srcs.values()) p.then(s => s.close()); this.srcs.clear(); this.demux.clear(); }
+  }
+  LC.ExactFrames = ExactFrames;
+
+  /* Render one exact frame at full project resolution → canvas */
+  LC.renderStill = async (t, scale = 1) => {
+    const S = LC.project.settings, can = document.createElement('canvas'), comp = new LC.Compositor(can);
+    comp.resize(even(S.w * scale), even(S.h * scale));
+    const ex = new ExactFrames();
+    try { await ex.prepare(t); comp.render(t, (c, st) => ex.get(c, st)); } finally { ex.close(); }
+    return can;
+  };
+  LC.exportFrame = async () => {
+    LC.stop(); Aero.busy('Rendering frame…');
+    try {
+      const can = await LC.renderStill(LC.playhead);
+      const blob = await new Promise(r => can.toBlob(r, 'image/png'));
+      Aero.busy();
+      const name = `${LC.project.name} ${LC.tc(LC.playhead).replace(/:/g, '-')}.png`;
+      const p = await Aero.saveFile({ name, data: blob, filters: [{ name: 'PNG image', extensions: ['png'] }] });
+      if (p) Aero.toast('Saved frame ' + Aero.baseName(p) + '.png');
+      return blob;
+    } catch (e) { Aero.busy(); Aero.alert('Export Frame', e.message); }
+  };
+
+  /* Core export. opts: {format, range:'all'|'inout', scale, quality, audio}. Returns {blob, ext, info} */
+  LC.exportVideo = async (opts = {}, onProgress = () => { }, signal = { aborted: false }) => {
+    const P = LC.project, S = P.settings, fps = S.fps;
+    const seq = LC.seqDuration(); if (seq <= 0) throw new Error('The sequence is empty');
+    let t0 = 0, t1 = seq;
+    if (opts.range === 'inout') { t0 = P.inPoint ?? 0; t1 = P.outPoint ?? seq; }
+    if (t1 - t0 < 1 / fps) throw new Error('Nothing to export in that range');
+    const W = even(S.w * (opts.scale || 1)), H = even(S.h * (opts.scale || 1));
+    const hasAudio = opts.audio !== false && P.clips.some(c => c.type === 'audio' && LC.rt.media.get(c.media)?.audio);
+    const codecs = await pickCodecs(opts.format || 'mp4', W, H, fps, opts.quality || 'high', hasAudio);
+    const nFrames = Math.round((t1 - t0) * fps);
+    const vChunks = [], aChunks = []; let vErr = null, aErr = null;
+    // audio first (fast): offline mixdown → AudioEncoder
+    if (codecs.a) {
+      onProgress({ phase: 'Mixing audio', frame: 0, total: nFrames });
+      const buf = await LC.audio.mixdown(t0, t0 + nFrames / fps, 48000);
+      const enc = new AudioEncoder({ output: (ch, meta) => aChunks.push([ch, meta]), error: e => aErr = e });
+      enc.configure(codecs.a.cfg);
+      const L = buf.getChannelData(0), R = buf.getChannelData(1), step = 4800;
+      for (let i = 0; i < buf.length; i += step) {
+        const n = Math.min(step, buf.length - i), data = new Float32Array(n * 2); data.set(L.subarray(i, i + n), 0); data.set(R.subarray(i, i + n), n);
+        const ad = new AudioData({ format: 'f32-planar', sampleRate: 48000, numberOfFrames: n, numberOfChannels: 2, timestamp: Math.round(i / 48000 * 1e6), data });
+        enc.encode(ad); ad.close();
+      }
+      await enc.flush(); enc.close(); if (aErr) throw aErr;
+    }
+    // video
+    const can = document.createElement('canvas'), comp = new LC.Compositor(can); comp.resize(W, H);
+    const venc = new VideoEncoder({ output: (ch, meta) => vChunks.push([ch, meta]), error: e => vErr = e });
+    venc.configure(codecs.v);
+    const ex = new ExactFrames(), started = performance.now(), gop = Math.max(1, Math.round(fps * 2));
+    try {
+      for (let i = 0; i < nFrames; i++) {
+        if (signal.aborted) throw new DOMException('Export cancelled', 'AbortError');
+        if (vErr) throw vErr;
+        const t = t0 + i / fps;
+        await ex.prepare(t);
+        comp.render(t, (c, st) => ex.get(c, st));
+        const vf = new VideoFrame(can, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
+        venc.encode(vf, { keyFrame: i % gop === 0 }); vf.close();
+        while (venc.encodeQueueSize > 4) await new Promise(r => venc.addEventListener('dequeue', r, { once: true }));
+        if (i % 3 === 0 || i === nFrames - 1) {
+          const el = (performance.now() - started) / 1000;
+          onProgress({ phase: 'Rendering', frame: i + 1, total: nFrames, elapsed: el, eta: el / (i + 1) * (nFrames - i - 1), slow: ex.slow, canvas: can });
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+      onProgress({ phase: 'Finishing', frame: nFrames, total: nFrames });
+      await venc.flush(); if (vErr) throw vErr;
+    } finally { ex.close(); if (venc.state !== 'closed') venc.close(); }
+    // mux (chunks merged by timestamp)
+    let muxer, target;
+    if (codecs.fmt === 'mp4') {
+      target = new Mp4Muxer.ArrayBufferTarget();
+      muxer = new Mp4Muxer.Muxer({ target, fastStart: 'in-memory', firstTimestampBehavior: 'offset', video: { codec: 'avc', width: W, height: H, frameRate: fps }, audio: codecs.a ? { codec: codecs.a.mux, numberOfChannels: 2, sampleRate: 48000 } : undefined });
+    } else {
+      target = new WebMMuxer.ArrayBufferTarget();
+      muxer = new WebMMuxer.Muxer({ target, firstTimestampBehavior: 'offset', video: { codec: codecs.vmux, width: W, height: H, frameRate: fps }, audio: codecs.a ? { codec: 'A_OPUS', numberOfChannels: 2, sampleRate: 48000 } : undefined });
+    }
+    let ai = 0;
+    for (const [ch, meta] of vChunks) {
+      while (ai < aChunks.length && aChunks[ai][0].timestamp <= ch.timestamp) { muxer.addAudioChunk(aChunks[ai][0], aChunks[ai][1]); ai++; }
+      muxer.addVideoChunk(ch, meta);
+    }
+    while (ai < aChunks.length) { muxer.addAudioChunk(aChunks[ai][0], aChunks[ai][1]); ai++; }
+    muxer.finalize();
+    const type = codecs.fmt === 'mp4' ? 'video/mp4' : 'video/webm';
+    return { blob: new Blob([target.buffer], { type }), ext: codecs.fmt, info: { width: W, height: H, fps, frames: nFrames, duration: nFrames / fps, video: codecs.v.codec, audio: codecs.a?.cfg.codec || null, fellBack: !!codecs.fellBack, slow: ex.slow, seconds: (performance.now() - started) / 1000 } };
+  };
+
+  /* ---------- UI ---------- */
+  LC.exportDialog = () => {
+    LC.stop();
+    const P = LC.project, S = P.settings, seq = LC.seqDuration();
+    if (seq <= 0) return Aero.alert('Export', 'The sequence is empty. Add some clips to the timeline first.');
+    const hasIO = P.inPoint != null || P.outPoint != null;
+    const summary = v => { const sc = +v.scale, W = even(S.w * sc), H = even(S.h * sc); const d = v.range === 'inout' ? (P.outPoint ?? seq) - (P.inPoint ?? 0) : seq; const mb = W * H * S.fps * BITRATE[v.quality] * d / 8 / 1e6;
+      return `${W}×${H} · ${S.fps} fps · ${LC.tc(d)} · ${v.format === 'mp4' ? 'H.264 + AAC' : 'VP9 + Opus'} · ≈${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`; };
+    const dlg = Aero.dialog({ title: 'Export Media', instruction: 'Render the sequence to a video file', ok: 'Export', width: 520,
+      fields: [
+        { key: 'format', label: 'Format', type: 'select', value: 'mp4', options: [['mp4', 'MP4 (H.264 / AAC)'], ['webm', 'WebM (VP9 / Opus)']] },
+        { key: 'range', label: 'Range', type: 'select', value: hasIO ? 'inout' : 'all', options: [['all', 'Entire sequence'], ['inout', 'In to Out']] },
+        { key: 'scale', label: 'Resolution', type: 'select', value: '1', options: [['1', `Full (${S.w}×${S.h})`], ['0.5', `Half (${even(S.w / 2)}×${even(S.h / 2)})`], ['0.25', `Quarter (${even(S.w / 4)}×${even(S.h / 4)})`]] },
+        { key: 'quality', label: 'Quality', type: 'select', value: 'high', options: [['high', 'High'], ['medium', 'Medium'], ['low', 'Low (small file)']] },
+        { key: 'audio', label: 'Include audio', type: 'checkbox', value: true }],
+      html: '<div class="dnote" id="exsum"></div>',
+      onChange: v => { const e = document.getElementById('exsum'); if (e) e.textContent = summary(v); },
+      onOK: v => runExport({ ...v, scale: +v.scale }) });
+  };
+  async function runExport(opts) {
+    const ext = opts.format; const name = `${LC.project.name}.${ext}`;
+    const signal = { aborted: false };
+    const ov = Aero.el('div', 'aero-modal'); ov.innerHTML = `<div class="aero-box exbox"><h3><img src="../kit/icons/cut.png" alt="">Exporting</h3><div class="content"><div class="aero-instr"></div>
+      <div class="exrow"><canvas class="exprev" width="192" height="108"></canvas><div class="grow"><div class="pbar"><i></i></div><div class="exinfo dim">Preparing…</div></div></div></div><div class="aero-btns"><button class="aero-btn" data-a="c">Cancel</button></div></div>`;
+    ov.querySelector('.aero-instr').textContent = `Rendering “${name}”`;
+    document.body.appendChild(ov);
+    const bar = ov.querySelector('.pbar i'), info = ov.querySelector('.exinfo'), prev = ov.querySelector('.exprev').getContext('2d');
+    ov.querySelector('[data-a=c]').onclick = () => { signal.aborted = true; info.textContent = 'Cancelling…'; };
+    try {
+      const res = await LC.exportVideo(opts, p => {
+        const f = p.total ? p.frame / p.total : 0; bar.style.width = (f * 100).toFixed(1) + '%';
+        info.textContent = p.phase === 'Rendering' ? `Frame ${p.frame} of ${p.total} · ${Math.round(f * 100)}% · ${fmtS(p.elapsed)} elapsed · ${fmtS(p.eta)} left${p.slow ? ' · seek decoding' : ''}` : p.phase + '…';
+        if (p.canvas) prev.drawImage(p.canvas, 0, 0, 192, 108);
+      }, signal);
+      ov.remove();
+      if (res.info.fellBack) Aero.toast('H.264 is not available here — exported WebM (VP9) instead', 4000);
+      const fname = `${LC.project.name}.${res.ext}`;
+      const p = await Aero.saveFile({ name: fname, data: res.blob, filters: [{ name: res.ext.toUpperCase() + ' video', extensions: [res.ext] }] });
+      if (p) Aero.toast(`Exported ${fname} · ${(res.blob.size / 1048576).toFixed(1)} MB in ${fmtS(res.info.seconds)}`, 4000);
+    } catch (e) {
+      ov.remove();
+      if (e.name === 'AbortError') Aero.toast('Export cancelled'); else Aero.alert('Export failed', e.message || String(e));
+    }
+  }
+  const fmtS = s => !isFinite(s) ? '–' : s < 60 ? `${Math.round(s)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+})();

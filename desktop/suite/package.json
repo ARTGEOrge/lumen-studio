@@ -1,0 +1,51 @@
+{
+  "name": "lumen-studio",
+  "productName": "Lumen Studio",
+  "version": "1.0.0",
+  "description": "Lumen Studio - free creative apps: photo, vector, painting, video, motion, audio, layout, prototyping and PDF",
+  "author": "ARTGEOrge",
+  "main": "main.js",
+  "scripts": {
+    "sync": "node scripts/sync.js",
+    "start": "node scripts/sync.js && electron .",
+    "dist": "node scripts/sync.js && electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3"
+  },
+  "allowScripts": {
+    "electron@44.7.0": true
+  },
+  "build": {
+    "appId": "com.lumenstudio.suite",
+    "productName": "Lumen Studio",
+    "files": ["main.js", "preload.js", "apps.json", "apps/**/*", "build/icon.png", "package.json"],
+    "directories": { "output": "dist", "buildResources": "build" },
+    "electronLanguages": ["en-US"],
+    "compression": "maximum",
+    "win": {
+      "icon": "build/icon.png",
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Lumen Studio",
+      "artifactName": "LumenStudio-Setup-${version}.exe"
+    },
+    "fileAssociations": [
+      { "ext": "lvec", "name": "Lumen Vector drawing", "role": "Editor" },
+      { "ext": "lcut", "name": "Lumen Cut project", "role": "Editor" },
+      { "ext": "ldarkroom", "name": "Lumen Darkroom catalog", "role": "Editor" },
+      { "ext": "llay", "name": "Lumen Layout document", "role": "Editor" },
+      { "ext": "lsnd", "name": "Lumen Sound project", "role": "Editor" },
+      { "ext": "lmot", "name": "Lumen Motion project", "role": "Editor" },
+      { "ext": "lpaint", "name": "Lumen Paint painting", "role": "Editor" },
+      { "ext": "lproto", "name": "Lumen Proto design", "role": "Editor" }
+    ]
+  }
+}

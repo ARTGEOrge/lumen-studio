@@ -1,0 +1,9 @@
+tools/
+_template/
+**/node_modules/
+*.map
+**/screenshot.png
+**/screenshot-tool.png
+**/tests/
+desktop/
+README.md

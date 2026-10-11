@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Sound</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <linearGradient id="gBlue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd0ff"/><stop offset=".5" stop-color="#3a8fe0"/><stop offset="1" stop-color="#1c5fb4"/></linearGradient>
+  <linearGradient id="gGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b8f28a"/><stop offset=".5" stop-color="#4cb82c"/><stop offset="1" stop-color="#2a7f14"/></linearGradient>
+  <linearGradient id="gRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9a8a"/><stop offset=".5" stop-color="#e0402c"/><stop offset="1" stop-color="#a81c10"/></linearGradient>
+  <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9a0"/><stop offset="1" stop-color="#e3a21a"/></linearGradient>
+  <linearGradient id="gPaper" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d8e4f0"/></linearGradient>
+</defs></svg>
+<div class="aero-app">
+  <div class="aero-body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd"></div>
+      <div class="aero-work" style="grid-template-columns:1fr 284px">
+        <div class="aero-stage" id="stage">
+          <div id="wave" class="wv"></div>
+          <div id="multi" class="mt" hidden></div>
+          <div id="welcome" hidden></div>
+          <canvas id="meter" title="Output level (peak / RMS, dBFS)"></canvas>
+        </div>
+        <div class="aero-side" id="side">
+          <div class="aero-tabs" id="side-tabs"><div class="aero-tab on" data-tab="props">Properties</div><div class="aero-tab" data-tab="rack">Effects Rack</div></div>
+          <div id="side-rack" class="side-sec" hidden></div>
+          <div id="side-wave" class="side-sec">
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#c9f0ff,#3aa0e0)"></span>Selection / View</div>
+            <div class="aero-pane selpane">
+              <label>Start</label><input type="text" id="sel-start" class="mono" spellcheck="false">
+              <label>End</label><input type="text" id="sel-end" class="mono" spellcheck="false">
+              <label>Duration</label><input type="text" id="sel-dur" class="mono" spellcheck="false">
+            </div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#f0a020)"></span>Markers<span class="right" id="mkcount"></span></div>
+            <div class="aero-list" id="markers"></div>
+            <div class="aero-iconbar">
+              <button class="aero-iconbtn" id="mk-add" title="Add marker at cursor (M)"><svg viewBox="0 0 16 16"><path d="M3 1.5v13" stroke="#5a3a00" stroke-width="1.4"/><path d="M3.5 2h8l-2 2.5 2 2.5h-8z" fill="url(#gGold)" stroke="#8a5a0a" stroke-width=".8"/><circle cx="11.8" cy="11.5" r="3.3" fill="url(#gGreen)" stroke="#2a6a14" stroke-width=".8"/><path d="M11.8 9.8v3.4M10.1 11.5h3.4" stroke="#fff" stroke-width="1.3"/></svg></button>
+              <button class="aero-iconbtn" id="mk-ren" title="Rename marker"><svg viewBox="0 0 16 16"><path d="M2 13.5 3 10l7.5-7.5 2.5 2.5L5.5 12.5z" fill="url(#gGold)" stroke="#8a5a0a" stroke-width=".9"/><path d="M2 13.5h12" stroke="#1c4f8a"/></svg></button>
+              <button class="aero-iconbtn" id="mk-prev" title="Previous marker (Ctrl+←)"><svg viewBox="0 0 16 16"><path d="M10.5 2.5 4 8l6.5 5.5z" fill="url(#gBlue)" stroke="#174a85" stroke-linejoin="round"/></svg></button>
+              <button class="aero-iconbtn" id="mk-next" title="Next marker (Ctrl+→)"><svg viewBox="0 0 16 16"><path d="M5.5 2.5 12 8l-6.5 5.5z" fill="url(#gBlue)" stroke="#174a85" stroke-linejoin="round"/></svg></button>
+              <button class="aero-iconbtn" id="mk-sel" title="Select between markers"><svg viewBox="0 0 16 16"><path d="M2.5 2v12M13.5 2v12" stroke="#8a5a0a" stroke-width="1.4"/><rect x="4" y="5" width="8" height="6" fill="#9fd0ff" stroke="#1c5fb4" stroke-width=".9"/></svg></button>
+              <span style="flex:1"></span>
+              <button class="aero-iconbtn" id="mk-del" title="Delete marker"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" fill="url(#gRed)" stroke="#8a1a10"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+            </div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#b8f28a,#2a9f54)"></span>Frequency Analysis<span class="right"><select id="fa-size" title="FFT size"><option>1024</option><option>2048</option><option selected>4096</option><option>8192</option><option>16384</option></select></span></div>
+            <canvas id="fa"></canvas>
+            <div class="fa-info dim" id="fa-info">—</div>
+          </div>
+          <div id="side-multi" class="side-sec" hidden>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#c9f0ff,#3aa0e0)"></span>Session</div>
+            <div class="aero-pane dim" id="sessinfo">No session</div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#f0a020)"></span>Clip Properties</div>
+            <div class="aero-pane" id="clipprops"></div>
+          </div>
+          <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#e3a21a)"></span>History<span class="right" id="histinfo"></span></div>
+          <div class="aero-list" id="hist"></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st-tool"></span><span id="st-fmt"></span><span id="st-len"></span><span id="st-sel"></span><span id="st-hover"></span><span id="st-size"></span></div>
+    </div>
+  </div>
+</div>
+<script src="vendor/fflate.js"></script>
+<script src="vendor/lamejs.js"></script>
+<script src="../kit/aero.js"></script>
+<script src="js/dsp.js"></script>
+<script src="js/codecs.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/samples.js"></script>
+<script src="js/wave.js"></script>
+<script src="js/rack.js"></script>
+<script src="js/effects.js"></script>
+<script src="js/multi.js"></script>
+<script src="js/app.js"></script>
+</body></html>

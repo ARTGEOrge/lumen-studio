@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen PDF</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="gBlue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd0ff"/><stop offset=".5" stop-color="#3a8fe0"/><stop offset="1" stop-color="#1c5fb4"/></linearGradient>
+    <linearGradient id="gGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b8f28a"/><stop offset=".5" stop-color="#4cb82c"/><stop offset="1" stop-color="#2a7f14"/></linearGradient>
+    <linearGradient id="gRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9a8a"/><stop offset=".5" stop-color="#e0402c"/><stop offset="1" stop-color="#a81c10"/></linearGradient>
+    <linearGradient id="gPaper" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d8e4f0"/></linearGradient>
+    <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9a0"/><stop offset="1" stop-color="#e3a21a"/></linearGradient>
+  </defs>
+</svg>
+<div class="aero-app">
+  <div class="aero-body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd"></div>
+      <div class="aero-work" id="work">
+        <div class="aero-side left" id="leftside">
+          <div class="aero-tabs" id="lefttabs"><div class="aero-tab on" data-t="pages">Pages</div><div class="aero-tab" data-t="outline">Bookmarks</div></div>
+          <div class="aero-list" id="thumbs"></div>
+          <div class="aero-list" id="outline" hidden></div>
+        </div>
+        <div class="stagecol">
+          <div class="aero-tabs doctabs" id="doctabs"></div>
+          <div class="aero-stage" id="stage">
+            <div id="scroller" tabindex="0"><div id="pages"></div></div>
+            <div id="organizer" hidden></div>
+            <div id="welcome" hidden></div>
+            <div class="aero-pill" id="navpill" hidden>
+              <button class="pb" id="nv-prev" title="Previous page (PgUp)"><svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5" /></svg></button>
+              <input type="text" id="nv-page" value="1"><span id="nv-count">/ 1</span>
+              <button class="pb" id="nv-next" title="Next page (PgDn)"><svg viewBox="0 0 16 16"><path d="m6 3 5 5-5 5" /></svg></button>
+              <span class="psep"></span>
+              <button class="pb" id="nv-zout" title="Zoom out (Ctrl+-)"><svg viewBox="0 0 16 16"><path d="M3 8h10" /></svg></button>
+              <select id="nv-zoom" title="Zoom"></select>
+              <button class="pb" id="nv-zin" title="Zoom in (Ctrl+=)"><svg viewBox="0 0 16 16"><path d="M3 8h10M8 3v10" /></svg></button>
+              <span class="psep"></span>
+              <button class="pb" id="nv-fitw" title="Fit width (Ctrl+2)"><svg viewBox="0 0 16 16"><path d="M1.5 8h13M4 5.5 1.5 8 4 10.5M12 5.5l2.5 2.5-2.5 2.5"/></svg></button>
+              <button class="pb" id="nv-fitp" title="Fit page (Ctrl+0)"><svg viewBox="0 0 16 16"><rect x="4" y="1.5" width="8" height="13" rx="1"/></svg></button>
+              <button class="pb" id="nv-mode" title="Page layout: continuous / single / two-page"><svg viewBox="0 0 16 16"><rect x="1.5" y="2" width="5.5" height="12" rx=".8"/><rect x="9" y="2" width="5.5" height="12" rx=".8"/></svg></button>
+              <button class="pb" id="nv-read" title="Read mode (Ctrl+L)"><svg viewBox="0 0 16 16"><path d="M1.5 5.5v-4h4M10.5 1.5h4v4M14.5 10.5v4h-4M5.5 14.5h-4v-4"/></svg></button>
+            </div>
+            <div class="aero-pill" id="findbar" hidden>
+              <input type="search" id="fd-q" placeholder="Find in document" spellcheck="false">
+              <span id="fd-count" class="dim"></span>
+              <button class="pb" id="fd-prev" title="Previous (Shift+F3)"><svg viewBox="0 0 16 16"><path d="m3 10 5-5 5 5"/></svg></button>
+              <button class="pb" id="fd-next" title="Next (F3)"><svg viewBox="0 0 16 16"><path d="m3 6 5 5 5-5"/></svg></button>
+              <label class="fopt" title="Match case"><input type="checkbox" id="fd-case">Aa</label>
+              <label class="fopt" title="Whole words"><input type="checkbox" id="fd-word">Word</label>
+              <button class="pb" id="fd-close" title="Close (Esc)"><svg viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>
+            </div>
+            <div class="aero-pill" id="selpill" hidden></div>
+          </div>
+        </div>
+        <div class="aero-side" id="rightside">
+          <div class="aero-ph"><span class="phi" style="background:linear-gradient(#fff2a8,#f0b800)"></span>Comments<span class="right" id="cmtcount"></span></div>
+          <div class="aero-list" id="comments"></div>
+          <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#e3a21a)"></span>History<span class="right" id="histinfo"></span></div>
+          <div class="aero-list" id="history"></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st-page">No document</span><span id="st-zoom"></span><span id="st-size"></span><span id="st-msg"></span></div>
+    </div>
+  </div>
+</div>
+<div id="printroot"></div>
+<script src="../kit/aero.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
+<script type="module" src="js/main.js"></script>
+</body></html>

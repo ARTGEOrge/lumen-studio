@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Template</title>
+<link rel="stylesheet" href="../kit/aero.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd"><span class="tname">Select</span><label>Size <input type="range"></label><span class="sep"></span><button class="aero-btn">Apply</button><span class="hint">Template app</span></div>
+      <div class="aero-work" style="grid-template-columns:1fr 260px">
+        <div class="aero-stage" id="stage"></div>
+        <div class="aero-side">
+          <div class="aero-ph"><span class="phi"></span>Items<span class="right">3</span></div>
+          <div class="aero-list" id="list" style="flex:1"></div>
+          <div class="aero-ph"><span class="phi"></span>History</div>
+          <div class="aero-list" id="hist" style="height:120px"></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span>100%</span></div>
+    </div>
+  </div>
+</div>
+<script src="../kit/aero.js"></script>
+<script>
+const hist = new Aero.History({ onChange: () => Aero.renderHistory(document.getElementById('hist'), hist, i => hist.go(i)) });
+Aero.init({ name: 'Lumen Template', icon: '../kit/icons/lumen.png', doc: 'Untitled',
+  menus: { File: [['New', 'Ctrl+N', () => hist.reset('New', {})], ['Open…', 'Ctrl+O', async () => { const f = await Aero.openFile(); if (f[0]) Aero.toast('Opened ' + f[0].name); }], '-', ['Save', 'Ctrl+S', () => Aero.saveFile({ name: 'test.txt', data: 'hello' })]],
+           Edit: [['Undo', 'Ctrl+Z', () => hist.undo()], ['Redo', 'Ctrl+Y', () => hist.redo()], '-', ['Settings…', '', () => Aero.dialog({ title: 'Settings', fields: [{ key: 'a', label: 'Amount', type: 'range', min: 0, max: 100, value: 40 }, { key: 'c', label: 'Color', type: 'color', value: '#3366cc' }] })]] } });
+Aero.toolbox(document.getElementById('tools'), [{ id: 'sel', title: 'Select', key: 'V', icon: '<path d="M5 3l12 8-6 1-3 6z"/>' }, null, { id: 'pen', title: 'Pen', key: 'P', icon: '<path d="M12 3 5 13l2 6h10l2-6z"/>' }], id => document.querySelector('#cmd .tname').textContent = id).set('sel');
+['Alpha', 'Beta', 'Gamma'].forEach((n, i) => { const d = Aero.el('div', 'aero-item' + (i === 1 ? ' sel' : ''), n); document.getElementById('list').appendChild(d); });
+hist.reset('New', {}); hist.push('Edit 1', {}); hist.push('Edit 2', {});
+</script>
+</body></html>

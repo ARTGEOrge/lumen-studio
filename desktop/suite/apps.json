@@ -1,0 +1,12 @@
+[
+  { "id": "photo",    "name": "Lumen Photo",    "like": "Photoshop",     "desc": "Layered photo editing, retouching, PSD & RAW", "ext": ["lumen", "psd"] },
+  { "id": "vector",   "name": "Lumen Vector",   "like": "Illustrator",   "desc": "Vector illustration, logos and print graphics", "ext": ["lvec", "svg"] },
+  { "id": "darkroom", "name": "Lumen Darkroom", "like": "Lightroom",     "desc": "Photo library and RAW development", "ext": ["ldarkroom"] },
+  { "id": "paint",    "name": "Lumen Paint",    "like": "Fresco",        "desc": "Natural-media digital painting", "ext": ["lpaint"] },
+  { "id": "cut",      "name": "Lumen Cut",      "like": "Premiere Pro",  "desc": "Multi-track video editing", "ext": ["lcut"] },
+  { "id": "motion",   "name": "Lumen Motion",   "like": "After Effects", "desc": "Motion graphics and animation", "ext": ["lmot"] },
+  { "id": "sound",    "name": "Lumen Sound",    "like": "Audition",      "desc": "Audio editing, cleanup and mixing", "ext": ["lsnd"] },
+  { "id": "layout",   "name": "Lumen Layout",   "like": "InDesign",      "desc": "Page layout and publishing", "ext": ["llay"] },
+  { "id": "proto",    "name": "Lumen Proto",    "like": "XD",            "desc": "UI design and clickable prototypes", "ext": ["lproto"] },
+  { "id": "pdf",      "name": "Lumen PDF",      "like": "Acrobat",       "desc": "Read, annotate, sign and organize PDFs", "ext": ["pdf"] }
+]

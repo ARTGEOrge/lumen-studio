@@ -1,0 +1,3 @@
+lamejs.js = @breezystack/lamejs 1.2.7 (dist/lamejs.iife.js), a maintained fork of lamejs, a JavaScript port of LAME.
+License: LGPL-3.0 (see https://www.gnu.org/licenses/lgpl-3.0.txt). Shipped unmodified as a separate, replaceable file.
+Source: https://github.com/breezystack/lamejs  ·  LAME project: https://lame.sourceforge.io/

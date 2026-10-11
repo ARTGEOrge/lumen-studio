@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Studio</title>
+<meta name="description" content="Lumen Studio: ten free creative apps for photo editing, vector art, painting, video, motion graphics, audio, page layout, UI prototyping and PDFs. Download for Windows or use them in your browser.">
+<link rel="icon" href="kit/icons/studio.png">
+<style>
+:root{--navy:#1e395b;--ink:#0f1c2c;--dim:#4c5d70;--link:#0066cc;--glass:rgba(80,140,205,.30);--edge:rgba(15,35,60,.55);--font:"Segoe UI",Tahoma,system-ui,sans-serif}
+*{box-sizing:border-box}
+html{background:#0a3352}
+body{margin:0;font:15px/1.55 var(--font);color:var(--ink);min-height:100vh;overflow-x:hidden;background:radial-gradient(ellipse 60% 45% at 15% 88%,rgba(120,220,90,.9),transparent 70%),radial-gradient(ellipse 55% 60% at 78% 18%,rgba(40,170,235,.85),transparent 70%),radial-gradient(ellipse 40% 30% at 55% 62%,rgba(30,200,170,.55),transparent 70%),linear-gradient(150deg,#082c55 0%,#0d5c7a 45%,#0e6b4e 75%,#062a3e 100%) fixed}
+a{color:var(--link)} img{max-width:100%;height:auto;display:block}
+.glass{position:relative;border:1px solid var(--edge);border-radius:8px;background:linear-gradient(rgba(255,255,255,.36),rgba(255,255,255,.1) 48px,rgba(255,255,255,.04) 50%,rgba(255,255,255,.1)),repeating-linear-gradient(118deg,transparent 0 46px,rgba(255,255,255,.07) 46px 58px,transparent 58px 130px,rgba(255,255,255,.05) 130px 136px),var(--glass);box-shadow:inset 0 0 0 1px rgba(255,255,255,.5),inset 0 1px 0 rgba(255,255,255,.85),0 10px 30px rgba(0,0,0,.35);backdrop-filter:blur(12px) saturate(1.5);-webkit-backdrop-filter:blur(12px) saturate(1.5)}
+.glow{text-shadow:0 0 9px #fff,0 0 9px #fff,0 0 4px #fff}
+header{position:sticky;top:0;z-index:20;padding:10px 16px}
+.bar{max-width:1180px;margin:0 auto;display:flex;align-items:center;gap:12px;padding:6px 10px 6px 12px}
+.brand{display:flex;align-items:center;gap:9px;font-size:16px;color:#000;text-decoration:none;white-space:nowrap}
+.brand img{width:26px;height:26px}
+nav{margin-left:auto;display:flex;gap:2px;flex-wrap:wrap}
+nav a{color:#000;text-decoration:none;padding:4px 11px;border-radius:4px;border:1px solid transparent;font-size:13.5px}
+nav a:hover{border-color:rgba(255,255,255,.8);background:linear-gradient(rgba(255,255,255,.7),rgba(255,255,255,.3) 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.4))}
+main{max-width:1180px;margin:0 auto;padding:8px 16px 40px}
+.hero{text-align:center;padding:42px 8px 26px;color:#fff}
+.hero h1{margin:0 0 10px;font-weight:300;font-size:clamp(34px,6vw,58px);line-height:1.08;text-shadow:0 2px 14px rgba(0,30,60,.55)}
+.hero p{margin:0 auto 22px;max-width:660px;font-size:clamp(16px,2.2vw,19px);color:#e2f2ff;text-shadow:0 1px 6px rgba(0,30,60,.6)}
+.hero .dl{justify-content:center}
+.hero .small{color:#d5e8f7} .hero .small a{color:#fff}
+.icons{display:flex;justify-content:center;flex-wrap:wrap;gap:10px;margin:26px auto 0;max-width:760px}
+.icons a{display:block;width:54px;transition:transform .15s} .icons a:hover{transform:translateY(-3px) scale(1.06)}
+.dl{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.btn{display:inline-flex;align-items:center;gap:9px;padding:9px 20px;border-radius:4px;text-decoration:none;color:#000;font-size:14.5px;border:1px solid #707070;background:linear-gradient(#f2f2f2 0%,#ebebeb 50%,#dddddd 50%,#cfcfcf 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.75)}
+.btn:hover{border-color:#3c7fb1;background:linear-gradient(#eaf6fd 0%,#d9f0fc 50%,#bee6fd 50%,#a7d9f5 100%)}
+.btn.go{color:#fff;font-weight:600;border-color:#1c5a96;text-shadow:0 1px 1px rgba(0,0,0,.45);background:linear-gradient(#8fd0ff 0%,#4ea4ea 48%,#2a7fd4 50%,#3c95e3 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.45),0 0 8px rgba(70,170,255,.55)}
+.btn.small{padding:5px 13px;font-size:13px}
+.small{font-size:12.5px;color:var(--dim);margin:12px 0 0}
+.note{margin-top:12px;padding:8px 12px;font-size:12.5px;background:linear-gradient(#fffef3,#fdf6d8);border:1px solid #e3cf7c;border-radius:4px}
+.app{margin-top:26px;padding:0 7px 7px;scroll-margin-top:70px}
+.app-title{display:flex;align-items:center;gap:8px;height:32px;padding-left:4px;font-size:13px}
+.app-title img{width:18px;height:18px}
+.client{background:#fff;border:1px solid rgba(15,35,60,.7);display:grid;grid-template-columns:1.15fr 1fr;min-width:0}
+.shot{background:linear-gradient(#dfe8f2,#b8c9da);padding:16px;display:flex;align-items:center;min-width:0}
+.shot img{border-radius:5px;box-shadow:0 8px 24px rgba(10,30,60,.45);border:1px solid rgba(20,40,70,.5)}
+.info{padding:22px 24px 20px;min-width:0}
+.info h2{margin:0;font-weight:400;font-size:26px;color:var(--navy);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.like{font-size:12px;color:#1d7a2a;background:#e6f6e3;border:1px solid #b9e2b0;border-radius:3px;padding:1px 7px}
+.tag{margin:4px 0 12px;color:var(--dim)}
+.feat{margin:0 0 16px;padding-left:18px;display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:13.5px}
+.fmt{font-size:12px;color:var(--dim);margin:10px 0 0}
+.sec{margin-top:40px} .sec-h{padding:10px 16px;border-radius:8px 8px 0 0}
+.sec-h h2{margin:0;font-weight:400;font-size:22px;color:#000}
+.pane{background:#fff;border:1px solid rgba(15,35,60,.7);border-top:0;border-radius:0 0 6px 6px;padding:18px}
+.dlgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.dlcard{border:1px solid #c5d5e8;border-radius:6px;padding:16px;display:flex;gap:14px}
+.dlcard img{width:60px;height:60px;flex:none}
+.dlcard h3{margin:0;font-size:16px} .dlcard p{margin:4px 0 10px;font-size:13px;color:var(--dim)}
+footer{max-width:1180px;margin:30px auto 0;padding:16px;color:#d5e8f7;font-size:12.5px;text-align:center;text-shadow:0 1px 3px rgba(0,0,0,.5)} footer a{color:#fff}
+@media (max-width:900px){.client{grid-template-columns:1fr}.feat{grid-template-columns:1fr}}
+@media (max-width:560px){nav a:not(:last-child){display:none}.info{padding:18px 16px}.icons a{width:44px}}
+.convert-card{display:flex;gap:22px;align-items:center;margin-top:30px;padding:0 7px 7px;text-decoration:none;color:inherit;transition:transform .15s,box-shadow .15s}
+.convert-card:hover{transform:translateY(-2px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.6),0 14px 34px rgba(0,0,0,.45)}
+.convert-card .cc{background:#fff;border:1px solid rgba(15,35,60,.7);display:flex;gap:22px;align-items:center;padding:22px 24px;width:100%;margin-top:7px}
+.convert-card .cc>img{width:84px;height:84px;flex:none;filter:drop-shadow(0 3px 5px rgba(0,0,0,.3))}
+.convert-card h2{margin:0;font-weight:400;font-size:26px;color:var(--navy);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.convert-card p{margin:4px 0 10px;color:var(--dim)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips span{font-size:12px;padding:2px 9px;border-radius:10px;background:linear-gradient(#f4f8fd,#e1ecf8);border:1px solid #b8cde6;color:var(--navy)}
+.convert-card .go{margin-left:auto;flex:none}
+@media (max-width:700px){.convert-card .cc{flex-direction:column;align-items:flex-start}.convert-card .go{margin-left:0}}
+</style>
+</head>
+<body>
+<header><div class="bar glass"><a class="brand glow" href="/"><img src="kit/icons/studio.png" alt="">Lumen Studio</a><nav class="glow" aria-label="Site"><a href="#apps">Apps</a><a href="/convert/">Convert</a><a href="#download">Download</a></nav></div></header>
+<main>
+<section class="hero">
+  <h1>Ten creative apps.<br>No subscription.</h1>
+  <p>Photo editing, vector art, painting, video, motion graphics, audio, page layout, UI design and PDFs, all made by us. Download them all for Windows, or open any app right here in your browser.</p>
+  <div class="dl"><a class="btn go" href="https://github.com/ARTGEOrge/lumen-studio/releases/download/v1.0.0/LumenStudio-Setup-1.0.0.exe">Download Lumen Studio for Windows</a><a class="btn" href="#apps">See the apps</a></div>
+  <p class="small">All ten apps in one installer · 104 MB · Windows 10 or 11 · free · or open any app in your browser below</p>
+  <div class="icons" id="iconrow"></div>
+</section>
+<div id="apps"></div>
+<a class="convert-card glass" href="/convert/" aria-label="Open Lumen Convert, free converting tools">
+  <div class="cc">
+    <img src="kit/icons/convert.png" alt="">
+    <div>
+      <h2>Lumen Convert <span class="like">free converters</span></h2>
+      <p>Quick converters right in your browser: no app to install, and your files never leave your device.</p>
+      <div class="chips"><span>JPG ⇄ PNG ⇄ WebP</span><span>Resize &amp; compress images</span><span>Images → PDF</span><span>Merge &amp; split PDF</span><span>PDF → images</span><span>Audio to MP3</span><span>Video → GIF</span><span>CSV ⇄ JSON</span><span>Markdown → HTML</span><span>Word → PDF</span><span>Excel ⇄ CSV</span><span>HEIC → JPG</span><span>QR codes</span><span>ZIP files</span><span>Colors &amp; units</span><span>+ many more</span></div>
+    </div>
+    <span class="btn go">Open converters →</span>
+  </div>
+</a>
+<section class="sec" id="download">
+  <div class="sec-h glass glow"><h2>Download for Windows</h2></div>
+  <div class="pane"><div class="dlgrid">
+    <div class="dlcard"><img src="kit/icons/studio.png" alt=""><div><h3>Lumen Studio (all ten apps)</h3><p>Every app plus a launcher in one installer. Double-click your Lumen files to open them in the right app.</p><a class="btn go" href="https://github.com/ARTGEOrge/lumen-studio/releases/download/v1.0.0/LumenStudio-Setup-1.0.0.exe">Download installer</a><p class="small">104 MB · Windows 10 or 11, 64-bit</p></div></div>
+    <div class="dlcard"><img src="kit/icons/photo.png" alt=""><div><h3>Just one app?</h3><p>Every app also has its own installer — use the download button in its section above. Lumen Photo also comes as a portable exe.</p><div class="dl"><a class="btn" href="https://github.com/ARTGEOrge/lumen-photo/releases/download/v4.0.0/LumenPhoto-Setup-4.0.0.exe">Lumen Photo installer</a><a class="btn" href="https://github.com/ARTGEOrge/lumen-photo/releases/download/v4.0.0/LumenPhoto-Portable-4.0.0.exe">Lumen Photo portable</a></div></div></div>
+  </div><p class="note">The apps aren't code-signed yet, so Windows SmartScreen may warn the first time. Click <b>More info → Run anyway</b>.</p></div>
+</section>
+</main>
+<footer>Lumen Studio is free software by ARTGEOrge, built with open-source libraries (license files ship next to each library).<br>Adobe and its product names are trademarks of Adobe Inc. Lumen Studio is not affiliated with Adobe.</footer>
+<script>
+const APPS = [
+ ['photo','Lumen Photo','Photoshop','Layered photo editing and retouching.',['Layers, masks & blend modes','Adjustment layers & curves','Healing brush & content-aware fill','Opens PSD and camera RAW','History tree saved in the file','Before/after compare & time-lapse'],'Opens .lumen, PSD, PNG, JPEG, RAW · Exports PNG, JPEG, WebP, PSD'],
+ ['vector','Lumen Vector','Illustrator','Vector illustration for logos, posters and print.',['Pen, pencil & anchor editing','Multiple artboards','Pathfinder operations','On-canvas gradients','Point, area & path text','Vector PDF and SVG export'],'Opens .lvec, SVG · Exports SVG, PDF, PNG'],
+ ['darkroom','Lumen Darkroom','Lightroom','Organize photos and develop them non-destructively.',['Ratings, flags, keywords','Collections & EXIF info','Live GPU develop sliders','Tone curve & color grading','Presets & synced edits','Batch export'],'Imports JPEG, PNG, WebP, RAW · Exports JPEG, PNG, WebP'],
+ ['paint','Lumen Paint','Fresco','Natural-media painting that feels like real paint.',['26 pressure-sensitive brushes','Watercolor that bleeds and dries','Oils that smear and mix','Symmetry & perspective guides','Layers & clipping','Time-lapse video'],'Opens .lpaint, PSD · Exports PNG, JPEG, PSD, MP4'],
+ ['cut','Lumen Cut','Premiere Pro','Multi-track video editing with frame-accurate export.',['Multi-track timeline','Trim, ripple, razor, snapping','Keyframes, speed, color','Transitions & titles','Audio mixing','MP4/WebM export'],'Imports MP4, MOV, WebM, audio · Exports MP4, WebM'],
+ ['motion','Lumen Motion','After Effects','Motion graphics and animation.',['Keyframes & graph editor','Shapes, masks, mattes','Per-letter text animators','Effects & motion blur','Expressions','16 presets'],'Exports MP4, WebM, GIF, PNG sequence'],
+ ['sound','Lumen Sound','Audition','Record, clean up, edit and mix audio.',['Waveform & spectrogram','Noise reduction','EQ, compressor, reverb','Pitch shift & time stretch','LUFS loudness','Multitrack mixdown'],'Opens WAV, MP3, FLAC, OGG · Exports WAV, FLAC, MP3, Opus'],
+ ['layout','Lumen Layout','InDesign','Magazines, newsletters and books, ready for print.',['Text that flows across pages','Paragraph & character styles','Master pages & page numbers','Text wrap & tables','Bleed & crop marks','PDF with real text'],'Exports PDF, PNG, JPEG'],
+ ['proto','Lumen Proto','XD','Design app screens and click through them.',['Components with variants','Auto layout','Color & text styles','Prototype transitions','Prototype as one HTML file','Code handoff'],'Exports PNG, SVG, PDF, HTML'],
+ ['pdf','Lumen PDF','Acrobat','Read, mark up, fill, sign and reorganize PDFs.',['Highlights & comments','Fill forms & sign','Merge, split, reorder','True redaction','Watermarks & Bates numbers','Shrink file size'],'Opens & saves standard PDF']];
+const dlUrl = a => a[0] === 'photo' ? 'https://github.com/ARTGEOrge/lumen-photo/releases/download/v4.0.0/LumenPhoto-Setup-4.0.0.exe'
+  : `https://github.com/ARTGEOrge/lumen-studio/releases/download/v1.0.0/${a[1].replace(/\s+/g, '')}-Setup-1.0.0.exe`;
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+document.getElementById('iconrow').innerHTML = APPS.map(a => `<a href="#${a[0]}" title="${a[1]}"><img src="kit/icons/${a[0]}.png" width="54" height="54" alt="${a[1]}"></a>`).join('');
+document.getElementById('apps').innerHTML = APPS.map(a => `<section class="app glass" id="${a[0]}"><div class="app-title glow"><img src="kit/icons/${a[0]}.png" alt="">${a[1]}</div><div class="client"><div class="shot"><img src="img/${a[0]}.jpg" width="1100" height="676" alt="${a[1]} screenshot" loading="lazy"></div><div class="info"><h2>${a[1]} <span class="like">instead of ${a[2]}</span></h2><p class="tag">${esc(a[3])}</p><ul class="feat">${a[4].map(f => `<li>${esc(f)}</li>`).join('')}</ul><div class="dl"><a class="btn small go" href="${dlUrl(a)}" title="Windows 10/11 installer, about 99 MB">⬇ Download ${a[1]}</a><a class="btn small" href="/${a[0]}/">Open in browser</a></div><p class="fmt">Windows 10 or 11 · about 99 MB${a[0]==='photo' ? ' · <a href="https://github.com/ARTGEOrge/lumen-photo/releases/download/v4.0.0/LumenPhoto-Portable-4.0.0.exe">portable version</a>' : ''}</p><p class="fmt">${esc(a[5])}</p></div></div></section>`).join('');
+</script>
+</body>
+</html>

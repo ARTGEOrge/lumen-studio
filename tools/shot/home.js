@@ -1,0 +1,1 @@
+window.scrollTo(0,0); await new Promise(r=>setTimeout(r,500)); return JSON.stringify({apps:document.querySelectorAll(".app").length, imgs:[...document.images].filter(i=>i.complete&&i.naturalWidth===0).map(i=>i.src), h:document.documentElement.scrollHeight});
