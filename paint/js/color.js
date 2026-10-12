@@ -120,6 +120,7 @@ function drawWheel() {
   const mark = (x, y, r) => { c.lineWidth = 2.5; c.strokeStyle = '#fff'; c.beginPath(); c.arc(x, y, r, 0, 7); c.stroke(); c.lineWidth = 1; c.strokeStyle = '#000'; c.beginPath(); c.arc(x, y, r + 1.5, 0, 7); c.stroke(); };
   mark(cx + Math.cos(ang) * rm, cy + Math.sin(ang) * rm, 5);
   mark(cx - q + fgHSV[1] * SQ, cy - q + (1 - fgHSV[2]) * SQ, 4.5);
+  if (typeof drawHarmonyMarks === 'function') drawHarmonyMarks(c, cx, cy, rm);
 }
 function sliderSet(i, f) {
   if (sliderMode === 'hsb') { const h = fgHSV.slice(); h[i] = i === 0 ? f * 360 : f; setFGHSV(h[0], h[1], h[2]); }

@@ -16,14 +16,18 @@
     scissors: '<circle cx="6.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/><path d="M8.3 15.8L18 4M15.7 15.8L6 4"/>',
     knife: '<path d="M4 20L17.5 6.5c1.8-1.8 3.4-.4 2.4 1L8.5 19.5z"/><path d="M4 20l3-1"/>',
     artboard: '<path d="M7 3v18M17 3v18M3 7h18M3 17h18"/>',
+    shaper: '<path d="M4 19c3-9 4-12 8-14" stroke-dasharray="2 1.6"/><rect x="11" y="10" width="9" height="9"/><circle cx="7" cy="8" r="3"/>',
+    width: '<path d="M3 16c4-1 5-8 9-8s5 7 9 8"/><path d="M3 18c4 0 5-4 9-4s5 4 9 4"/><path d="M12 8v6" stroke-width="1"/>',
+    shapebuilder: '<circle cx="9" cy="10" r="5.5"/><rect x="10" y="9" width="10" height="10"/><path d="M4 21l5-5" stroke-width="2.2"/><path d="M11.5 13.5h3"/>',
+    blend: '<rect x="2.5" y="13" width="7" height="7" rx="1"/><circle cx="17.5" cy="6.5" r="4"/><path d="M8 12l2-2M11 9l2-2" stroke-dasharray="1.5 1.5"/>',
     hand: '<path d="M8 13V6.5a1.5 1.5 0 0 1 3 0V11V4.5a1.5 1.5 0 0 1 3 0V11V6a1.5 1.5 0 0 1 3 0v8c0 3.5-2.5 6-6 6-2.6 0-4.2-1.3-5.6-3.4L4.7 13.4a1.4 1.4 0 0 1 2.3-1.6z"/>',
     zoom: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M8 10.5h5M10.5 8v5"/>'
   };
   const TOOLS = [
     { id: 'select', title: 'Selection', key: 'V' }, { id: 'direct', title: 'Direct Selection', key: 'A' }, null,
-    { id: 'pen', title: 'Pen', key: 'P' }, { id: 'pencil', title: 'Pencil', key: 'N' }, { id: 'type', title: 'Type', key: 'T' }, { id: 'typepath', title: 'Type on a Path', key: 'Shift+T' }, null,
+    { id: 'pen', title: 'Pen', key: 'P' }, { id: 'pencil', title: 'Pencil', key: 'N' }, { id: 'shaper', title: 'Shaper', key: 'Shift+N' }, { id: 'type', title: 'Type', key: 'T' }, { id: 'typepath', title: 'Type on a Path', key: 'Shift+T' }, null,
     { id: 'rect', title: 'Rectangle', key: 'M' }, { id: 'rounded', title: 'Rounded Rectangle' }, { id: 'ellipse', title: 'Ellipse', key: 'L' }, { id: 'polygon', title: 'Polygon' }, { id: 'star', title: 'Star' }, { id: 'line', title: 'Line Segment', key: '\\' }, null,
-    { id: 'eyedrop', title: 'Eyedropper', key: 'I' }, { id: 'gradient', title: 'Gradient', key: 'G' }, { id: 'scissors', title: 'Scissors', key: 'C' }, { id: 'knife', title: 'Knife' }, { id: 'artboard', title: 'Artboard', key: 'Shift+O' }, null,
+    { id: 'eyedrop', title: 'Eyedropper', key: 'I' }, { id: 'gradient', title: 'Gradient', key: 'G' }, { id: 'blend', title: 'Blend', key: 'W' }, { id: 'shapebuilder', title: 'Shape Builder', key: 'Shift+M' }, { id: 'width', title: 'Width', key: 'Shift+W' }, { id: 'scissors', title: 'Scissors', key: 'C' }, { id: 'knife', title: 'Knife' }, { id: 'artboard', title: 'Artboard', key: 'Shift+O' }, null,
     { id: 'hand', title: 'Hand', key: 'H' }, { id: 'zoom', title: 'Zoom', key: 'Z' }
   ];
   LV.status = msg => { $('#stMsg').textContent = msg || ''; };
@@ -105,15 +109,20 @@
     const el = $('#pProps');
     el.innerHTML = `
       <div class="pkind" id="pKind"></div>
+      <div class="pgroup" id="pShape" hidden></div>
       ${paintRow('fill')}
       ${paintRow('stroke')}
       <div class="pgroup" id="pStroke">
         <div class="prow"><span class="lbl">Weight</span><input type="number" min="0" step="0.5" data-k="strokeWidth" class="n4"><span class="lbl">Cap</span>${btn3('strokeCap', [['butt', 'Butt cap', capIc.butt], ['round', 'Round cap', capIc.round], ['square', 'Projecting cap', capIc.square]])}</div>
         <div class="prow"><span class="lbl">Corner</span>${btn3('strokeJoin', [['miter', 'Miter join', joinIc.miter], ['round', 'Round join', joinIc.round], ['bevel', 'Bevel join', joinIc.bevel]])}<span class="lbl">Align</span>${btn3('strokeAlign', [['center', 'Align stroke to center', alignIc.center], ['inside', 'Align stroke to inside', alignIc.inside], ['outside', 'Align stroke to outside', alignIc.outside]])}</div>
+        <div class="prow"><span class="lbl" title="Variable width profile (Width tool, Shift+W)">Profile</span><select data-k="wprofile" style="flex:1"><option value="custom" hidden>Custom (Width tool)</option>${Object.entries(LV.width.PROFILES).map(([k, p]) => `<option value="${k}">${esc(p.name)}</option>`).join('')}</select></div>
         <div class="prow"><label class="lbl"><input type="checkbox" data-k="dashed"> Dash</label><input type="number" min="0" data-k="dash1" class="n3" title="Dash length"><input type="number" min="0" data-k="gap1" class="n3" title="Gap length"><input type="number" min="0" data-k="dash2" class="n3" title="Optional second dash"></div>
       </div>
       <div class="prow"><span class="lbl">Opacity</span><input type="range" min="0" max="100" data-k="opacity"><span data-v="opacity" class="dim n3"></span></div>
       <div class="prow"><span class="lbl">Blending</span><select data-k="blendMode">${BLENDS.map(b => `<option value="${b}">${b.replace(/(^|-)(\w)/g, (m, a, c) => (a ? ' ' : '') + c.toUpperCase())}</option>`).join('')}</select></div>
+      <div class="pgroup" id="pAppear" hidden></div>
+      <div class="pgroup" id="pObj" hidden></div>
+      <div class="pgroup" id="pTrace" hidden></div>
       <div class="pgroup" id="pChar">
         <div class="psub">Character</div>
         <div class="prow"><select data-k="family" style="flex:1">${LV.FONTS.map(f => `<option>${esc(f.family)}</option>`).join('')}</select><select data-k="weight"></select></div>
@@ -189,6 +198,7 @@
       if (k === 'family' || k === 'align') LV.refreshPanels();
       return;
     }
+    if (k === 'wprofile') { if (commit && LV.sel.length) LV.width.applyProfile(LV.sel, v); return; }
     if (!LV.sel.length) { if (k === 'strokeWidth') LV.paint.strokeWidth = v; return; }
     if (k === 'opacity') { LV.sel.forEach(it => it.opacity = v / 100); const o = $('[data-v=opacity]'); if (o) o.textContent = v + '%'; }
     else if (k === 'blendMode') LV.sel.forEach(it => it.blendMode = v);
@@ -206,7 +216,7 @@
   function refreshPaint() {
     const el = $('#pProps'); if (!el || !el.firstChild) return;
     const n = LV.sel.length, first = n ? LV.sel[0] : null, t = first ? LV.firstPaintable(first) : null;
-    const kindName = { path: 'Path', compound: 'Compound Path', group: 'Group', clip: 'Clip Group', text: 'Point Type', areatext: 'Area Type', pathtext: 'Type on a Path', image: 'Image' };
+    const kindName = { path: 'Path', compound: 'Compound Path', group: 'Group', clip: 'Clip Group', text: 'Point Type', areatext: 'Area Type', pathtext: 'Type on a Path', image: 'Image', trace: 'Image Tracing', symbol: 'Symbol Instance', blend: 'Blend' };
     $('#pKind').innerHTML = n ? (n === 1 ? `<b>${esc(kindName[LV.kind(first)] || 'Object')}</b> <span class="dim">${esc(first.name || '')}</span>` : `<b>${n} objects</b>`) : '<b>No selection</b> <span class="dim">— defaults for new objects</span>';
     ['fill', 'stroke'].forEach(attr => {
       const spec = curSpec(attr), q = k => el.querySelector(`[data-k=${attr}${k}]`);
@@ -237,6 +247,7 @@
     const swi = el.querySelector('[data-k=strokeWidth]'); if (document.activeElement !== swi) swi.value = LV.round(sw || 0, 2);
     const segOn = (k, v) => el.querySelectorAll(`.seg[data-k=${k}] button`).forEach(b => b.classList.toggle('on', b.dataset.v === v));
     segOn('strokeCap', S.strokeCap || 'butt'); segOn('strokeJoin', S.strokeJoin || 'miter'); segOn('strokeAlign', (t && t.data.strokeAlign) || 'center');
+    const wp = el.querySelector('[data-k=wprofile]'); if (wp && document.activeElement !== wp) { wp.value = t ? LV.width.profileOf(t) : 'uniform'; wp.disabled = !(t instanceof P.Path); }
     const da = (t && t.dashArray) || [];
     el.querySelector('[data-k=dashed]').checked = da.length > 0;
     ['dash1', 'gap1', 'dash2'].forEach((k, i) => { const inp = el.querySelector(`[data-k=${k}]`); if (document.activeElement !== inp) inp.value = da[i] != null ? da[i] : ''; });
@@ -342,12 +353,12 @@
   const expanded = new Set();
   const typeIcon = it => {
     const k = LV.kind(it);
-    const m = { layer: '<rect x="2" y="3" width="12" height="10" rx="1" fill="#cfe2f5" stroke="#3a6c97"/>', group: '<path d="M2 4h5l1 1.5h6V13H2z" fill="#ffe08a" stroke="#a07a10"/>', clip: '<rect x="2" y="2" width="12" height="12" fill="none" stroke="#3a6c97" stroke-dasharray="2 1"/><circle cx="8" cy="8" r="3.5" fill="#9cc6ee"/>', text: '<path d="M3 4h10M8 4v9" stroke="#0d2740" stroke-width="1.8"/>', areatext: '<rect x="2" y="2" width="12" height="12" fill="none" stroke="#9aaabb"/><path d="M4.5 5h7M8 5v7" stroke="#0d2740" stroke-width="1.5"/>', pathtext: '<path d="M2 12c3-6 9-6 12 0" fill="none" stroke="#9aaabb"/><path d="M5 4h6M8 4v5" stroke="#0d2740" stroke-width="1.5"/>', image: '<rect x="2" y="3" width="12" height="10" fill="#bfe3ff" stroke="#3a6c97"/><path d="M2 12l4-4 3 3 2-2 3 3" fill="#4cb82c"/>', compound: '<path d="M2 2h12v12H2z M5 5v6h6V5z" fill="#4a90d9" fill-rule="evenodd"/>' };
+    const m = { layer: '<rect x="2" y="3" width="12" height="10" rx="1" fill="#cfe2f5" stroke="#3a6c97"/>', group: '<path d="M2 4h5l1 1.5h6V13H2z" fill="#ffe08a" stroke="#a07a10"/>', clip: '<rect x="2" y="2" width="12" height="12" fill="none" stroke="#3a6c97" stroke-dasharray="2 1"/><circle cx="8" cy="8" r="3.5" fill="#9cc6ee"/>', text: '<path d="M3 4h10M8 4v9" stroke="#0d2740" stroke-width="1.8"/>', areatext: '<rect x="2" y="2" width="12" height="12" fill="none" stroke="#9aaabb"/><path d="M4.5 5h7M8 5v7" stroke="#0d2740" stroke-width="1.5"/>', pathtext: '<path d="M2 12c3-6 9-6 12 0" fill="none" stroke="#9aaabb"/><path d="M5 4h6M8 4v5" stroke="#0d2740" stroke-width="1.5"/>', image: '<rect x="2" y="3" width="12" height="10" fill="#bfe3ff" stroke="#3a6c97"/><path d="M2 12l4-4 3 3 2-2 3 3" fill="#4cb82c"/>', trace: '<rect x="2" y="3" width="12" height="10" fill="#fff" stroke="#3a6c97"/><path d="M3 12c2-6 4-1 6-5s3-2 4-3" fill="none" stroke="#e0457b" stroke-width="1.5"/>', symbol: '<path d="M8 1.5l1.9 4 4.4.4-3.3 3 1 4.3L8 11l-4 2.2 1-4.3-3.3-3 4.4-.4z" fill="#ffd36e" stroke="#a07a10"/>', blend: '<rect x="1.5" y="8.5" width="6" height="6" fill="#4a90d9"/><rect x="5" y="5" width="6" height="6" fill="#8fb8e6" opacity=".8"/><rect x="8.5" y="1.5" width="6" height="6" fill="#cfe2f5" stroke="#3a6c97"/>', compound: '<path d="M2 2h12v12H2z M5 5v6h6V5z" fill="#4a90d9" fill-rule="evenodd"/>' };
     if (m[k]) return m[k];
     const t = LV.firstPaintable(it), fill = t && t.fillColor ? (t.fillColor.type === 'gradient' ? LV.css(t.fillColor.gradient.stops[0].color) : LV.css(t.fillColor)) : 'none', st = t && t.strokeColor && t.strokeColor.type !== 'gradient' ? LV.css(t.strokeColor) : (fill === 'none' ? '#0d2740' : 'none');
     return `<path d="M2.5 12.5C4 4 10 3 13.5 3.5L12 13z" fill="${esc(fill)}" stroke="${esc(st)}" stroke-width="1.2"/>`;
   };
-  const itemName = it => it.name || ({ path: it.closed ? 'Path' : 'Open Path', compound: 'Compound Path', group: 'Group', clip: 'Clip Group', text: (it.content || 'Text').split('\n')[0].slice(0, 30), areatext: (it.data.text || 'Area Type').split('\n')[0].slice(0, 30), pathtext: (it.data.text || 'Text on Path').slice(0, 30), image: 'Image' }[LV.kind(it)] || 'Item');
+  const itemName = it => it.name || ({ path: it.closed ? 'Path' : 'Open Path', compound: 'Compound Path', group: 'Group', clip: 'Clip Group', text: (it.content || 'Text').split('\n')[0].slice(0, 30), areatext: (it.data.text || 'Area Type').split('\n')[0].slice(0, 30), pathtext: (it.data.text || 'Text on Path').slice(0, 30), image: 'Image', trace: 'Image Tracing', symbol: 'Symbol', blend: 'Blend' }[LV.kind(it)] || 'Item');
   const EYE = '<svg viewBox="0 0 16 16"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" fill="#fff" stroke="#3a5a7a"/><circle cx="8" cy="8" r="2.2" fill="#2f5f9a"/></svg>';
   const LOCK = '<svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1" fill="#e3a21a" stroke="#8a5a0a"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="#5a5a5a" stroke-width="1.4"/></svg>';
   function renderLayers() {
@@ -450,7 +461,7 @@
       Object.entries(map).forEach(([k, els]) => els.forEach(s => $(s).hidden = k !== t.dataset.t));
     });
     tabs('#tabsTop', { props: ['#pProps'], align: ['#pAlign'] });
-    tabs('#tabsBot', { layers: ['#layers', '#bar-layers'], boards: ['#boards', '#bar-boards'], hist: ['#hist'] });
+    tabs('#tabsBot', { layers: ['#layers', '#bar-layers'], boards: ['#boards', '#bar-boards'], syms: ['#symbols', '#bar-symbols'], hist: ['#hist'] });
   };
 
   /* ---------------- command bar ---------------- */
@@ -460,7 +471,14 @@
   function buildCmd() {
     const id = LV.toolId, el = $('#cmd'), name = LV.tool ? LV.tool.name : '';
     let h = `<span class="tname">${esc(name)}</span>`;
-    if (id === 'select' || id === 'direct') {
+    const iso = LV.isoRoot();
+    if (iso) h += `<span class="isoBanner" title="Isolation mode: only the symbol's artwork can be selected">✎ Editing symbol <b>${esc((LV.sym.find(iso.data.symEdit.sym) || {}).name || '')}</b><button class="aero-btn small pri" data-cact="isodone">Done</button><button class="aero-btn small" data-cact="isocancel">Cancel</button></span><span class="sep"></span>`;
+    const profOpts = () => Object.entries(LV.width.PROFILES).map(([k, p]) => `<option value="${k}">${esc(p.name)}</option>`).join('');
+    if (id === 'shaper') h += `<span class="hint">Draw a rough rectangle, ellipse, triangle, polygon or line — it becomes a clean live shape · scribble over an overlap to punch it out, across shapes to merge them, inside one shape to delete it</span>`;
+    else if (id === 'width') h += `<label>Profile <select data-c="wprofile"><option value="">Apply profile…</option>${profOpts()}</select></label><button class="aero-btn small" data-cact="wflip" title="Flip the profile along the path">Flip</button><span class="hint">Drag on a stroke to add a width point · drag a handle (Alt: one side only) · drag the diamond along the path · Delete removes the selected point · double-click to type widths</span>`;
+    else if (id === 'shapebuilder') h += `<span class="hint">Select overlapping shapes, then drag across regions to merge them · Alt-drag (or Alt-click) deletes regions</span>`;
+    else if (id === 'blend') h += `<button class="aero-btn small" data-cact="blendopts">Blend Options…</button><span class="hint">Click a shape, then another shape to blend between them · Object ▸ Blend ▸ Make blends the selection</span>`;
+    else if (id === 'select' || id === 'direct') {
       h += `<span class="refpt" title="Reference point">${REF.map(r => `<i data-r="${r}" class="${r === LV.refPt ? 'on' : ''}"></i>`).join('')}</span>
         <label>X ${num('x', 'X position (relative to the active artboard)')}</label><label>Y ${num('y', 'Y position')}</label>
         <label>W ${num('w', 'Width')}</label><button class="aero-btn small lock${LV.lockRatio ? ' on' : ''}" data-cact="lock" title="Constrain width and height proportions">⛓</button><label>H ${num('h', 'Height')}</label>
@@ -523,6 +541,7 @@
       if ((k === 'abw' || k === 'abh') && commit && v > 0) { LV.board()[k === 'abw' ? 'w' : 'h'] = v; LV.commit('Resize Artboard'); }
       if (k === 'abpreset' && v !== '') { const p = LV.PRESETS[+v]; Object.assign(LV.board(), { w: p[1], h: p[2] }); LV.commit('Artboard Preset'); e.target.value = ''; }
       if (k === 'moveart') LV.prefs.moveArt = v;
+      if (k === 'wprofile' && v) { LV.width.applyProfile(LV.sel, v); e.target.value = ''; }
     };
     el.addEventListener('input', e => onVal(e, false));
     el.addEventListener('change', e => onVal(e, true));
@@ -532,6 +551,9 @@
       const al = e.target.closest('[data-c-align]'); if (al) { setPropFromCmd('align', al.dataset.cAlign); return; }
       const a = e.target.closest('[data-cact]'); if (!a) return; const c = a.dataset.cact;
       if (c === 'lock') { LV.lockRatio = !LV.lockRatio; a.classList.toggle('on', LV.lockRatio); }
+      else if (c === 'isodone') LV.sym.finishEdit(); else if (c === 'isocancel') LV.sym.finishEdit(true);
+      else if (c === 'blendopts') LV.blend.optionsDialog();
+      else if (c === 'wflip') { const ps = LV.sel.filter(p => LV.width.get(p)); ps.forEach(p => LV.width.set(p, LV.width.get(p).pts.map(q => ({ t: 1 - q.t, l: q.r, r: q.l })))); if (ps.length) LV.commit('Flip Width Profile'); }
       else if (c === 'glinear' || c === 'gradial') { const attr = LV.paint.active, s = curSpec(attr); LV.applyPaintToSelection(attr, LV.isGrad(s) ? { ...s, type: c === 'gradial' ? 'radial' : 'linear' } : { type: c === 'gradial' ? 'radial' : 'linear', angle: 0, stops: [[s || '#ffffff', 0], ['#000000', 1]] }, 'Gradient Type'); }
       else if (c === 'grev') act(LV.paint.active + 'Reverse');
       else if (c === 'abnew') LV.newArtboardDialog(); else if (c === 'abdel') LV.deleteArtboard();
@@ -548,7 +570,7 @@
     const ab = LV.board(); $('#stBoard').textContent = `${ab.name} · ${LV.fmt(ab.w)} × ${LV.fmt(ab.h)} px · ${LV.doc.artboards.length} artboard${LV.doc.artboards.length > 1 ? 's' : ''}`;
   }
   let rq = 0;
-  LV.refreshPanels = () => { if (rq) return; rq = requestAnimationFrame(() => { rq = 0; try { refreshPaint(); renderLayers(); renderBoards(); renderSwatches(); refreshCmd(); refreshStatus(); } catch (e) { console.error(e); } }); };
+  LV.refreshPanels = () => { if (rq) return; rq = requestAnimationFrame(() => { rq = 0; try { refreshPaint(); renderLayers(); renderBoards(); renderSwatches(); refreshCmd(); refreshStatus(); (LV.panelHooks || []).forEach(f => f()); } catch (e) { console.error(e); } }); };
   LV.on('selection', LV.refreshPanels); LV.on('changed', LV.refreshPanels);
   LV.on('history', () => Aero.renderHistory($('#hist'), LV.hist, i => { const s = LV.hist.go(i); if (s) LV.restore(s); }));
   LV.on('view', () => { refreshStatus(); const z = document.querySelector('[data-cv=zoom]'); if (z) z.textContent = Math.round(P.view.zoom * 100) + '%'; });

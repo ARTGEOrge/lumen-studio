@@ -186,7 +186,7 @@ const Sample = (() => {
     ['body', 'The consequences reach well beyond stargazing. Migrating birds navigate by the stars and become disoriented by brightly lit towers. Sea turtle hatchlings crawl toward hotel lights instead of the moonlit surf. In people, too much light at night has been linked to disrupted sleep and hormonal rhythms. Darkness, it turns out, is not the absence of something useful. It is an ecosystem service, as real as clean water.'],
     ['body', 'The good news is that light pollution may be the most reversible environmental problem we have. Turn off a light, and the damage stops instantly. Point a fixture downward, and the sky above it begins to recover the same night. There is no cleanup, no half-life, no decades-long wait.'],
     ['sub', 'The certification game'],
-    ['bodyNoInd', 'Westcliffe and its neighbor, Silver Cliff, earned recognition as an International Dark Sky Community in 2015. Since then more than two hundred places worldwide have followed: national parks and remote islands, but also ordinary towns that decided their night was worth protecting. The criteria are practical rather than romantic. Fixtures must be fully shielded. Color temperatures must stay warm. Public lighting must have a plan, and that plan must be enforced.'],
+    ['bodyNoInd', 'Westcliffe and its neighbor, Silver Cliff, earned recognition as an International Dark Sky Community in 2015.^ Since then more than two hundred places worldwide have followed: national parks and remote islands, but also ordinary towns that decided their night was worth protecting. The criteria are practical rather than romantic. Fixtures must be fully shielded. Color temperatures must stay warm. Public lighting must have a plan, and that plan must be enforced.'],
     ['body', 'For small communities the designation has become an unexpected economic engine. Visitors arrive at dusk, stay the night, and leave after breakfast. Motels advertise telescope rentals. One café near Flagstaff sells a “new moon special” on the darkest weekend of every month, and it sells out. “People drive six hours to see what their grandparents saw every night,” Keller says. “That tells you something.”'],
     ['body', 'Not every switch has been easy. Business owners worried that dimmer streets would invite crime; a few residents simply liked their bright yards. Studies have offered little support for the idea that more light means more safety, and well-aimed lighting often improves visibility by reducing glare. Still, persuasion has mostly happened one conversation at a time, and often under the stars themselves.'],
     ['sub', 'What you can do tonight'],
@@ -194,41 +194,53 @@ const Sample = (() => {
     ['body', 'Then go and find some darkness. Give your eyes twenty minutes to adjust, leave your phone in your pocket, and wait. The faint stars arrive first, then the soft river of the galaxy, then the realization that this view has been waiting there, patiently, the whole time. All it ever needed was for us to turn the lights down.'],
     ['body', 'Scientists are paying attention, too. Satellite surveys now track the spread of artificial light from orbit, and citizen scientists contribute tens of thousands of naked-eye star counts every year. The data are sobering — in many places the number of visible stars is halving in under a decade — but they also show how quickly a determined town can reverse the trend. When Westcliffe swapped its fixtures, its readings on the sky-quality meter improved within a single season.'],
     ['sub', 'Better light, not less safety'],
-    ['bodyNoInd', 'None of this means living in the dark. The new generation of fixtures puts light exactly where people walk and park, at a fraction of the energy, and many towns have found the switch pays for itself within a few years. Warm amber LEDs, dimmed after midnight and aimed straight down, read as calm rather than gloomy. Drivers report less glare; pedestrians report they can finally see into the shadows that harsh white lamps used to create. The sky, it turns out, is a side benefit of simply lighting well.'],
+    ['bodyNoInd', 'None of this means living in the dark. The new generation of fixtures puts light exactly where people walk and park, at a fraction of the energy, and many towns have found the switch pays for itself within a few years. Warm amber LEDs, dimmed after midnight and aimed straight down, read as calm rather than gloomy. The sky, it turns out, is a side benefit of simply lighting well.'],
     ['body', 'Back in Westcliffe, the astronomy club’s Saturday sessions now draw more visitors than the town has motel rooms. Keller hands out red flashlights at the door and asks everyone to switch off their headlights before turning into the lot. “The first thing people do when they look up,” she says, “is go quiet. Then they laugh. I think it’s relief.” ■'],
   ];
 
+  const NOTES = ['Designated by DarkSky International (formerly the International Dark-Sky Association), which certifies parks, reserves and communities.'];
   async function build() {
     const W = 612, H = 792;
     const d = M.newDoc({ units: 'in', w: W, h: H, facing: true, pages: 4, margins: { t: 54, b: 54, i: 54, o: 42 }, cols: 2, gutter: 18, bleed: 9, slug: 0 });
     d.grid = { start: 54, step: 13.5 };
-    const ACC = '#d4572a', NAVY = '#14202e', INK = '#1d232b', GREY = '#5b6b7c';
-    d.swatches = ['#000000', '#ffffff', INK, GREY, NAVY, ACC, '#f2c12e', '#2a9d5c', '#1f6fb5', '#5a3fa0', '#efe6d8', '#0a1222'];
+    // a print (CMYK) document: process swatches plus one spot ink for the brand orange
+    d.cmyk = true;
+    d.swatches = [
+      { id: 'paper', name: 'Paper', model: 'cmyk', v: [0, 0, 0, 0] }, { id: 'black', name: 'Black', model: 'cmyk', v: [0, 0, 0, 100] },
+      { id: 'ink', name: 'Ink', model: 'cmyk', v: [72, 62, 52, 78] }, { id: 'navy', name: 'Night Navy', model: 'cmyk', v: [92, 78, 48, 62] },
+      { id: 'grey', name: 'Slate', model: 'cmyk', v: [45, 30, 20, 38] }, { id: 'acc', name: 'Horizon Orange (PMS 7579 C)', model: 'cmyk', v: [0, 78, 92, 6], spot: true },
+      { id: 'sand', name: 'Sand', model: 'cmyk', v: [4, 6, 12, 0] }, { id: 'rule', name: 'Rule Grey', model: 'cmyk', v: [18, 10, 6, 6] },
+      { id: 'gold', name: 'C=0 M=20 Y=90 K=0', model: 'cmyk', v: [0, 20, 90, 0] }, { id: 'teal', name: 'C=85 M=10 Y=45 K=0', model: 'cmyk', v: [85, 10, 45, 0] },
+    ];
+    const ACC = '@acc', NAVY = '@navy', INK = '@ink', GREY = '@grey', WHITE = '@paper';
     d.layers[0].name = 'Text & Graphics';
     d.layers.unshift({ id: 'Lnotes', name: 'Notes', color: '#d9534f', visible: true, locked: false });
     const L1 = d.layers[1].id;
     d.paraStyles = {
       basic: { name: 'Basic Paragraph', font: 'Source Serif 4', size: 10, lead: 13.5, color: INK },
-      body: { name: 'Body', basedOn: 'basic', size: 9.5, lead: 13.5, align: 'justify', indF: 12, hyph: true, grid: true },
+      body: { name: 'Body', basedOn: 'basic', size: 9.5, lead: 13.5, align: 'justify', indF: 12, hyph: true, grid: true, composer: 'paragraph' },
       bodyNoInd: { name: 'Body No Indent', basedOn: 'body', indF: 0 },
       bodyFirst: { name: 'Body First (Drop Cap)', basedOn: 'body', indF: 0, dropL: 3, dropC: 1, next: 'body' },
       sub: { name: 'Subhead', font: 'Montserrat', weight: 700, size: 7.5, lead: 13.5, caps: 'all', track: 140, color: ACC, spB: 6, hyph: false, grid: true, next: 'bodyNoInd' },
       kicker: { name: 'Kicker', font: 'Oswald', weight: 500, size: 10, track: 260, caps: 'all', color: ACC, hyph: false },
       head: { name: 'Headline', font: 'Playfair Display', weight: 900, size: 54, lead: 54, track: -10, color: NAVY, hyph: false },
       head2: { name: 'Headline Small', basedOn: 'head', size: 30, lead: 32 },
-      deck: { name: 'Deck', font: 'Source Serif 4', italic: true, size: 13, lead: 17, color: '#3a4a5c', hyph: false },
+      deck: { name: 'Deck', font: 'Source Serif 4', italic: true, size: 13, lead: 17, color: '@navy/80', hyph: false },
       byline: { name: 'Byline', font: 'Montserrat', weight: 600, size: 6.5, track: 160, caps: 'all', color: GREY, hyph: false },
       caption: { name: 'Caption', font: 'Montserrat', size: 6.8, lead: 9, color: GREY, hyph: false },
       capTitle: { name: 'Caption Title', font: 'Montserrat', weight: 700, size: 7, lead: 9, caps: 'all', track: 100, color: NAVY, hyph: false, next: 'caption' },
       pull: { name: 'Pull Quote', font: 'Playfair Display', italic: true, size: 17, lead: 21, color: NAVY, align: 'left', hyph: false },
       pullBy: { name: 'Pull Quote Source', font: 'Montserrat', weight: 600, size: 6.5, track: 160, caps: 'all', color: ACC, spB: 6 },
       folio: { name: 'Folio', font: 'Montserrat', weight: 600, size: 6.5, track: 180, caps: 'all', color: GREY, hyph: false },
-      mast: { name: 'Masthead', font: 'Playfair Display', weight: 900, size: 104, lead: 104, track: 40, color: '#ffffff', align: 'center', hyph: false },
-      issue: { name: 'Cover Issue Line', font: 'Montserrat', weight: 600, size: 8, track: 340, caps: 'all', color: '#ffffff', align: 'center', hyph: false },
-      coverHead: { name: 'Cover Headline', font: 'Playfair Display', weight: 900, size: 44, lead: 44, color: '#ffffff', hyph: false },
-      coverDeck: { name: 'Cover Deck', font: 'Source Serif 4', italic: true, size: 14, lead: 18.5, color: '#f3e7d6', spB: 8, hyph: false },
-      coverLine: { name: 'Cover Line', font: 'Montserrat', weight: 600, size: 7.5, lead: 11, track: 120, caps: 'all', color: '#ffffff', hyph: false },
+      mast: { name: 'Masthead', font: 'Playfair Display', weight: 900, size: 104, lead: 104, track: 40, color: WHITE, align: 'center', hyph: false },
+      issue: { name: 'Cover Issue Line', font: 'Montserrat', weight: 600, size: 8, track: 340, caps: 'all', color: WHITE, align: 'center', hyph: false },
+      coverHead: { name: 'Cover Headline', font: 'Playfair Display', weight: 900, size: 44, lead: 44, color: WHITE, hyph: false },
+      coverDeck: { name: 'Cover Deck', font: 'Source Serif 4', italic: true, size: 14, lead: 18.5, color: '@sand', spB: 8, hyph: false },
+      coverLine: { name: 'Cover Line', font: 'Montserrat', weight: 600, size: 7.5, lead: 11, track: 120, caps: 'all', color: WHITE, hyph: false },
       tableNote: { name: 'Table Note', font: 'Source Serif 4', italic: true, size: 8, lead: 11, color: GREY },
+      listItem: { name: 'Caption List', basedOn: 'caption', list: 'bullet', lchar: '\u2022', indL: 9, indF: -9, spB: 1.5 },
+      footnote: { name: 'Footnote', font: 'Source Serif 4', size: 7, lead: 9, color: GREY },
+      inside: { name: 'Cover Contents', font: 'Montserrat', weight: 600, size: 7.5, lead: 12, track: 60, color: WHITE, hyph: false, tabs: [{ x: 118, t: 'r', ld: '.' }] },
     };
     d.charStyles = { em: { name: 'Emphasis', italic: true }, strong: { name: 'Strong', weight: 700 }, drop: { name: 'Drop Cap', font: 'Playfair Display', weight: 900, color: ACC }, accent: { name: 'Accent', color: ACC, weight: 700 } };
 
@@ -236,13 +248,13 @@ const Sample = (() => {
     const imgs = {};
     const mk = (key, w, h, name) => { const c = PAINT[key](w, h); const id = 'G' + key; imgs[id] = { name, mime: 'image/jpeg', data: toJpeg(c), w, h }; return id; };
     const IM = {
-      cover: mk('cover', 1260, 1620, 'milky-way-over-the-sangre-de-cristo.jpg'), obs: mk('observatory', 1600, 860, 'observatory-star-trails.jpg'),
+      cover: mk('cover', 1400, 1800, 'milky-way-over-the-sangre-de-cristo.jpg'), obs: mk('observatory', 1600, 860, 'observatory-star-trails.jpg'),
       aurora: mk('aurora', 1000, 700, 'aurora-lake.jpg'), desert: mk('desert', 1000, 700, 'desert-dusk.jpg'), coast: mk('coast', 1000, 700, 'coast-lighthouse.jpg'),
       city: mk('city', 1000, 700, 'city-glow.jpg'), tent: mk('tent', 1000, 700, 'camp-under-the-galaxy.jpg'),
     };
 
     const story = (paras, ps) => {
-      const s = M.newStory(d, ps || 'basic');
+      const s = M.newStory(d, ps || 'basic'); const notes = [...NOTES];
       const text = [], ca = [];
       const em = M.attrIdx(s, { cs: 'em' }), drop = M.attrIdx(s, { cs: 'drop' }), acc = M.attrIdx(s, { cs: 'accent' });
       s.paras = [];
@@ -251,6 +263,7 @@ const Sample = (() => {
         for (const ch of t) {
           if (ch === '*') { mode = mode === 1 ? 0 : 1; continue; }
           if (ch === '~') { mode = mode === 2 ? 0 : 2; continue; }
+          if (ch === '^') { const id = 'N' + M.uid(); s.notes[id] = { text: notes.shift() || '' }; text.push('\uE001'); ca.push(M.attrIdx(s, { fn: id })); first = false; continue; }
           text.push(ch);
           ca.push(st === 'bodyFirst' && first ? drop : mode === 1 ? em : mode === 2 ? acc : 0); first = false;
         }
@@ -286,13 +299,13 @@ const Sample = (() => {
     // ---- page 1: cover
     img(p1, -9, -9, 630, 810, IM.cover, { name: 'Cover image' });
     // gradient scrims keep the cover type legible (vector axial shadings with soft masks in the PDF)
-    rect(p1, -9, 400, 630, 401, null, { grad: { angle: 90, c0: '#060a16', o0: 0, c1: '#060a16', o1: .82 }, name: 'Bottom scrim' });
-    rect(p1, -9, -9, 630, 250, null, { grad: { angle: 90, c0: '#050816', o0: .55, c1: '#050816', o1: 0 }, name: 'Top scrim' });
+    rect(p1, -9, 400, 630, 401, null, { grad: { angle: 90, c0: 'cmyk(85,75,45,85)', o0: 0, c1: 'cmyk(85,75,45,85)', o1: .82 }, name: 'Bottom scrim' });
+    rect(p1, -9, -9, 630, 250, null, { grad: { angle: 90, c0: 'cmyk(85,75,45,85)', o0: .55, c1: 'cmyk(85,75,45,85)', o1: 0 }, name: 'Top scrim' });
     tf(p1, 24, 36, 564, 104, [['mast', 'HORIZON']]);
     tf(p1, 24, 138, 564, 14, [['issue', 'The Dark-Sky Issue  ·  Autumn 2026  ·  No. 07']]);
     tf(p1, 48, 556, 380, 170, [['coverHead', 'The Quiet Return of the Night Sky'], ['coverDeck', 'How a handful of small towns switched off the glare — and got the Milky Way back.']]);
-    line(p1, 446, 562, 118, '#ffffff', .6);
-    tf(p1, 446, 570, 118, 150, [['coverLine', '~Inside~'], ['coverLine', 'Six dark-sky parks worth the drive'], ['coverLine', 'A beginner’s guide to the Bortle scale'], ['coverLine', 'Why amber is the new white']], { });
+    line(p1, 446, 562, 118, WHITE, .6);
+    tf(p1, 446, 570, 118, 150, [['coverLine', '~Inside~'], ['inside', 'Chasing darkness\t2'], ['inside', 'Field notes\t4'], ['inside', 'Bortle scale guide\t4'], ['coverLine', 'Why amber is the new white']], { });
     tf(p1, 48, 738, 300, 12, [['coverLine', '$9.95  ·  horizon-magazine.org']]);
 
     // ---- page 2: feature opener
@@ -302,7 +315,7 @@ const Sample = (() => {
     tf(p2, 42, 186, 516, 10, [['byline', 'Words by Mara Ellison  ·  Photographs by Theo Vance']]);
     img(p2, 42, 204, 516, 246, IM.obs, { name: 'Observatory' });
     tf(p2, 42, 455, 516, 12, [['caption', '~Long exposure~  The Keller Observatory dome glows red under a 90-minute star trail. Red light preserves night vision and barely scatters into the sky.']]);
-    line(p2, 42, 472, 516, '#c5ccd6', .5);
+    line(p2, 42, 472, 516, '@rule', .5);
     const s0 = story(ARTICLE);
     const fA = M.newItem('text', 42, 484, 516, 254, { story: s0.id, layer: L1, cols: 2, gutter: 18 });
     const fB = M.newItem('text', 54, 54, 516, 684, { story: s0.id, layer: L1, cols: 2, gutter: 18 });
@@ -330,11 +343,13 @@ const Sample = (() => {
     tb.colW = [200, 136, 80, 100]; tb.layer = L1; tb.tsize = 7.5;
     const rows = [['Place', 'Region', 'Bortle', 'Best month'], ['Death Valley National Park', 'California, USA', '1–2', 'November'], ['Big Bend National Park', 'Texas, USA', '1', 'October'], ['Westcliffe & Silver Cliff', 'Colorado, USA', '2', 'September'], ['Lake Laberge', 'Yukon, Canada', '2', 'September'], ['Mayo Dark Sky Park', 'Ireland', '2–3', 'January'], ['Tucson (urban core)', 'Arizona, USA', '6', 'December']];
     rows.forEach((r, i) => r.forEach((t, j) => { tb.cells[i][j] = { t, ...(j === 2 ? { align: 'center' } : {}) }; }));
-    tb.hfill = NAVY; tb.zebra = '#f1ede6'; tb.bcolor = '#c9cfd8'; tb.bw = .4;
+    tb.hfill = NAVY; tb.hcolor = WHITE; tb.tcolor = INK; tb.zebra = '@sand'; tb.bcolor = '@rule'; tb.bw = .4;
+    // the two September rows share a merged "Best month" cell
+    Tables.merge(tb, 3, 3, 4, 3); tb.cells[3][3].t = 'September'; tb.cells[3][3].align = 'center';
     p4.items.push(tb);
     tf(p4, 42, 652, 330, 40, [['tableNote', 'The Bortle scale rates night-sky brightness from 1 (an excellent dark site, where the zodiacal light is obvious) to 9 (an inner-city sky). Most suburbs sit at 5 or 6.']]);
-    rect(p4, 390, 652, 168, 86, '#f1ede6', { radius: 4 });
-    tf(p4, 400, 662, 148, 66, [['capTitle', 'Next issue'], ['caption', 'Photographing meteors with a phone, the return of the night-blooming garden, and a field guide to winter constellations.']]);
+    rect(p4, 390, 652, 168, 86, '@sand', { radius: 4 });
+    tf(p4, 400, 662, 148, 66, [['capTitle', 'Next issue'], ['listItem', 'Photographing meteors with a phone'], ['listItem', 'The night-blooming garden returns'], ['listItem', 'A field guide to winter constellations']]);
     // a note on the Notes layer (non-printing style hint)
     // ruler guides
     p2.guides.push({ o: 'h', pos: 472 }); p3.guides.push({ o: 'v', pos: 312 });

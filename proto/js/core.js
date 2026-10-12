@@ -81,7 +81,17 @@
 
   /* ---------------- styles ---------------- */
   // color of a color style in the active color mode (doc._mode: 'light' | 'dark', set by whoever is drawing)
-  LP.styleColor = (s, doc) => (doc && doc._mode === 'dark' && s.dark && s.dark.color) ? { color: s.dark.color, a: s.dark.a ?? 1 } : { color: s.color, a: s.a ?? 1 };
+  // named color modes: doc.modes = [{id, name}] (the first is the default); color styles keep a value per mode in s.modes
+  LP.DEFAULT_MODES = () => [{ id: 'light', name: 'Light' }, { id: 'dark', name: 'Dark' }];
+  LP.modesOf = doc => (doc && Array.isArray(doc.modes) && doc.modes.length) ? doc.modes : LP.DEFAULT_MODES();
+  LP.defaultMode = doc => LP.modesOf(doc)[0].id;
+  LP.nodeMode = (doc, n) => (n && n.cmode && LP.modesOf(doc).some(m => m.id === n.cmode)) ? n.cmode : LP.defaultMode(doc);
+  LP.styleColor = (s, doc) => {
+    const m = doc && doc._mode;
+    if (m && s.modes && s.modes[m] && s.modes[m].color) return { color: s.modes[m].color, a: s.modes[m].a ?? 1 };
+    if (m === 'dark' && s.dark && s.dark.color) return { color: s.dark.color, a: s.dark.a ?? 1 }; // 1.1 files
+    return { color: s.color, a: s.a ?? 1 };
+  };
   LP.fillColor = (f, doc) => { const s = f.style && doc.colorStyles?.find(x => x.id === f.style); return s ? LP.styleColor(s, doc) : { color: f.color, a: f.a ?? 1 }; };
   LP.TEXT_KEYS = ['font', 'size', 'weight', 'italic', 'lh', 'ls'];
   LP.textProps = (n, doc) => {
@@ -288,6 +298,7 @@
     static isClone(id) { return String(id).includes('/'); }
 
     update() {
+      this.vars = LP.varValues(this.doc);
       this.byId = { '0': this.doc }; this.parent = {}; this.views.clear(); this.kidsMap.clear(); this.text.clear(); this.done.clear(); this.busy.clear();
       const idx = (n, pid) => { this.byId[n.id] = n; this.parent[n.id] = pid; (n.children || []).forEach(c => idx(c, n.id)); };
       this.doc.children.forEach(c => idx(c, '0'));
@@ -719,8 +730,8 @@
   /* ---------------- tree helpers on the raw document ---------------- */
   LP.walk = (n, fn, parent = null) => { fn(n, parent); (n.children || []).forEach(c => LP.walk(c, fn, n)); };
   LP.findParent = (root, id) => { let r = null; LP.walk(root, (n, p) => { if (n.id === id) r = p; }); return r; };
-  LP.FORMAT_VERSION = 2;
-  LP.newDoc = () => ({ format: 'lproto', version: LP.FORMAT_VERSION, id: '0', uid: LP.newId() + LP.newId(), name: 'Untitled', children: [], colorStyles: [], textStyles: [], vars: [], comments: [], images: {}, bg: '#e8ecf1' });
+  LP.FORMAT_VERSION = 3;
+  LP.newDoc = () => ({ format: 'lproto', version: LP.FORMAT_VERSION, id: '0', uid: LP.newId() + LP.newId(), name: 'Untitled', children: [], colorStyles: [], textStyles: [], vars: [], comments: [], modes: LP.DEFAULT_MODES(), images: {}, bg: '#e8ecf1' });
 
   /* ---------------- easing ---------------- */
   LP.EASE = {

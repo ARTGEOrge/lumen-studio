@@ -6,6 +6,8 @@ const APP = 'Lumen Paint';
 function installDoc(d) {
   if (activeStroke) { activeTool?.cancel?.(); }
   cancelTransientTools(); discardAllWet(); floating = null;
+  if (textEdit) { textEdit = null; $('#textpanel').hidden = true; }
+  if (typeof animStop === 'function' && doc) { animStop(); animRT.thumbs.clear(); }
   doc = d; doc.selBox = null; selPath = null; composedVer = -1;
   resetGuides();
   if (R) { R.ensureDoc(); R.gc(); R.bk = R.ak = null; }
@@ -15,6 +17,7 @@ function finishDocLoad(label) {
   hist.reset(label, snapshot());
   Aero.setDoc(doc.name, false);
   $('#st-size').textContent = `${doc.w} × ${doc.h} px`;
+  const animWas = !$('#animbar').hidden; renderAnimBar(); if (animWas !== !$('#animbar').hidden) resizeStage();
   fitView(true); renderLayers(); renderHistoryPanel(); renderCmd(); renderBrushList();
   doc.ver++; requestRender();
   if (TL.segs.length === 0) tlCapture(true);
@@ -22,6 +25,7 @@ function finishDocLoad(label) {
 function onDocResized() { if (R) R.ensureDoc(); composedVer = -1; $('#st-size').textContent = `${doc.w} × ${doc.h} px`; fitView(); renderLayers(); }
 function afterChange() {
   renderHistoryPanel(); refreshLayersSoon(); tlCapture();
+  if (animOn()) { renderAnimBar(); animThumbsSoon(); }
   $('#st-msg').textContent = hist.items[hist.index]?.label || 'Ready';
 }
 function newDocument(w, h, bg = 'white', paper = 'cold', name = 'Untitled') {
@@ -62,6 +66,8 @@ async function openFiles(files, asImport) {
   for (const f of files) {
     const e = ext(f.name);
     try {
+      if (e === 'abr') { await cmdImportAbr([f]); continue; }
+      if (e === 'lpbrush') { importBrushFile(f); continue; }
       if (e === 'lpaint') { if (!(await confirmDiscard())) return; Aero.busy('Opening ' + f.name + '…'); await sleep(20); try { await loadLpaint(f.data, f.name, f.path); } finally { Aero.busy(); } Aero.toast('Opened ' + f.name); }
       else if (e === 'psd' || e === 'psb') { if (asImport === true) await loadPSD(f.data, f.name, true); else { if (!(await confirmDiscard())) return; await loadPSD(f.data, f.name, false); } }
       else {
@@ -138,7 +144,7 @@ function cmdNewGroup() { if (!prepEdit()) return; const G = new Layer('group', '
 function cmdGroupActive() { if (!prepEdit() || !doc.active) return; const L = doc.active, list = parentList(L), i = list.indexOf(L); const G = new Layer('group', 'Group ' + (allLayers().filter(l => l.type === 'group').length + 1), doc.w, doc.h); list.splice(i, 1, G); G.children.push(L); L.clip = false; doc.active = L; doc.ver++; histPush('Group Layers'); }
 function cmdUngroup() { if (!prepEdit()) return; const G = doc.active?.type === 'group' ? doc.active : parentOf(doc.active); if (!G) { Aero.toast('Select a group (or a layer inside one) to ungroup'); return; } const list = parentList(G), i = list.indexOf(G); list.splice(i, 1, ...G.children); doc.active = G.children[G.children.length - 1] || list[0]; doc.ver++; histPush('Ungroup'); }
 function cmdNewFill() { if (!prepEdit()) return; const L = new Layer('fill', 'Fill', doc.w, doc.h); L.color = FG.slice(); insertLayer(L, doc.active); doc.ver++; histPush('New Fill Layer'); }
-function cloneLayer(L) { const C = new Layer(L.type, L.name + ' copy', doc.w, doc.h); Object.assign(C, { visible: L.visible, opacity: L.opacity, blend: L.blend, lockAlpha: L.lockAlpha, clip: L.clip, color: L.color.slice(), open: L.open }); if (L.tiles) C.tiles = L.tiles.slice(); if (L.children) C.children = L.children.map(cloneLayer).map(x => (x.name = x.name.replace(/ copy$/, ''), x)); return C; }
+function cloneLayer(L) { const C = new Layer(L.type, L.name + ' copy', doc.w, doc.h); Object.assign(C, { visible: L.visible, opacity: L.opacity, blend: L.blend, lockAlpha: L.lockAlpha, clip: L.clip, color: L.color.slice(), open: L.open, maskOn: L.maskOn, maskLinked: L.maskLinked, text: L.text }); if (L.tiles) C.tiles = L.tiles.slice(); if (L.mask) { C.mask = newMask(C); C.mask.tiles = L.mask.tiles.slice(); } if (L.children) C.children = L.children.map(cloneLayer).map(x => (x.name = x.name.replace(/ copy$/, ''), x)); return C; }
 function cmdDuplicate() { if (!prepEdit() || !doc.active) return; freezeAll(); const C = cloneLayer(doc.active); insertLayer(C, doc.active); doc.ver++; histPush('Duplicate Layer'); }
 function cmdDeleteLayer() {
   if (!prepEdit() || !doc.active) return; const L = doc.active, list = parentList(L), i = list.indexOf(L);
@@ -154,17 +160,18 @@ function cmdMergeDown() {
   if (i <= 0) { Aero.toast('No layer below to merge into'); return; }
   const B = list[i - 1];
   if (B.type !== 'pixel') { Aero.toast('The layer below must be a pixel layer'); return; }
+  freezeAll();
   const tmpB = cloneLayer(B); tmpB.opacity = 1; tmpB.blend = 'normal'; tmpB.visible = true; tmpB.clip = false;
   const tmpL = { ...L }; Object.setPrototypeOf(tmpL, Layer.prototype); tmpL.visible = true;
   R.ensureDoc(); const out = composeToRGBA([tmpB, L.visible ? L : tmpL]);
   writeRegion(B, 0, 0, doc.w, doc.h, out, false);
   for (let k = 0; k < B.tiles.length; k++) if (B.tiles[k] && tileEmpty(B.tiles[k])) { B.tiles[k] = null; B.owned.delete(k); }
-  removeLayer(L); doc.active = B; doc.ver++; histPush('Merge Down'); R.gc(); layerThumbDirty(B);
+  B.mask = null; B.text = null; removeLayer(L); doc.active = B; doc.editMask = false; doc.ver++; histPush('Merge Down'); R.gc(); layerThumbDirty(B);
 }
 function cmdMergeGroup() {
   if (!prepEdit()) return; const G = doc.active?.type === 'group' ? doc.active : null; if (!G) { Aero.toast('Select a group to merge'); return; }
   const out = composeToRGBA(G.children);
-  const L = new Layer('pixel', G.name, doc.w, doc.h); writeRegion(L, 0, 0, doc.w, doc.h, out); Object.assign(L, { opacity: G.opacity, blend: G.blend, visible: G.visible, clip: G.clip });
+  const L = new Layer('pixel', G.name, doc.w, doc.h); writeRegion(L, 0, 0, doc.w, doc.h, out); Object.assign(L, { opacity: G.opacity, blend: G.blend === 'pass-through' ? 'normal' : G.blend, visible: G.visible, clip: G.clip, mask: G.mask, maskOn: G.maskOn, maskLinked: G.maskLinked }); if (L.mask) L.mask.owner = L;
   const list = parentList(G); list.splice(list.indexOf(G), 1, L); doc.active = L; doc.ver++; histPush('Merge Group'); R.gc();
 }
 function cmdFlatten() {
@@ -174,14 +181,15 @@ function cmdFlatten() {
   doc.root = [L]; doc.active = L; doc.ver++; histPush('Flatten Image'); R.gc();
 }
 function cmdClearLayer() {
-  if (!prepEdit()) return; const L = doc.active; if (!L || L.type !== 'pixel') return;
+  if (!prepEdit()) return; const L = paintTarget(); if (!L || L.type !== 'pixel') return;
+  if (L.text) L.text = null;
   if (doc.sel) { const sel = doc.sel, W = doc.w, b = doc.selBox; if (!b) return; forPixels(L, [b.x, b.y, b.x + b.w, b.y + b.h], true, (t, o, x, y) => { t[o + 3] = t[o + 3] * (1 - sel[y * W + x] / 255); }); markDirty(L); }
   else { for (let i = 0; i < L.tiles.length; i++) if (L.tiles[i]) { L.tiles[i] = null; L.dirty.add(i); } markDirty(L); }
   histPush('Clear'); layerThumbDirty(L);
 }
 function cmdFillFG() {
   if (!prepEdit()) return; const L = requirePixelLayer(); if (!L) return;
-  const m = new Uint8Array(doc.w * doc.h).fill(255); paintMask(L, m, FG); histPush('Fill'); layerThumbDirty(L);
+  const m = new Uint8Array(doc.w * doc.h).fill(255); paintMask(L, m, paintColor(L, FG)); histPush('Fill'); layerThumbDirty(L);
 }
 function cmdFlipLayer(h) {
   if (!prepEdit()) return; const L = requirePixelLayer(); if (!L) return;
@@ -193,7 +201,7 @@ function cmdMoveLayer(dir) {
   if (!prepEdit() || !doc.active) return; const L = doc.active, list = parentList(L), i = list.indexOf(L), j = i + dir;
   if (j < 0 || j >= list.length) return; list.splice(i, 1); list.splice(j, 0, L); if (list[0].clip) list[0].clip = false; doc.ver++; histPush(dir > 0 ? 'Move Layer Up' : 'Move Layer Down');
 }
-function cmdSelectAlpha() { const L = doc.active; if (!L || L.type !== 'pixel') return; const d = layerRGBA(L), m = new Uint8Array(doc.w * doc.h); for (let i = 0; i < m.length; i++) m[i] = d[i * 4 + 3]; setSelection(m, 'Select Layer Pixels'); }
+function cmdSelectAlpha() { if (doc.editMask && doc.active?.mask) return cmdMaskToSelection(); const L = doc.active; if (!L || L.type !== 'pixel') return; const d = layerRGBA(L), m = new Uint8Array(doc.w * doc.h); for (let i = 0; i < m.length; i++) m[i] = d[i * 4 + 3]; setSelection(m, 'Select Layer Pixels'); }
 function cmdFeather() {
   if (!doc.sel) { Aero.toast('No selection'); return; }
   Aero.dialog({ title: 'Feather Selection', fields: [{ key: 'r', label: 'Radius', type: 'range', min: 1, max: 100, value: 8, fmt: v => v + ' px' }], onOK: v => {
@@ -205,9 +213,10 @@ function cmdFeather() {
   } });
 }
 /* ---------- canvas commands ---------- */
-function transformDoc(nw, nh, mapFn, label) { // mapFn(L) → new tiles via RGBA
+function transformDoc(nw, nh, mapFn, label, textFn = () => null) { // mapFn(L) → new tiles via RGBA; textFn(props) → new text props, or null to rasterize
   if (!prepEdit()) return;
-  const datas = pixelLayers().map(L => [L, mapFn(layerRGBA(L))]);
+  const datas = tileLayers().map(L => [L, mapFn(layerRGBA(L))]);
+  for (const L of pixelLayers()) if (L.text) L.text = textFn(L.text);
   const sel = null;
   doc.w = nw; doc.h = nh; doc.tw = Math.ceil(nw / TS); doc.th = Math.ceil(nh / TS);
   for (const [L, d] of datas) { L.tiles = new Array(doc.tw * doc.th).fill(null); L.owned.clear(); writeRegion(L, 0, 0, nw, nh, d); }
@@ -220,7 +229,7 @@ function dlgCanvasSize() {
       const nw = clamp(v.w | 0, 16, MAX_DIM), nh = clamp(v.h | 0, 16, MAX_DIM); if (nw * nh > MAX_PIXELS) return Aero.alert('Too large', 'Canvas too large.');
       const ow = doc.w, oh = doc.h, ax = { c: 0.5, tl: 0, t: 0.5, b: 0.5, l: 0, r: 1 }[v.a], ay = { c: 0.5, tl: 0, t: 0, b: 1, l: 0.5, r: 0.5 }[v.a];
       const dx = Math.round((nw - ow) * ax), dy = Math.round((nh - oh) * ay);
-      transformDoc(nw, nh, d => { const o = new Uint8ClampedArray(nw * nh * 4); for (let y = 0; y < oh; y++) { const ty = y + dy; if (ty < 0 || ty >= nh) continue; for (let x = 0; x < ow; x++) { const tx = x + dx; if (tx < 0 || tx >= nw) continue; const s = (y * ow + x) * 4, t = (ty * nw + tx) * 4; o[t] = d[s]; o[t + 1] = d[s + 1]; o[t + 2] = d[s + 2]; o[t + 3] = d[s + 3]; } } return o; }, 'Canvas Size');
+      transformDoc(nw, nh, d => { const o = new Uint8ClampedArray(nw * nh * 4); for (let y = 0; y < oh; y++) { const ty = y + dy; if (ty < 0 || ty >= nh) continue; for (let x = 0; x < ow; x++) { const tx = x + dx; if (tx < 0 || tx >= nw) continue; const s = (y * ow + x) * 4, t = (ty * nw + tx) * 4; o[t] = d[s]; o[t + 1] = d[s + 1]; o[t + 2] = d[s + 2]; o[t + 3] = d[s + 3]; } } return o; }, 'Canvas Size', t => ({ ...t, x: t.x + dx, y: t.y + dy }));
     } });
 }
 function dlgResize() {
@@ -229,7 +238,7 @@ function dlgResize() {
     onOK: v => {
       const s = v.p / 100, nw = clamp(Math.round(doc.w * s), 16, MAX_DIM), nh = clamp(Math.round(doc.h * s), 16, MAX_DIM); if (nw * nh > MAX_PIXELS) return Aero.alert('Too large', 'Canvas too large.');
       const ow = doc.w, oh = doc.h;
-      transformDoc(nw, nh, d => { const c = new OffscreenCanvas(nw, nh), x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingQuality = 'high'; x.drawImage(rgbaToCanvas(ow, oh, d), 0, 0, nw, nh); return x.getImageData(0, 0, nw, nh).data; }, 'Resize Image');
+      transformDoc(nw, nh, d => { const c = new OffscreenCanvas(nw, nh), x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingQuality = 'high'; x.drawImage(rgbaToCanvas(ow, oh, d), 0, 0, nw, nh); return x.getImageData(0, 0, nw, nh).data; }, 'Resize Image', t => ({ ...t, x: t.x * nw / ow, y: t.y * nh / oh, size: Math.max(1, t.size * nw / ow) }));
     } });
 }
 function cmdRotateCanvas(cw) {
@@ -302,12 +311,13 @@ function toggleRef() { const p = $('#refpanel'); p.hidden = !p.hidden; if (!p.hi
 /* ---------- dialogs ---------- */
 function dlgPrefs() {
   Aero.dialog({ title: 'Preferences', fields: [
-    { key: 'g', label: 'Pressure curve', type: 'range', min: 0.4, max: 2.5, step: 0.05, value: prefs.pressureGamma, fmt: v => v < 0.95 ? 'soft ' + v.toFixed(2) : v > 1.05 ? 'firm ' + v.toFixed(2) : 'linear' },
+    { key: 'g', label: prefs.pressureCurve ? 'Pressure (custom curve set)' : 'Pressure curve', type: 'range', min: 0.4, max: 2.5, step: 0.05, value: prefs.pressureGamma, fmt: v => v < 0.95 ? 'soft ' + v.toFixed(2) : v > 1.05 ? 'firm ' + v.toFixed(2) : 'linear' },
     { key: 'mt', label: 'Taper mouse strokes', type: 'checkbox', value: prefs.mouseTaper },
     { key: 'tilt', label: 'Use pen tilt', type: 'checkbox', value: prefs.tiltEnabled },
     { key: 'touch', label: 'Paint with finger (until a pen is used)', type: 'checkbox', value: prefs.touchPaint },
     { key: 'tl', label: 'Record time-lapse', type: 'checkbox', value: TL.on }],
-    onOK: v => { prefs.pressureGamma = v.g; prefs.mouseTaper = v.mt; prefs.tiltEnabled = v.tilt; prefs.touchPaint = v.touch; TL.on = prefs.tl = v.tl; tlStatus(); try { localStorage.setItem('lumenpaint.prefs', JSON.stringify(prefs)); } catch (e) { } } });
+    html: '<div class="dnote">Edit › Pressure Curve… draws a custom curve and calibrates it to your pen. Moving the slider here replaces a custom curve.</div>',
+    onOK: v => { if (v.g !== prefs.pressureGamma) { prefs.pressureCurve = null; rebuildPressureLUT(); } prefs.pressureGamma = v.g; prefs.mouseTaper = v.mt; prefs.tiltEnabled = v.tilt; prefs.touchPaint = v.touch; TL.on = prefs.tl = v.tl; tlStatus(); try { localStorage.setItem('lumenpaint.prefs', JSON.stringify(prefs)); } catch (e) { } } });
 }
 function dlgShortcuts() {
   const rows = [['B / E / S', 'Brush / Eraser / Blend'], ['W', 'Liquify'], ['G / Shift+G', 'Paint bucket / Gradient'], ['U', 'Shapes & lines'], ['L / M', 'Lasso / Marquee select'], ['V', 'Transform'], ['I', 'Eyedropper'], ['K', 'Guides (symmetry, perspective, ruler)'],
@@ -315,12 +325,15 @@ function dlgShortcuts() {
     ['Space + drag', 'Pan'], ['R + drag', 'Rotate the view (Shift snaps 15°)'], ['Shift+R', 'Reset rotation'], ['H', 'Flip view horizontally'], ['Wheel / Ctrl+wheel', 'Zoom at cursor'], ['Ctrl+0 / Ctrl+1', 'Fit / 100%'],
     ['Two-finger pinch', 'Zoom + rotate + pan'], ['Two-finger / three-finger tap', 'Undo / Redo'], ['Tab', 'Zen mode (hide panels)'], ['F11', 'Full screen'],
     ['Ctrl+Z / Ctrl+Y', 'Undo / Redo'], ['Ctrl+Shift+N / Ctrl+J / Ctrl+E', 'New / Duplicate / Merge down'], ['/', 'Lock transparency'], ['Ctrl+Alt+G', 'Clipping mask'], ['Ctrl+G', 'Group layer'],
-    ['Ctrl+A / Ctrl+D / Ctrl+Shift+I', 'Select all / Deselect / Invert'], ['Enter / Esc', 'Apply / cancel transform']];
+    ['Ctrl+A / Ctrl+D / Ctrl+Shift+I', 'Select all / Deselect / Invert'], ['Enter / Esc', 'Apply / cancel transform'],
+    ['T', 'Text tool (click to type, drag a text box to move)'], [String.fromCharCode(92), 'Paint on layer / layer mask'], ['Alt-click mask thumbnail', 'View the mask · Shift-click: disable it'],
+    ['Ctrl+U / Ctrl+B', 'Hue/Saturation / Color Balance'], ['Ctrl+M / Ctrl+L', 'Curves / Levels'], ['Ctrl+I', 'Invert layer colors'],
+    ['Ctrl+Shift+Space', 'Play / pause animation'], [', / .', 'Previous / next frame'], ['Ctrl+Alt+N', 'New animation frame']];
   Aero.dialog({ title: 'Keyboard Shortcuts', noCancel: true, width: 560, html: `<table class="kbd">${rows.map(r => `<tr><td><b>${esc(r[0])}</b></td><td>${esc(r[1])}</td></tr>`).join('')}</table>` });
 }
 function dlgAbout() {
   const gl = R?.gl, info = gl ? (R.float ? '8-bit compositing, float watercolor simulation' : '8-bit compositing') : '';
-  Aero.dialog({ title: 'About Lumen Paint', noCancel: true, html: `<div class="about"><img src="../kit/icons/paint.png" alt=""><div><h2>Lumen Paint</h2><p>Natural-media painting for Lumen Studio — watercolor that blooms and bleeds, oils that pick up and smear, pencils that catch the paper grain.</p><p class="dim">WebGL2 compositor (${info}) · tiled copy-on-write undo · WebCodecs time-lapse.<br>Libraries: fflate (MIT), ag-psd (MIT), mp4-muxer (MIT), webm-muxer (MIT).</p></div></div>` });
+  Aero.dialog({ title: 'About Lumen Paint', noCancel: true, html: `<div class="about"><img src="../kit/icons/paint.png" alt=""><div><h2>Lumen Paint</h2><p>Natural-media painting for Lumen Studio — watercolor that blooms and bleeds, oils that pick up and smear, pencils that catch the paper grain.</p><p class="dim">WebGL2 compositor (${info}) · tiled copy-on-write undo · WebCodecs time-lapse.<br>Libraries: fflate (MIT), ag-psd (MIT), mp4-muxer (MIT), webm-muxer (MIT), gifenc (MIT).</p></div></div>` });
 }
 
 /* ---------- menus ---------- */
@@ -334,41 +347,55 @@ function buildMenus() {
       ['Export PNG / JPEG / WebP…', 'Ctrl+Shift+E', dlgExport], ['Export PSD (layers)…', '', cmdExportPSD], ['Export Time-lapse Video…', '', dlgTimelapse]],
     Edit: [{ label: 'Undo', key: 'Ctrl+Z', fn: undo, disabled: () => hist.index <= 0 }, { label: 'Redo', key: 'Ctrl+Y/Ctrl+Shift+Z', fn: redo, disabled: () => hist.index >= hist.items.length - 1 }, '-',
       ['Cut', 'Ctrl+X', () => cmdCopy(true)], ['Copy', 'Ctrl+C', () => cmdCopy(false)], { label: 'Paste', key: 'Ctrl+V', fn: pasteMenu, noShortcut: true }, '-',
-      ['Fill with Foreground', 'Alt+Backspace', cmdFillFG], ['Clear', 'Delete', cmdClearLayer], '-', ['Preferences…', 'Ctrl+K', dlgPrefs]],
+      ['Fill with Foreground', 'Alt+Backspace', cmdFillFG], ['Clear', 'Delete', cmdClearLayer], '-', ['Preferences…', 'Ctrl+K', dlgPrefs], ['Pressure Curve…', '', dlgPressure]],
     Select: [['All', 'Ctrl+A', () => setSelection(new Uint8Array(doc.w * doc.h).fill(255), 'Select All')], ['Deselect', 'Ctrl+D', () => doc.sel && setSelection(null, 'Deselect')], ['Invert', 'Ctrl+Shift+I', invertSelection], '-',
       ['Layer Pixels', '', cmdSelectAlpha], ['Feather…', 'Shift+F6', cmdFeather], '-', ['Lasso', 'L', () => setTool('lasso')], ['Rectangle / Ellipse', 'M', () => setTool('marquee')]],
     Layer: [['New Layer', 'Ctrl+Shift+N', cmdNewLayer], ['New Group', '', cmdNewGroup], ['New Fill Layer', '', cmdNewFill], ['Duplicate Layer', 'Ctrl+J', cmdDuplicate], ['Delete Layer', '', cmdDeleteLayer], '-',
       ['Group Layer', 'Ctrl+G', cmdGroupActive], ['Ungroup', 'Ctrl+Shift+G', cmdUngroup], ['Merge Down', 'Ctrl+E', cmdMergeDown], ['Merge Group', '', cmdMergeGroup], ['Flatten Image', 'Ctrl+Shift+F', cmdFlatten], '-',
       { label: 'Lock Transparency', key: '/', fn: toggleLockAlpha, checked: () => !!doc?.active?.lockAlpha }, { label: 'Clipping Mask', key: 'Ctrl+Alt+G', fn: toggleClip, checked: () => !!doc?.active?.clip }, '-',
+      '#Layer mask', ['Add Mask (Reveal All)', '', () => cmdAddMask('reveal')], ['Add Mask (Hide All)', '', () => cmdAddMask('hide')], { label: 'Add Mask from Selection', fn: () => cmdAddMask('selection'), disabled: () => !doc?.sel },
+      { label: 'Paint on Mask', key: String.fromCharCode(92), fn: toggleEditMask, checked: () => !!(doc?.editMask && doc.active?.mask), disabled: () => !doc?.active?.mask },
+      { label: 'Enable Mask', fn: cmdToggleMaskOn, checked: () => !!(doc?.active?.mask && doc.active.maskOn), disabled: () => !doc?.active?.mask }, { label: 'Link Mask to Layer', fn: cmdToggleMaskLink, checked: () => !!(doc?.active?.mask && doc.active.maskLinked), disabled: () => !doc?.active?.mask },
+      { label: 'Invert Mask', fn: cmdInvertMask, disabled: () => !doc?.active?.mask }, { label: 'Load Mask as Selection', fn: cmdMaskToSelection, disabled: () => !doc?.active?.mask }, { label: 'Apply Mask', fn: cmdApplyMask, disabled: () => !doc?.active?.mask }, { label: 'Delete Mask', fn: cmdDeleteMask, disabled: () => !doc?.active?.mask }, '-',
+      { label: 'Edit Text…', fn: () => editTextLayer(doc.active), disabled: () => !doc?.active?.text }, { label: 'Rasterize Text', fn: () => cmdRasterizeText(), disabled: () => !doc?.active?.text }, '-',
       ['Move Up', 'Ctrl+]', () => cmdMoveLayer(1)], ['Move Down', 'Ctrl+[', () => cmdMoveLayer(-1)], ['Flip Layer Horizontal', '', () => cmdFlipLayer(true)], ['Flip Layer Vertical', '', () => cmdFlipLayer(false)], ['Transform…', 'Ctrl+T', () => setTool('transform')], '-', ['Layer Properties…', '', () => doc.active && layerProps(doc.active)]],
+    Image: ['#Adjustments (current layer, inside the selection)', ['Hue / Saturation…', 'Ctrl+U', adjHSL], ['Brightness / Contrast…', '', adjBrightnessContrast], ['Curves…', 'Ctrl+M', adjCurves], ['Levels…', 'Ctrl+L', adjLevels], ['Color Balance…', 'Ctrl+B', adjColorBalance], ['Invert', 'Ctrl+I', adjInvert], ['Gradient Map…', '', adjGradientMap], '-', ['Extract Palette from Canvas', '', cmdCanvasPalette]],
     Canvas: [['Canvas Size…', 'Ctrl+Alt+C', dlgCanvasSize], ['Resize Image…', 'Ctrl+Alt+I', dlgResize], '-', ['Rotate 90° Clockwise', '', () => cmdRotateCanvas(true)], ['Rotate 90° Counter-clockwise', '', () => cmdRotateCanvas(false)], ['Flip Canvas Horizontal', '', cmdFlipCanvas], '-', ['Paper Texture…', '', dlgPaper]],
     View: [['Zoom In', 'Ctrl+=', () => zoomAt(1.25)], ['Zoom Out', 'Ctrl+-', () => zoomAt(0.8)], ['Fit on Screen', 'Ctrl+0', () => fitView()], ['Actual Pixels (100%)', 'Ctrl+1', () => setZoom(1)], '-',
       ['Reset Rotation', 'Shift+R', () => rotateView(0)], { label: 'Flip View Horizontal', key: 'H', fn: flipView, checked: () => view.flip }, '-',
-      { label: 'Zen Mode (hide panels)', key: 'Tab', fn: toggleZen, checked: () => zen }, ['Full Screen', 'F11', toggleFullscreen], { label: 'Reference Image Panel', key: '', fn: toggleRef, checked: () => !$('#refpanel').hidden }, '-',
+      { label: 'Zen Mode (hide panels)', key: 'Tab', fn: toggleZen, checked: () => zen }, ['Full Screen', 'F11', toggleFullscreen], { label: 'Reference Image Panel', key: '', fn: toggleRef, checked: () => !$('#refpanel').hidden }, ['Extract Palette from Reference', '', () => cmdRefPalette()], '-',
       '#Guides',
       ...[['off', 'Symmetry Off'], ['v', 'Vertical Symmetry'], ['h', 'Horizontal Symmetry'], ['quad', 'Quadrant Symmetry'], ['radial', 'Radial Symmetry'], ['kaleido', 'Kaleidoscope']].map(([v, t]) => ({ label: t, fn: () => { guides.sym = v; renderCmd(); requestOverlay(); }, checked: () => guides.sym === v })),
       ...[['off', 'Perspective Off'], ['1', '1-Point Perspective'], ['2', '2-Point Perspective']].map(([v, t]) => ({ label: t, fn: () => { guides.persp = v; renderCmd(); requestOverlay(); }, checked: () => guides.persp === v })),
       { label: 'Ruler', key: '', fn: () => { guides.ruler.on = !guides.ruler.on; renderCmd(); requestOverlay(); }, checked: () => guides.ruler.on }, { label: 'Show Guides', key: ';', fn: () => { guides.show = !guides.show; requestOverlay(); }, checked: () => guides.show }],
-    Brush: [['Brush Settings…', 'F5', () => openBrushEditor(currentBrush())], ['Larger', ']', () => brushSizeStep(1)], ['Smaller', '[', () => brushSizeStep(-1)], '-', ['Import Brushes…', '', cmdImportBrushes], ['Export Custom Brushes…', '', cmdExportBrushes]],
+    Brush: [['Brush Settings…', 'F5', () => openBrushEditor(currentBrush())], ['Larger', ']', () => brushSizeStep(1)], ['Smaller', '[', () => brushSizeStep(-1)], '-', ['Import Brushes (.lpbrush, .abr)…', '', cmdImportBrushes], ['Import Photoshop Brushes (.abr)…', '', () => cmdImportAbr()], ['New Brush Tip from Selection', '', cmdTipFromSelection], ['Export Custom Brushes…', '', cmdExportBrushes]],
+    Animation: [{ label: 'Animation Mode', fn: () => toggleAnimMode(), checked: () => animOn() }, { label: 'Play / Pause', key: 'Ctrl+Shift+Space', fn: animPlay }, { label: 'Previous Frame', key: ',', fn: () => animStep(-1), disabled: () => !animOn() }, { label: 'Next Frame', key: '.', fn: () => animStep(1), disabled: () => !animOn() }, '-',
+      ['New Frame', 'Ctrl+Alt+N', () => animNewFrame(false)], ['Duplicate Frame', '', () => animNewFrame(true)], { label: 'Delete Frame', fn: animDeleteFrame, disabled: () => !animOn() }, '-', ['Onion Skin…', '', dlgOnion], { label: 'Export Animation (GIF / MP4)…', fn: dlgAnimExport, disabled: () => !animOn() }],
     'Time-lapse': [{ label: 'Record Time-lapse', fn: () => { TL.on = !TL.on; tlStatus(); Aero.toast(TL.on ? 'Time-lapse recording on' : 'Time-lapse recording paused'); }, checked: () => TL.on }, ['Export Time-lapse Video…', '', dlgTimelapse], ['Clear Recording', '', async () => { if (await Aero.confirm('Clear recording', 'Delete all recorded time-lapse frames for this canvas?', 'Delete')) { tlReset(); Aero.toast('Recording cleared'); } }]],
     Help: [['Keyboard Shortcuts', 'F1', dlgShortcuts], ['About Lumen Paint', '', dlgAbout]]
   };
 }
 async function cmdImportBrushes() {
-  const f = await Aero.openFile({ accept: '.json,.lpbrush', filters: [{ name: 'Brush sets', extensions: ['json', 'lpbrush'] }] }); if (!f[0]) return;
+  const f = await Aero.openFile({ accept: '.json,.lpbrush,.abr', filters: [{ name: 'Brush sets (Lumen, Photoshop)', extensions: ['lpbrush', 'json', 'abr'] }] }); if (!f[0]) return;
+  if (ext(f[0].name) === 'abr') return cmdImportAbr(f);
+  importBrushFile(f[0]);
+}
+function importBrushFile(file) {
   try {
-    const arr = JSON.parse(new TextDecoder().decode(f[0].data)); const list = Array.isArray(arr) ? arr : arr.brushes; if (!Array.isArray(list)) throw new Error('No brushes in file');
-    let n = 0; for (const b of list.slice(0, 200)) { if (!b || typeof b !== 'object') continue; const nb = sanitizeBrush({ ...b, id: 'custom-' + uid() }); BRUSHES.push(nb); n++; }
-    saveCustomBrushes(); brushCat = 'Custom'; renderBrushCats(); renderBrushList(); Aero.toast(`Imported ${n} brush${n === 1 ? '' : 'es'}`);
+    const arr = JSON.parse(new TextDecoder().decode(file.data)); const list = Array.isArray(arr) ? arr : arr.brushes; if (!Array.isArray(list)) throw new Error('No brushes in file');
+    const tipIds = importTips(arr.tips);
+    let n = 0; for (const b of list.slice(0, 200)) { if (!b || typeof b !== 'object') continue; const tip = typeof b.tip === 'string' && b.tip.startsWith('img:') ? (tipIds[b.tip.slice(4)] ? 'img:' + tipIds[b.tip.slice(4)] : 'round') : b.tip; const nb = sanitizeBrush({ ...b, tip, id: 'custom-' + uid() }); BRUSHES.push(nb); n++; }
+    saveCustomBrushes(); saveCustomTips(); brushCat = 'Custom'; renderBrushCats(); renderBrushList(); Aero.toast(`Imported ${n} brush${n === 1 ? '' : 'es'}`);
   } catch (e) { Aero.alert('Import failed', String(e.message || e)); }
 }
-function cmdExportBrushes() { const list = BRUSHES.filter(b => b.custom); if (!list.length) { Aero.toast('No custom brushes yet — use Brush Settings › Save as New Brush'); return; } Aero.saveFile({ name: 'Lumen Paint brushes.lpbrush', data: JSON.stringify({ format: 'lumen-paint-brushes', version: 1, brushes: list }, null, 1) }); }
+function cmdExportBrushes() { const list = BRUSHES.filter(b => b.custom); if (!list.length) { Aero.toast('No custom brushes yet — use Brush Settings › Save as New Brush'); return; } Aero.saveFile({ name: 'Lumen Paint brushes.lpbrush', data: JSON.stringify({ format: 'lumen-paint-brushes', version: 2, brushes: list, tips: exportTips(list) }, null, 1) }); }
 
 /* ---------- boot ---------- */
 async function boot() {
   try { Object.assign(prefs, JSON.parse(localStorage.getItem('lumenpaint.prefs') || '{}')); } catch (e) { }
   TL.on = prefs.tl !== false;
-  snapshotBrushDefaults(); loadCustomBrushes(); loadBrushState();
+  prefs.pressureCurve = validCurve(prefs.pressureCurve); rebuildPressureLUT();
+  snapshotBrushDefaults(); loadCustomTips(); loadCustomBrushes(); loadBrushState();
   hist = new Aero.History({ max: 100, onChange: () => renderHistoryPanel() });
   Aero.init({ name: APP, icon: '../kit/icons/paint.png', menus: buildMenus(), onDropFiles: files => openFiles(files, undefined), dropTarget: $('#stage'), dropText: 'Drop .lpaint, PSD or images — images are added as layers', onSave: () => cmdSave(false) });
   toolbox = Aero.toolbox($('#tools'), TOOL_DEFS, id => setTool(id));
@@ -377,8 +404,9 @@ async function boot() {
   sw.querySelector('.tb-bg').onclick = swapColors;
   colorListeners.push(() => { sw.querySelector('.tb-fg').style.background = rgbHex(FG); sw.querySelector('.tb-bg').style.background = rgbHex(BG); if (pointerPos) requestOverlay(); });
   buildColorPanel(); buildLayerButtons(); renderBrushCats(); initRefPanel();
+  initHarmony(); restorePaletteSets(); initBrushButtons(); initTextPanel(); initAnimBar();
   $$('#rtabs .aero-tab').forEach(t => t.onclick = () => { $$('#rtabs .aero-tab').forEach(x => x.classList.toggle('on', x === t)); $('#layerpane').hidden = t.dataset.t !== 'layers'; $('#histpane').hidden = t.dataset.t !== 'history'; renderHistoryPanel(); });
-  $('#zenexit').onclick = toggleZen;
+  $('#zenexit').onclick = toggleZen; $('#rp-pal-btn').onclick = () => cmdRefPalette();
   // extra shortcuts
   Aero.shortcut('X', swapColors); Aero.shortcut('D', () => { FG = [0, 0, 0]; BG = [1, 1, 1]; fgHSV = [fgHSV[0], 0, 0]; updateColorUI(); });
   for (let i = 0; i <= 9; i++) Aero.shortcut(String(i), () => { if (!['brush', 'eraser', 'smudge'].includes(activeToolId)) return; const b = currentBrush(); b.opacity = i === 0 ? 1 : i / 10; brushStateChanged(b); cmdSync.forEach(s => s.sync()); Aero.toast('Opacity ' + Math.round(b.opacity * 100) + '%', 700); });
@@ -390,6 +418,6 @@ async function boot() {
   if (TL.supported) tlPickCodec(1280, 854).catch(() => { });
   // start with the sample painting so the app is never empty
   if (/[?&]nosample/.test(location.search)) newDocument(3000, 2000, 'white', 'cold'); else await openSample(true);
-  window.LumenPaint = { get doc() { return doc; }, hist, R: () => R, TL, BRUSHES, paintPath, setTool, frameStats, prefs, guides, newDocument, buildLpaint, loadLpaint, exportPSD, loadPSD, exportImage, tlExport, floodFill, view };
+  window.LumenPaint = { get doc() { return doc; }, hist, importAbr, extractPalette, animExport, animRenderFrame, renderTextLayer, maskValues, pressureMap, R: () => R, TL, BRUSHES, paintPath, setTool, frameStats, prefs, guides, newDocument, buildLpaint, loadLpaint, exportPSD, loadPSD, exportImage, tlExport, floodFill, view };
 }
 addEventListener('DOMContentLoaded', () => { boot().catch(e => { console.error(e); Aero.alert('Lumen Paint failed to start', String(e.message || e)); }); });

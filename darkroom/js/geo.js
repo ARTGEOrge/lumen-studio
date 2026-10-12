@@ -23,7 +23,7 @@ const Geo = (() => {
 
   // forward perspective (original oriented centred coords → corrected), excluding scale; coordinates in units of the long edge
   function uprightMatrix(u) {
-    const f = 1, tx = (u.vert || 0) / 100 * 35 * DEG, ty = (u.horiz || 0) / 100 * 35 * DEG, tz = (u.rotate || 0) * DEG;
+    const f = u.f || 1, tx = (u.vert || 0) / 100 * 35 * DEG, ty = (u.horiz || 0) / 100 * 35 * DEG, tz = (u.rotate || 0) * DEG;
     const cx = Math.cos(tx), sx = Math.sin(tx), cy = Math.cos(ty), sy = Math.sin(ty), cz = Math.cos(tz), sz = Math.sin(tz);
     const Rx = [1, 0, 0, 0, cx, -sx, 0, sx, cx], Ry = [cy, 0, sy, 0, 1, 0, -sy, 0, cy], Rz = [cz, -sz, 0, sz, cz, 0, 0, 0, 1];
     const K = [f, 0, 0, 0, f, 0, 0, 0, 1], Ki = [1 / f, 0, 0, 0, 1 / f, 0, 0, 0, 1];
@@ -62,7 +62,7 @@ const Geo = (() => {
     const g = { w, h, o, ow, oh, sq, A1, A2, K, M, Hinv: null, C, crop, full };
     let s = (u.scale || 100) / 100;
     if (u.constrain !== false && (!ident || K < 0)) {
-      const key = [w, h, rot, crop.flipH, crop.flipV, k, u.vert, u.horiz, u.rotate, u.aspect, u.x, u.y].join('|');
+      const key = [w, h, rot, crop.flipH, crop.flipV, k, u.vert, u.horiz, u.rotate, u.aspect, u.x, u.y, u.f || 1].join('|');
       let auto = scaleCache.get(key);
       if (auto == null) { auto = autoScale(g); scaleCache.set(key, auto); if (scaleCache.size > 200) scaleCache.delete(scaleCache.keys().next().value); }
       s *= auto;

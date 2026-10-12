@@ -3,7 +3,7 @@
    with layers & groups (ag-psd), image import, PNG/JPEG/WebP export. Opened files are untrusted data:
    everything is validated, sizes are capped, nothing in a file is ever executed. */
 const MAX_DIM = 16384, MAX_PIXELS = 80e6, MAX_LAYERS = 300;
-const PSD_BLEND = { 'normal': 'normal', 'multiply': 'multiply', 'screen': 'screen', 'overlay': 'overlay', 'darken': 'darken', 'lighten': 'lighten', 'color dodge': 'color-dodge', 'color burn': 'color-burn', 'hard light': 'hard-light', 'soft light': 'soft-light', 'difference': 'difference', 'exclusion': 'exclusion', 'linear dodge': 'add', 'hue': 'hue', 'saturation': 'saturation', 'color': 'color', 'luminosity': 'luminosity' };
+const PSD_BLEND = { 'pass through': 'pass-through', 'normal': 'normal', 'multiply': 'multiply', 'screen': 'screen', 'overlay': 'overlay', 'darken': 'darken', 'lighten': 'lighten', 'color dodge': 'color-dodge', 'color burn': 'color-burn', 'hard light': 'hard-light', 'soft light': 'soft-light', 'difference': 'difference', 'exclusion': 'exclusion', 'linear dodge': 'add', 'hue': 'hue', 'saturation': 'saturation', 'color': 'color', 'luminosity': 'luminosity' };
 const TO_PSD_BLEND = Object.fromEntries(Object.entries(PSD_BLEND).map(([k, v]) => [v, k]));
 const ext = n => (String(n).match(/\.([^.]+)$/) || [, ''])[1].toLowerCase();
 
@@ -17,10 +17,13 @@ async function buildLpaint() {
     if (L.type === 'fill') o.color = L.color.slice();
     if (L.type === 'group') { o.open = L.open; o.children = ser(L.children); }
     if (L.type === 'pixel') o.file = 'layers/' + L.id + '.png';
+    if (L.mask) o.mask = { file: 'masks/' + L.id + '.png', on: L.maskOn, linked: L.maskLinked };
+    if (L.text) o.text = { ...L.text };
     return o;
   });
-  const meta = { format: 'lumen-paint', version: 1, app: 'Lumen Paint', width: doc.w, height: doc.h, paper: doc.paper, paperScale: doc.paperScale, active: doc.active?.id, guides: JSON.parse(JSON.stringify(guides)), layers: ser(doc.root), created: doc.created || new Date().toISOString(), saved: new Date().toISOString() };
+  const meta = { format: 'lumen-paint', version: 2, anim: typeof animSerialize === 'function' ? animSerialize() : undefined, app: 'Lumen Paint', width: doc.w, height: doc.h, paper: doc.paper, paperScale: doc.paperScale, active: doc.active?.id, guides: JSON.parse(JSON.stringify(guides)), layers: ser(doc.root), created: doc.created || new Date().toISOString(), saved: new Date().toISOString() };
   const jobs = pixelLayers().map(async L => { const png = await pngEncodeAsync(doc.w, doc.h, layerRGBA(L), 4); files['layers/' + L.id + '.png'] = [png, { level: 0 }]; });
+  for (const L of allLayers()) if (L.mask) jobs.push((async M => { files['masks/' + L.id + '.png'] = [await pngEncodeAsync(doc.w, doc.h, layerRGBA(M), 4), { level: 0 }]; })(L.mask));
   await Promise.all(jobs);
   // thumbnail
   if (doc.ver !== composedVer) { R.compose(); composedVer = doc.ver; }
@@ -32,7 +35,7 @@ async function buildLpaint() {
 }
 async function loadLpaint(buf, name, path) {
   let files;
-  try { files = fflate.unzipSync(new Uint8Array(buf), { filter: f => f.originalSize < 1.2e9 && /^(doc\.json|thumbnail\.png|layers\/[\w-]+\.png|timelapse\/chunks\.bin)$/.test(f.name) }); }
+  try { files = fflate.unzipSync(new Uint8Array(buf), { filter: f => f.originalSize < 1.2e9 && /^(doc\.json|thumbnail\.png|(layers|masks)\/[\w-]+\.png|timelapse\/chunks\.bin)$/.test(f.name) }); }
   catch (e) { throw new Error('Not a valid .lpaint file (zip could not be read)'); }
   if (!files['doc.json']) throw new Error('Not a Lumen Paint document (doc.json missing)');
   let meta; try { meta = JSON.parse(new TextDecoder().decode(files['doc.json'])); } catch (e) { throw new Error('doc.json is not valid JSON'); }
@@ -44,7 +47,7 @@ async function loadLpaint(buf, name, path) {
   installDoc(d, true);
   // decode all layer PNGs in parallel first
   const decoded = new Map();
-  await Promise.all(Object.keys(files).filter(k => /^layers\/[\w-]+\.png$/.test(k)).map(async k => decoded.set(k, await pngDecodeAsync(files[k]))));
+  await Promise.all(Object.keys(files).filter(k => /^(layers|masks)\/[\w-]+\.png$/.test(k)).map(async k => decoded.set(k, await pngDecodeAsync(files[k]))));
   let count = 0;
   const build = (arr, depth) => {
     if (!Array.isArray(arr) || depth > 12) return [];
@@ -55,12 +58,18 @@ async function loadLpaint(buf, name, path) {
       const L = new Layer(type, String(o.name ?? 'Layer').slice(0, 120), w, h);
       if (typeof o.id === 'string' && /^[\w-]{1,40}$/.test(o.id)) L.id = o.id;
       L.visible = o.visible !== false; L.opacity = clamp(+o.opacity, 0, 1); if (!Number.isFinite(L.opacity)) L.opacity = 1;
-      L.blend = BLEND_IDX[o.blend] != null ? o.blend : 'normal'; L.lockAlpha = !!o.lockAlpha; L.clip = !!o.clip;
+      L.blend = BLEND_IDX[o.blend] != null || (type === 'group' && o.blend === 'pass-through') ? o.blend : 'normal'; L.lockAlpha = !!o.lockAlpha; L.clip = !!o.clip;
       if (type === 'fill' && Array.isArray(o.color)) L.color = [0, 1, 2].map(i => clamp(+o.color[i] || 0, 0, 1));
       if (type === 'group') { L.open = o.open !== false; L.children = build(o.children, depth + 1); }
       if (type === 'pixel') {
         const img = decoded.get('layers/' + L.id + '.png');
         if (img && img.w === w && img.h === h) writeRegion(L, 0, 0, w, h, img.data);
+        if (o.text && typeof o.text === 'object') L.text = sanitizeTextProps(o.text);
+      }
+      if (o.mask && typeof o.mask === 'object') {
+        const M = newMask(L), img = decoded.get('masks/' + L.id + '.png');
+        if (img && img.w === w && img.h === h) writeRegion(M, 0, 0, w, h, img.data);
+        L.mask = M; L.maskOn = o.mask.on !== false; L.maskLinked = o.mask.linked !== false;
       }
       out.push(L);
     }
@@ -71,6 +80,7 @@ async function loadLpaint(buf, name, path) {
   if (!doc.root.length) doc.root.push(new Layer('pixel', 'Layer 1', w, h));
   doc.active = (meta.active && findLayer(meta.active)) || pixelLayers().pop() || doc.root[0];
   if (meta.guides && typeof meta.guides === 'object') loadGuides(meta.guides);
+  if (typeof animLoad === 'function') animLoad(meta.anim);
   await tlLoad(meta.timelapse, files['timelapse/chunks.bin']);
   finishDocLoad('Open');
 }
@@ -85,11 +95,26 @@ function loadGuides(g) {
 }
 
 /* ---------- PSD ---------- */
+// Lumen mask → PSD user mask (gray image over the painted bounds, white outside)
+function psdMaskOf(L) {
+  const M = L.mask, b = layerBounds(M) || { x: 0, y: 0, w: 1, h: 1 }, vals = maskValues(M), d = new Uint8ClampedArray(b.w * b.h * 4);
+  for (let y = 0; y < b.h; y++) for (let x = 0; x < b.w; x++) { const v = vals[(y + b.y) * doc.w + x + b.x], i = (y * b.w + x) * 4; d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255; }
+  return { left: b.x, top: b.y, right: b.x + b.w, bottom: b.y + b.h, defaultColor: 255, disabled: !L.maskOn, imageData: { width: b.w, height: b.h, data: d } };
+}
+// PSD user mask → Lumen mask (untrusted: bounds clamped to the canvas)
+function maskFromPsd(L, mk) {
+  if (!mk || !mk.imageData || !mk.imageData.width) return;
+  const w = doc.w, h = doc.h, def = mk.defaultColor === 0 ? 0 : 255, vals = new Uint8Array(w * h).fill(def);
+  const im = mk.imageData, left = mk.left | 0, top = mk.top | 0, data = im.data;
+  for (let y = 0; y < im.height; y++) { const Y = y + top; if (Y < 0 || Y >= h) continue; for (let x = 0; x < im.width; x++) { const X = x + left; if (X < 0 || X >= w) continue; vals[Y * w + X] = data[(y * im.width + x) * 4]; } }
+  const M = newMask(L); setMaskValues(M, vals); L.mask = M; L.maskOn = !mk.disabled; L.maskLinked = true;
+}
 function exportPSD() {
   dryAllWet(); if (floating) commitTransform();
   const toImg = (data, w, h) => ({ width: w, height: h, data });
   const ser = list => list.map(L => {
     const base = { name: L.name, opacity: L.opacity, blendMode: TO_PSD_BLEND[L.blend] || 'normal', hidden: !L.visible, clipping: L.clip };
+    if (L.mask) base.mask = psdMaskOf(L);
     if (L.type === 'group') return { ...base, opened: L.open, children: ser(L.children) };
     if (L.type === 'fill') { const d = new Uint8ClampedArray(doc.w * doc.h * 4); const c = L.color.map(v => v * 255); for (let i = 0; i < d.length; i += 4) { d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255; } return { ...base, left: 0, top: 0, imageData: toImg(d, doc.w, doc.h) }; }
     const b = layerBounds(L);
@@ -118,11 +143,12 @@ async function loadPSD(buf, name, asImport) {
     const out = [];
     for (const ch of arr || []) {
       if (++count > MAX_LAYERS || depth > 12) break;
-      if (ch.children) { const G = new Layer('group', ch.name || 'Group', doc.w, doc.h); G.children = conv(ch.children, depth + 1); G.visible = !ch.hidden; G.opacity = ch.opacity ?? 1; G.blend = PSD_BLEND[ch.blendMode] || 'normal'; G.open = ch.opened !== false; out.push(G); continue; }
+      if (ch.children) { const G = new Layer('group', ch.name || 'Group', doc.w, doc.h); G.children = conv(ch.children, depth + 1); G.visible = !ch.hidden; G.opacity = clamp(ch.opacity ?? 1, 0, 1); G.blend = PSD_BLEND[ch.blendMode] || 'normal'; G.open = ch.opened !== false; G.clip = !!ch.clipping; maskFromPsd(G, ch.mask); out.push(G); continue; }
       const im = ch.imageData; if (!im || !im.width) { skipped++; continue; }
       const L = new Layer('pixel', ch.name || 'Layer', doc.w, doc.h);
       writeRegion(L, ch.left || 0, ch.top || 0, im.width, im.height, im.data instanceof Uint8ClampedArray ? im.data : new Uint8ClampedArray(im.data));
-      L.visible = !ch.hidden; L.opacity = clamp(ch.opacity ?? 1, 0, 1); L.blend = PSD_BLEND[ch.blendMode] || 'normal'; L.clip = !!ch.clipping; L.lockAlpha = !!ch.transparencyProtected;
+      L.visible = !ch.hidden; L.opacity = clamp(ch.opacity ?? 1, 0, 1); L.blend = PSD_BLEND[ch.blendMode] || 'normal'; if (L.blend === 'pass-through') L.blend = 'normal'; L.clip = !!ch.clipping; L.lockAlpha = !!ch.transparencyProtected;
+      maskFromPsd(L, ch.mask);
       out.push(L);
     }
     if (out[0]?.clip) out[0].clip = false;

@@ -46,7 +46,7 @@
     }
     return { c: true, pts };
   }
-  LM.shapePath = shapePath;
+  LM.shapePath = shapePath; LM.shapeDefPath = shapeDefPath;
   function tracePath(ctx, path) {
     const p = path.pts; if (!p || !p.length) return;
     ctx.moveTo(p[0][0], p[0][1]);
@@ -89,24 +89,149 @@
     };
     return pieces.map(([x, y]) => sub(x, y));
   }
-  function drawShape(ctx, L, t) {
-    const S = L.shape, path = shapePath(L, t);
+  LM.trimmed = trimmed;
+  /* ---------- shape contents: the layer's shape + groups, repeaters, merge paths, gradients ---------- */
+  const affine = (a, p, s, r, f = 1) => { // T(a + p·f) R(r·f) S(s^f) T(-a): one repeater step (f = 1) or a fractional step
+    const rr = r * Math.PI / 180 * f, c = Math.cos(rr), sn = Math.sin(rr);
+    const sx = Math.sign(s[0] || 1) * Math.pow(Math.abs(s[0] / 100), f), sy = Math.sign(s[1] || 1) * Math.pow(Math.abs(s[1] / 100), f);
+    const A = c * sx, B = sn * sx, C = -sn * sy, D = c * sy, tx = a[0] + p[0] * f, ty = a[1] + p[1] * f;
+    return [A, B, C, D, tx - (A * a[0] + C * a[1]), ty - (B * a[0] + D * a[1])];
+  };
+  // repeater copies → [{m, op}] in drawing order (bottom first)
+  function repCopies(R, t) {
+    const n = Math.max(0, Math.min(400, Math.round(val(R.copies, t)))), off = val(R.offset, t), so = val(R.so, t) / 100, eo = val(R.eo, t) / 100;
+    const a = val(R.anchor, t), p = val(R.position, t), s = val(R.scale, t), r = val(R.rotation, t);
+    const step = affine(a, p, s, r), inv = M.inv(step), out = [];
+    for (let i = 0; i < n; i++) {
+      const k = i + off, ki = Math.floor(k), fr = k - ki;
+      let m = M.id(); const base = ki >= 0 ? step : inv;
+      for (let j = 0; j < Math.abs(ki); j++) m = M.mul(m, base);
+      if (fr > 1e-9) m = M.mul(m, affine(a, p, s, r, fr));
+      out.push({ m, op: Math.max(0, Math.min(1, n > 1 ? so + (eo - so) * i / (n - 1) : so)) });
+    }
+    return R.comp === 'above' ? out : out.reverse();
+  }
+  LM.repCopies = repCopies;
+  function groupMatrix(g, t) { const a = val(g.gt.anchor, t), p = val(g.gt.position, t), s = val(g.gt.scale, t), r = val(g.gt.rotation, t) * Math.PI / 180, c = Math.cos(r), sn = Math.sin(r), sx = s[0] / 100, sy = s[1] / 100, A = c * sx, B = sn * sx, C = -sn * sy, D = c * sy; return [A, B, C, D, p[0] - (A * a[0] + C * a[1]), p[1] - (B * a[0] + D * a[1])]; }
+  LM.groupMatrix = groupMatrix;
+  // flat list of drawable shape items of a shape layer, bottom first: {S (style/def), path, m (item → layer space), op}
+  function shapeItems(L, t) {
+    const S = L.shape, list = [], order = LM.shapeOrder({ groups: S.groups || [], order: S.order });
+    for (let i = order.length - 1; i >= 0; i--) {   // contents are listed top → bottom; draw bottom first
+      if (order[i].root) { list.push({ S, path: shapePath(L, t), m: M.id(), op: 1 }); continue; }
+      const g = order[i].g; if (g.on === false) continue;
+      const gm = groupMatrix(g, t), gop = Math.max(0, Math.min(1, val(g.gt.opacity, t) / 100)), path = shapeDefPath(g, t);
+      if (g.rep && g.rep.on) repCopies(g.rep, t).forEach(c => list.push({ S: g, path, m: M.mul(gm, c.m), op: gop * c.op }));
+      else list.push({ S: g, path, m: gm, op: gop });
+    }
+    if (S.rep && S.rep.on) { const out = []; repCopies(S.rep, t).forEach(c => list.forEach(it => out.push({ S: it.S, path: it.path, m: M.mul(c.m, it.m), op: it.op * c.op }))); return out; }
+    return list;
+  }
+  LM.shapeItems = shapeItems;
+  // fill/stroke style: solid color or a gradient defined in item space
+  function paintStyle(ctx, P, t) {
+    if (P.gtype === 'linear' || P.gtype === 'radial') {
+      const a = val(P.gs, t), b = val(P.ge, t);
+      const g = P.gtype === 'radial' ? ctx.createRadialGradient(a[0], a[1], 0, a[0], a[1], Math.max(.01, Math.hypot(b[0] - a[0], b[1] - a[1]))) : ctx.createLinearGradient(a[0], a[1], b[0], b[1]);
+      g.addColorStop(0, val(P.color, t)); g.addColorStop(1, val(P.c2, t)); return g;
+    }
+    return val(P.color, t);
+  }
+  LM.paintStyle = paintStyle;
+  const polyPath = pcs => { const p = new Path2D(); pcs.forEach(pc => { p.moveTo(pc[0][0], pc[0][1]); for (let i = 1; i < pc.length; i++) p.lineTo(pc[i][0], pc[i][1]); }); return p; };
+  function drawItem(ctx, it, t) {
+    const S = it.S, path = it.path, m = it.m;
+    if (it.op <= 0) return;
     const ts = val(S.trim.start, t) / 100, te = val(S.trim.end, t) / 100, to = val(S.trim.offset, t) / 360;
     const full = Math.abs(te - ts) >= 1 - 1e-9 || (ts <= 0 && te >= 1);
-    const p2 = toPath2D(path);
+    ctx.save(); ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]); ctx.globalAlpha *= it.op;
+    const p2 = full ? toPath2D(path) : polyPath(trimmed(path, ts, te, to));
+    if (S.fill.on) { ctx.save(); ctx.globalAlpha *= val(S.fill.opacity, t) / 100; ctx.fillStyle = paintStyle(ctx, S.fill, t); ctx.fill(p2); ctx.restore(); }
+    const w = S.stroke.on ? val(S.stroke.width, t) : 0;
+    if (w > 0) { ctx.save(); ctx.globalAlpha *= val(S.stroke.opacity, t) / 100; ctx.strokeStyle = paintStyle(ctx, S.stroke, t); ctx.lineWidth = w; ctx.lineCap = S.stroke.cap || 'round'; ctx.lineJoin = S.stroke.join || 'round'; ctx.stroke(p2); ctx.restore(); }
+    ctx.restore();
+  }
+  // Merge Paths: combine every path (top → bottom) with add / subtract / intersect / exclude, painted with the layer's own fill & stroke
+  const hitCtx = new OffscreenCanvas(2, 2).getContext('2d');
+  // the path of one item, after its own Trim Paths (in item space)
+  function itemPath2D(it, t) {
+    const T = it.S.trim, ts = val(T.start, t) / 100, te = val(T.end, t) / 100, to = val(T.offset, t) / 360;
+    const full = Math.abs(te - ts) >= 1 - 1e-9 || (ts <= 0 && te >= 1);
+    return full ? toPath2D(it.path) : polyPath(trimmed(it.path, ts, te, to));
+  }
+  // Merge Paths: combine every (trimmed) path, top → bottom, with add / subtract / intersect / exclude,
+  // painted with the layer's own fill & stroke. The stroke is kept only where it lies on the merged outline.
+  function drawMerged(ctx, L, items, t) {
+    const S = L.shape, mode = S.merge, W = ctx.canvas.width, H = ctx.canvas.height, tf = ctx.getTransform();
+    const paths = items.slice().reverse().map(it => { const p = new Path2D(); p.addPath(itemPath2D(it, t), new DOMMatrix(it.m)); return p; });
+    const OPS = { add: 'source-over', subtract: 'destination-out', intersect: 'destination-in', exclude: 'xor' };
+    const paintOut = (c, P, op) => {
+      const x = c._ctx; x.globalCompositeOperation = 'source-in'; x.setTransform(tf); x.fillStyle = paintStyle(x, P, t); x.fillRect(-1e6, -1e6, 2e6, 2e6);
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha *= op; ctx.drawImage(c, 0, 0); ctx.restore(); release(c);
+    };
     if (S.fill.on) {
-      ctx.save(); ctx.globalAlpha *= val(S.fill.opacity, t) / 100; ctx.fillStyle = val(S.fill.color, t);
-      if (full) ctx.fill(p2); else { const pcs = trimmed(path, ts, te, to); const fp = new Path2D(); pcs.forEach(pc => { fp.moveTo(pc[0][0], pc[0][1]); pc.forEach(q => fp.lineTo(q[0], q[1])); }); ctx.fill(fp); }
-      ctx.restore();
+      const c = acquire(W, H), x = c._ctx; x.setTransform(tf); x.fillStyle = '#fff';
+      paths.forEach((p, i) => { x.globalCompositeOperation = i === 0 ? 'source-over' : OPS[mode]; x.fill(p); });
+      paintOut(c, S.fill, val(S.fill.opacity, t) / 100);
     }
-    if (S.stroke.on) {
-      const w = val(S.stroke.width, t); if (w <= 0) return;
-      ctx.save(); ctx.globalAlpha *= val(S.stroke.opacity, t) / 100; ctx.strokeStyle = val(S.stroke.color, t); ctx.lineWidth = w; ctx.lineCap = S.stroke.cap || 'round'; ctx.lineJoin = S.stroke.join || 'round';
-      if (full) ctx.stroke(p2);
-      else { const pcs = trimmed(path, ts, te, to); const sp = new Path2D(); pcs.forEach(pc => { sp.moveTo(pc[0][0], pc[0][1]); for (let i = 1; i < pc.length; i++) sp.lineTo(pc[i][0], pc[i][1]); }); ctx.stroke(sp); }
-      ctx.restore();
+    const w = S.stroke.on ? val(S.stroke.width, t) : 0;
+    if (w > 0) {
+      // the merged outline as vector polylines: keep the parts of every outline that lie on the merged shape's boundary,
+      // then stroke them once, centred, at full width (no limit on the number of merged paths)
+      const outline = mergedOutline(items.slice().reverse(), paths, t, mode, Math.sqrt(Math.abs(tf.a * tf.d - tf.b * tf.c)) || 1);
+      const c = acquire(W, H), x = c._ctx; x.setTransform(tf); x.strokeStyle = '#fff'; x.lineWidth = w; x.lineJoin = S.stroke.join || 'round'; x.lineCap = 'round'; x.stroke(outline);
+      paintOut(c, S.stroke, val(S.stroke.opacity, t) / 100);
     }
   }
+  function mergedOutline(its, paths, t, mode, dev) {
+    const step = 1.5 / dev, n = its.length, out = new Path2D();
+    // polylines of every (trimmed) path in layer space, densified so visibility changes are found precisely
+    const polys = its.map(it => {
+      const T = it.S.trim, ts = val(T.start, t) / 100, te = val(T.end, t) / 100, to = val(T.offset, t) / 360, full = Math.abs(te - ts) >= 1 - 1e-9 || (ts <= 0 && te >= 1);
+      const lines = full ? [flatten(it.path, 24).concat(it.path.c ? [] : [])] : trimmed(it.path, ts, te, to), closed = full && !!it.path.c;
+      return lines.map(l => { const pts = l.map(p => M.apply(it.m, p[0], p[1])); if (closed && pts.length) pts.push(pts[0].slice()); const d = [pts[0]]; for (let k = 1; k < pts.length; k++) { const p = pts[k - 1], q = pts[k], m = Math.max(1, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / step)); for (let j = 1; j <= m; j++) d.push([p[0] + (q[0] - p[0]) * j / m, p[1] + (q[1] - p[1]) * j / m]); } return { pts: d, closed }; });
+    });
+    const box = polys.map(ls => { let b = [Infinity, Infinity, -Infinity, -Infinity]; ls.forEach(l => l.pts.forEach(([x, y]) => { b[0] = Math.min(b[0], x); b[1] = Math.min(b[1], y); b[2] = Math.max(b[2], x); b[3] = Math.max(b[3], y); })); return b; });
+    const inside = (j, x, y) => x >= box[j][0] && x <= box[j][2] && y >= box[j][1] && y <= box[j][3] && hitCtx.isPointInPath(paths[j], x, y);
+    const visible = (i, x, y) => {
+      if (mode === 'exclude') return true;
+      if (mode === 'intersect') { for (let j = 0; j < n; j++) if (j !== i && !inside(j, x, y)) return false; return true; }
+      if (mode === 'subtract' && i > 0 && !inside(0, x, y)) return false;
+      for (let j = 0; j < n; j++) { if (j === i || (mode === 'subtract' && j === 0)) continue; if (inside(j, x, y)) return false; }
+      return true;
+    };
+    polys.forEach((ls, i) => ls.forEach(({ pts, closed }) => {
+      if (pts.length < 2) return;
+      const vis = pts.map(p => visible(i, p[0], p[1]));
+      if (closed && vis.every(v => v)) { out.moveTo(...pts[0]); for (let k = 1; k < pts.length; k++) out.lineTo(...pts[k]); out.closePath(); return; }
+      // start at a hidden point on closed outlines so runs don't break at the seam
+      let s0 = 0; if (closed) { s0 = vis.indexOf(false); }
+      const N = closed ? pts.length - 1 : pts.length, at = k => pts[(s0 + k) % (closed ? N : pts.length)], vat = k => vis[(s0 + k) % (closed ? N : pts.length)];
+      const cross = (p, q, pv) => { let lo = 0, hi = 1; for (let it = 0; it < 7; it++) { const m = (lo + hi) / 2; if (visible(i, p[0] + (q[0] - p[0]) * m, p[1] + (q[1] - p[1]) * m) === pv) lo = m; else hi = m; } const m = (lo + hi) / 2; return [p[0] + (q[0] - p[0]) * m, p[1] + (q[1] - p[1]) * m]; };
+      let open = false; const K = closed ? N + 1 : N;
+      for (let k = 0; k < K; k++) {
+        const p = at(k), v = vat(k);
+        if (k === 0) { if (v) { out.moveTo(...p); open = true; } continue; }
+        const q = at(k - 1), qv = vat(k - 1);
+        if (v && qv) out.lineTo(...p);
+        else if (v && !qv) { out.moveTo(...cross(q, p, false)); out.lineTo(...p); open = true; }
+        else if (!v && qv) { out.lineTo(...cross(q, p, true)); open = false; }
+      }
+      void open;
+    }));
+    return out;
+  }
+  function drawShape(ctx, L, t) {
+    const items = shapeItems(L, t);
+    if (L.shape.merge && L.shape.merge !== 'off' && items.length > 1) return drawMerged(ctx, L, items, t);
+    items.forEach(it => drawItem(ctx, it, t));
+  }
+  // point hit test in layer space for shape layers (fills, strokes of every item)
+  LM.shapeHit = (L, t, u, v, tol) => shapeItems(L, t).some(it => {
+    const [x, y] = M.apply(M.inv(it.m), u, v), p2 = toPath2D(it.path), sc = M.scaleOf(it.m) || 1;
+    hitCtx.lineWidth = Math.max(it.S.stroke.on ? val(it.S.stroke.width, t) : 0, tol / sc);
+    return (it.S.fill.on && hitCtx.isPointInPath(p2, x, y)) || hitCtx.isPointInStroke(p2, x, y);
+  });
 
   /* ---------- text ---------- */
   const mctx = new OffscreenCanvas(4, 4).getContext('2d');
@@ -208,10 +333,14 @@
   LM.layerSize = layerSize;
   function layerBounds(L, t) {
     if (L.type === 'shape') {
-      const p = shapePath(L, t), sw = L.shape.stroke.on ? val(L.shape.stroke.width, t) / 2 : 0; let b = [Infinity, Infinity, -Infinity, -Infinity];
-      flatten(p, 8).forEach(([x, y]) => { b[0] = Math.min(b[0], x); b[1] = Math.min(b[1], y); b[2] = Math.max(b[2], x); b[3] = Math.max(b[3], y); });
+      let b = [Infinity, Infinity, -Infinity, -Infinity];
+      const merged = L.shape.merge && L.shape.merge !== 'off', rootW = L.shape.stroke.on ? val(L.shape.stroke.width, t) : 0;
+      shapeItems(L, t).forEach(it => {
+        const sw = (merged ? rootW : it.S.stroke.on ? val(it.S.stroke.width, t) : 0) / 2 * (M.scaleOf(it.m) || 1);
+        flatten(it.path, 8).forEach(([x, y]) => { const [u, v] = M.apply(it.m, x, y); b[0] = Math.min(b[0], u - sw); b[1] = Math.min(b[1], v - sw); b[2] = Math.max(b[2], u + sw); b[3] = Math.max(b[3], v + sw); });
+      });
       if (!isFinite(b[0])) b = [-10, -10, 10, 10];
-      return [b[0] - sw, b[1] - sw, b[2] + sw, b[3] + sw];
+      return b;
     }
     if (L.type === 'text') return textLayout(L, t).bounds;
     const [w, h] = layerSize(L); return [0, 0, w, h];
@@ -229,22 +358,37 @@
       case 'text': drawText(ctx, L, t); break;
       case 'draw': drawStrokes(ctx, val(L.draw.cels, t)); break;
       case 'image': { const m = LM.media.get(L.asset); if (m?.img) ctx.drawImage(m.img, 0, 0); break; }
-      case 'video': { const m = LM.media.get(L.asset), a = LM.assets.get(L.asset); if (m?.video && m.video.readyState >= 2) ctx.drawImage(m.video, 0, 0, a.w, a.h); break; }
+      case 'video': {
+        const m = LM.media.get(L.asset), a = LM.assets.get(L.asset); if (!(m?.video && m.video.readyState >= 2)) break;
+        // frame blending: m.fb holds the two nearest source frames (a, b) and the weight of b (export: a is a bitmap; preview: a second video element)
+        if (L.fb && m.fb && m.fb.w > 0.001 && m.fb.L === L) { ctx.drawImage(m.fb.a, 0, 0, a.w, a.h); ctx.save(); ctx.globalAlpha *= m.fb.w; ctx.drawImage(m.fb.b, 0, 0, a.w, a.h); ctx.restore(); }
+        else ctx.drawImage(m.video, 0, 0, a.w, a.h);
+        break;
+      }
       case 'precomp': {
         const sub = LM.doc.comps.find(c => c.id === L.comp); if (!sub || R.depth > 12) break;
         const tf = ctx.getTransform(), sf = Math.min(4, Math.max(R.scale, Math.sqrt(Math.abs(tf.a * tf.d - tf.b * tf.c))));
+        const st = LM.srcTime(L, t), o = { scale: sf, bg: false, depth: R.depth + 1, preview: R.preview, draft: R.draft, mb: R.mb };
+        const fr = st * sub.fps, f0 = Math.floor(fr + 1e-6), w = fr - f0;
+        if (L.fb && w > 0.001 && !R.draft) { // frame blending: mix the two nearest source frames
+          const a = acquire(sub.w * sf, sub.h * sf), b = acquire(sub.w * sf, sub.h * sf);
+          renderInto(sub, f0 / sub.fps, a, o); renderInto(sub, (f0 + 1) / sub.fps, b, o);
+          ctx.drawImage(a, 0, 0, sub.w, sub.h); ctx.save(); ctx.globalAlpha *= w; ctx.drawImage(b, 0, 0, sub.w, sub.h); ctx.restore(); release(a); release(b); break;
+        }
         const c = acquire(sub.w * sf, sub.h * sf);
-        renderInto(sub, lt, c, { scale: sf, bg: false, depth: R.depth + 1, preview: R.preview, draft: R.draft, mb: R.mb });
+        renderInto(sub, L.fb ? f0 / sub.fps : st, c, o);
         ctx.drawImage(c, 0, 0, sub.w, sub.h); release(c); break;
       }
     }
   }
-  function setLayerTransform(ctx, L, t, comp, s, ox = 0, oy = 0) { const m = LM.layerMatrix(L, t, comp); ctx.setTransform(m[0] * s, m[1] * s, m[2] * s, m[3] * s, m[4] * s - ox, m[5] * s - oy); return m; }
+  // layer → output-buffer matrix (R.matOf overrides it while a 3D layer renders into its own layer-space buffer)
+  const matOf = (L, t, comp, R) => R && R.matOf ? R.matOf(L, t) : LM.layerMatrix(L, t, comp);
+  function setLayerTransform(ctx, L, t, comp, s, ox = 0, oy = 0, R) { const m = matOf(L, t, comp, R); ctx.setTransform(m[0] * s, m[1] * s, m[2] * s, m[3] * s, m[4] * s - ox, m[5] * s - oy); return m; }
 
-  function maskCanvas(L, t, comp, s, W, H, includeBounds, ox = 0, oy = 0) {
+  function maskCanvas(L, t, comp, s, W, H, includeBounds, ox = 0, oy = 0, R) {
     const masks = L.masks.filter(m => m.mode !== 'none');
     if (!masks.length && !includeBounds) return null;
-    const mat = LM.layerMatrix(L, t, comp), sc = M.scaleOf(mat) * s;
+    const mat = matOf(L, t, comp, R), sc = M.scaleOf(mat) * s;
     const setT = c => c.setTransform(mat[0] * s, mat[1] * s, mat[2] * s, mat[3] * s, mat[4] * s - ox, mat[5] * s - oy);
     let mc = null;
     if (masks.length) {
@@ -318,7 +462,7 @@
     x.putImageData(d, 0, 0); return noiseTiles[key] = c;
   }
   function applyEffect(fx, buf, L, t, comp, s, R) {
-    const x = buf._ctx, W = buf.width, H = buf.height, mat = LM.layerMatrix(L, t, comp), sc = s;
+    const x = buf._ctx, W = buf.width, H = buf.height, mat = matOf(L, t, comp, R), sc = s;
     switch (fx.type) {
       case 'blur': {
         const r = fxv(fx, 'amount', t) * sc; if (r <= 0.2) return;
@@ -373,23 +517,51 @@
         x.save(); x.setTransform(1, 0, 0, 1, 0, 0); x.globalCompositeOperation = 'copy'; x.drawImage(tmp, 0, 0); x.restore(); release(tmp);
         return;
       }
+      default: { const impl = LM.fxImpl && LM.fxImpl[fx.type]; if (impl) impl(fx, buf, L, t, comp, s, R, mat); return; }
     }
   }
-  LM.applyEffect = applyEffect;
+  LM.applyEffect = applyEffect; LM.fxv = fxv; LM.blurInto = blurInto; LM.matOf = matOf;
 
   /* ---------- layer rendering ---------- */
-  function needsBuffer(L) { return L.masks.some(m => m.mode !== 'none') || L.effects.some(f => f.on && f.type !== 'mblur') || L.matte || L.type === 'draw'; }
-  // render layer (content + masks + effects) into a fresh comp-sized buffer; includes opacity if withOpacity
-  function layerBuffer(L, t, comp, R, withOpacity) {
+  function needsBuffer(L) { return L.masks.some(m => m.mode !== 'none') || L.effects.some(f => f.on && f.type !== 'mblur') || L.matte || L.type === 'draw' || LM.is3D(L); }
+  // render layer (content + masks + effects) into a fresh buffer of R's size; includes opacity if withOpacity.
+  // stopAt: index of the effect to stop before (used by Echo to render earlier/later frames of the layer)
+  function layerBuffer(L, t, comp, R, withOpacity, stopAt = -1) {
     const s = R.scale, W = R.W, H = R.H, buf = acquire(W, H), x = buf._ctx;
-    setLayerTransform(x, L, t, comp, s, R.ox || 0, R.oy || 0);
+    setLayerTransform(x, L, t, comp, s, R.ox || 0, R.oy || 0, R);
     drawContent(x, L, t, R);
     x.setTransform(1, 0, 0, 1, 0, 0); x.globalCompositeOperation = 'source-over';
-    const mc = maskCanvas(L, t, comp, s, W, H, false, R.ox || 0, R.oy || 0);
+    const mc = maskCanvas(L, t, comp, s, W, H, false, R.ox || 0, R.oy || 0, R);
     if (mc) { x.globalCompositeOperation = 'destination-in'; x.drawImage(mc, 0, 0); x.globalCompositeOperation = 'source-over'; release(mc); }
-    L.effects.forEach(fx => { if (fx.on && fx.type !== 'mblur') { x.save(); applyEffect(fx, buf, L, t, comp, s, R); x.restore(); x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.globalCompositeOperation = 'source-over'; } });
+    for (let k = 0; k < L.effects.length; k++) {
+      if (k === stopAt) break;
+      const fx = L.effects[k]; if (!fx.on || fx.type === 'mblur') continue;
+      x.save();
+      if (fx.type === 'echo') applyEcho(fx, k, buf, L, t, comp, R); else applyEffect(fx, buf, L, t, comp, s, R);
+      x.restore(); x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.globalCompositeOperation = 'source-over';
+    }
     if (withOpacity) { const op = Math.max(0, Math.min(1, val(L.tr.opacity, t) / 100)); if (op < 1) { x.globalCompositeOperation = 'destination-in'; x.fillStyle = `rgba(0,0,0,${op})`; x.fillRect(0, 0, W, H); x.globalCompositeOperation = 'source-over'; } }
     return buf;
+  }
+  LM.layerBuffer = layerBuffer;
+  // Echo: composite the layer (as it is before this effect) at earlier/later times
+  function echoTimes(L, t) {
+    const out = [];
+    L.effects.forEach(fx => { if (!fx.on || fx.type !== 'echo') return; const et = fxv(fx, 'time', t), n = Math.max(0, Math.min(60, Math.round(fxv(fx, 'count', t)))); for (let i = 1; i <= n; i++) out.push(t + et * i); });
+    return out;
+  }
+  function applyEcho(fx, k, buf, L, t, comp, R) {
+    const et = fxv(fx, 'time', t), n = Math.max(0, Math.min(60, Math.round(fxv(fx, 'count', t)))), I0 = Math.max(0, Math.min(1, fxv(fx, 'start', t))), dec = Math.max(0, Math.min(1, fxv(fx, 'decay', t))), op = fxv(fx, 'op', t);
+    if (!n || Math.abs(et) < 1e-6) return;
+    const W = buf.width, H = buf.height, acc = acquire(W, H), a = acc._ctx;
+    const echoes = []; for (let i = 1; i <= n; i++) echoes.push([layerBuffer(L, t + et * i, comp, R, false, k), I0 * Math.pow(dec, i)]);
+    const draw = (c, w, mode) => { a.globalCompositeOperation = mode; a.globalAlpha = Math.max(0, Math.min(1, w)); a.drawImage(c, 0, 0); };
+    if (op === 'back') { for (let i = echoes.length - 1; i >= 0; i--) draw(echoes[i][0], echoes[i][1], 'source-over'); draw(buf, I0, 'source-over'); }
+    else if (op === 'front') { draw(buf, I0, 'source-over'); echoes.forEach(([c, w]) => draw(c, w, 'source-over')); }
+    else { const mode = op === 'max' ? 'lighten' : op === 'screen' ? 'screen' : 'lighter'; draw(buf, I0, 'source-over'); echoes.forEach(([c, w]) => draw(c, w, mode)); }
+    a.globalAlpha = 1; a.globalCompositeOperation = 'source-over';
+    const x = buf._ctx; x.save(); x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.globalCompositeOperation = 'copy'; x.drawImage(acc, 0, 0); x.restore();
+    echoes.forEach(([c]) => release(c)); release(acc);
   }
   function mbSettings(L, comp, t) {
     const fx = L.effects.find(f => f.type === 'mblur' && f.on);
@@ -401,14 +573,27 @@
     const n = Math.max(2, Math.min(64, mb.samples)), dur = mb.angle / 360 / fps, st = t + mb.phase / 360 / fps;
     const out = []; for (let i = 0; i < n; i++) out.push(st + dur * (i + .5) / n); return out;
   }
+  LM.mbSettings = mbSettings; LM.sampleTimes = sampleTimes;
   // AE semantics: a layer with a track matte uses the layer directly above it as the matte.
   function matteLayerOf(comp, i) { return i > 0 ? comp.layers[i - 1] : null; }
   // region of the output a layer can touch (buffer placement), padded for effects; quantised so pooled canvases get reused
   function effectPad(L, t) {
     let p = 0;
-    L.effects.forEach(fx => { if (!fx.on) return; if (fx.type === 'blur') p += fxv(fx, 'amount', t) * 3; if (fx.type === 'glow') p += fxv(fx, 'radius', t) * 2.5; if (fx.type === 'shadow') p += fxv(fx, 'distance', t) + fxv(fx, 'softness', t) * 2.5; });
+    L.effects.forEach(fx => {
+      if (!fx.on) return;
+      if (fx.type === 'blur') p += fxv(fx, 'amount', t) * 3; if (fx.type === 'glow') p += fxv(fx, 'radius', t) * 2.5; if (fx.type === 'shadow') p += fxv(fx, 'distance', t) + fxv(fx, 'softness', t) * 2.5;
+      if (fx.type === 'turb') p += fxv(fx, 'amount', t) * fxv(fx, 'size', t) / 100 + 4; if (fx.type === 'wave') p += Math.abs(fxv(fx, 'height', t)) + 2; if (fx.type === 'stroke') p += fxv(fx, 'size', t) / 2 + 2;
+      if (fx.type === 'rays') p = Infinity;
+    });
     return p;
   }
+  // layer-space bounds including text-animator reach and effect padding (used for 3D layer buffers)
+  LM.contentBounds = (L, t) => {
+    let b = layerBounds(L, t);
+    if (L.type === 'text' && L.text.animators.length) { const sz = val(L.text.size, t); let mp = 0; L.text.animators.forEach(A => { const p = val(A.position, t); mp = Math.max(mp, Math.abs(p[0]), Math.abs(p[1])) + val(A.blur, t) * 3; const sc2 = val(A.scale, t); if (sc2 > 100) mp += sz * (sc2 / 100 - 1); if (val(A.rotation, t)) mp += sz; }); b = [b[0] - mp, b[1] - mp, b[2] + mp, b[3] + mp]; }
+    let pad = effectPad(L, t); if (!isFinite(pad)) pad = Math.max(b[2] - b[0], b[3] - b[1]);
+    return [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
+  };
   function layerRegion(L, t, comp, R, times, i) {
     const full = { ...R, ox: 0, oy: 0 };
     if (L.type === 'draw' || L.type === 'adjust' || (L.matte && L.matte.endsWith('Inv'))) return full;
@@ -419,8 +604,8 @@
       const m = LM.layerMatrix(Ly, tt, comp), pad = effectPad(Ly, tt) * M.scaleOf(m);
       [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]].forEach(([u, v]) => { const [px, py] = M.apply(m, u, v); x0 = Math.min(x0, px - pad); y0 = Math.min(y0, py - pad); x1 = Math.max(x1, px + pad); y1 = Math.max(y1, py + pad); });
     };
-    try { (times || [t]).forEach(tt => add(L, tt)); } catch (e) { return full; }
-    if (!isFinite(x0)) return full;
+    try { (times || [t]).concat(echoTimes(L, t)).forEach(tt => add(L, tt)); } catch (e) { return full; }
+    if (!isFinite(x0) || !isFinite(x1) || !isFinite(y0) || !isFinite(y1)) return full;
     const s = R.scale, Q = 32;
     let ox = Math.max(0, Math.floor(x0 * s / Q) * Q - Q), oy = Math.max(0, Math.floor(y0 * s / Q) * Q - Q);
     let ex = Math.min(R.W, Math.ceil(x1 * s / Q) * Q + Q), ey = Math.min(R.H, Math.ceil(y1 * s / Q) * Q + Q);
@@ -429,31 +614,37 @@
     if (W * H >= R.W * R.H * .8) return full;
     return { ...R, ox, oy, W, H };
   }
+  // full-output buffer of a layer: 3D layers go through the perspective renderer (space.js)
+  const compBuffer = (L, t, comp, Rl, times) => LM.is3D(L) && LM.space ? LM.space.render(L, t, comp, Rl, times) : null;
   function renderLayer(ctx, comp, i, t, R) {
     const L = comp.layers[i], blend = BLEND[L.blend] || 'source-over';
     const mb = R.mb !== false ? mbSettings(L, comp, t) : null;
     let times = mb && mb.angle > 0 ? sampleTimes(R.draft ? { ...mb, samples: Math.min(mb.samples, 4) } : mb, t, comp.fps) : null;
     if (times) { // skip samples if nothing moves
-      const m0 = JSON.stringify(LM.layerMatrix(L, times[0], comp)), m1 = JSON.stringify(LM.layerMatrix(L, times[times.length - 1], comp));
-      if (m0 === m1 && !LM.layerHasAnim(L) && L.type !== 'precomp') times = null;
+      const m0 = JSON.stringify(LM.is3D(L) ? LM.world4(L, times[0], comp) : LM.layerMatrix(L, times[0], comp)), m1 = JSON.stringify(LM.is3D(L) ? LM.world4(L, times[times.length - 1], comp) : LM.layerMatrix(L, times[times.length - 1], comp));
+      if (m0 === m1 && !LM.layerHasAnim(L) && L.type !== 'precomp' && !(LM.is3D(L) && LM.space?.cameraMoves(comp, times))) times = null;
     }
     if (!times && !needsBuffer(L)) {
       ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, val(L.tr.opacity, t) / 100)); ctx.globalCompositeOperation = blend;
       if (ctx.globalAlpha > 0) { setLayerTransform(ctx, L, t, comp, R.scale); drawContent(ctx, L, t, R); }
       ctx.restore(); return;
     }
-    const Rl = layerRegion(L, t, comp, R, times, i);
+    const d3 = LM.is3D(L) && LM.space;
+    const Rl = d3 ? { ...R, ox: 0, oy: 0 } : layerRegion(L, t, comp, R, times, i);
     if (!Rl) return;
-    let buf;
-    if (times) {
-      buf = acquire(Rl.W, Rl.H); const bx = buf._ctx; bx.globalCompositeOperation = 'lighter'; bx.globalAlpha = 1 / times.length;
-      times.forEach(ts => { const b = layerBuffer(L, ts, comp, Rl, true); bx.drawImage(b, 0, 0); release(b); });
-      bx.globalCompositeOperation = 'source-over'; bx.globalAlpha = 1;
-    } else buf = layerBuffer(L, t, comp, Rl, true);
+    let buf = d3 ? compBuffer(L, t, comp, Rl, times) : null;
+    if (d3 && !buf) return;
+    if (!buf) {
+      if (times) {
+        buf = acquire(Rl.W, Rl.H); const bx = buf._ctx; bx.globalCompositeOperation = 'lighter'; bx.globalAlpha = 1 / times.length;
+        times.forEach(ts => { const b = layerBuffer(L, ts, comp, Rl, true); bx.drawImage(b, 0, 0); release(b); });
+        bx.globalCompositeOperation = 'source-over'; bx.globalAlpha = 1;
+      } else buf = layerBuffer(L, t, comp, Rl, true);
+    }
     if (L.matte) {
       const ML = matteLayerOf(comp, i);
       if (ML && t >= ML.in && t < ML.out) {
-        const mbuf = layerBuffer(ML, t, comp, Rl, true);
+        const mbuf = (LM.is3D(ML) && LM.space ? compBuffer(ML, t, comp, Rl, null) : null) || layerBuffer(ML, t, comp, Rl, true);
         if (L.matte === 'luma' || L.matte === 'lumaInv') pixelOp(mbuf, d => { for (let j = 0; j < d.length; j += 4) { d[j + 3] = (d[j] * .299 + d[j + 1] * .587 + d[j + 2] * .114) * d[j + 3] / 255; d[j] = d[j + 1] = d[j + 2] = 255; } });
         const bx = buf._ctx; bx.globalCompositeOperation = L.matte === 'alpha' || L.matte === 'luma' ? 'destination-in' : 'destination-out'; bx.drawImage(mbuf, 0, 0); bx.globalCompositeOperation = 'source-over'; release(mbuf);
       } else if (L.matte === 'alpha' || L.matte === 'luma') buf._ctx.clearRect(0, 0, Rl.W, Rl.H);
@@ -462,7 +653,7 @@
     release(buf);
   }
   function renderAdjustment(out, comp, L, t, R) {
-    const fxs = L.effects.filter(f => f.on && f.type !== 'mblur'); if (!fxs.length) return;
+    const fxs = L.effects.filter(f => f.on && f.type !== 'mblur' && f.type !== 'echo'); if (!fxs.length) return;
     const op = Math.max(0, Math.min(1, val(L.tr.opacity, t) / 100)); if (op <= 0) return;
     const ctx = out.getContext ? out.getContext('2d') : out._ctx;
     const copy = acquire(R.W, R.H); copy._ctx.drawImage(out, 0, 0);
@@ -474,6 +665,8 @@
     release(mc); release(copy);
   }
   LM.isVisibleAt = (L, t) => t >= L.in && t < L.out;
+  const NO_PIXELS = { null: 1, audio: 1, camera: 1 };
+  LM.hasPixels = L => !NO_PIXELS[L.type];
   // Render comp at comp-time t into canvas `out` (HTMLCanvas/OffscreenCanvas sized comp*scale).
   function renderInto(comp, t, out, o = {}) {
     const s = o.scale || 1, W = out.width, H = out.height;
@@ -482,13 +675,20 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
     if (o.bg === false) ctx.clearRect(0, 0, W, H); else if (o.bg === 'transparent') ctx.clearRect(0, 0, W, H); else { ctx.fillStyle = comp.bg; ctx.fillRect(0, 0, W, H); }
-    const Ls = comp.layers, solo = Ls.some(l => l.solo && l.visible && l.type !== 'null');
+    const Ls = comp.layers, solo = Ls.some(l => l.solo && l.visible && LM.hasPixels(l));
+    let order = [];   // layer indices, bottom first
     for (let i = Ls.length - 1; i >= 0; i--) {
       const L = Ls[i];
       if (Ls[i + 1] && Ls[i + 1].matte && L !== Ls[i + 1]) continue;   // used as a track matte
-      if (!L.visible || L.type === 'null') continue;
+      if (!L.visible || !LM.hasPixels(L)) continue;
       if (solo && !L.solo) continue;
       if (t < L.in || t >= L.out) continue;
+      order.push(i);
+    }
+    // 2.5D: runs of consecutive 3D layers are drawn back to front from the camera's point of view
+    if (LM.space && order.some(i => LM.is3D(Ls[i]))) order = LM.space.depthSort(comp, order, t);
+    for (const i of order) {
+      const L = Ls[i];
       try {
         if (L.type === 'adjust') renderAdjustment(out, comp, L, t, R);
         else renderLayer(ctx, comp, i, t, R);
@@ -499,28 +699,38 @@
   LM.renderInto = renderInto;
 
   /* ---------- video sync ---------- */
-  // visit video layers that are visible at t (recursing into precomps) → [{L, lt}]
+  // visit video layers that are visible at t (recursing into precomps) → [{L, lt (source time), fps}]
   function videosAt(comp, t, out = [], depth = 0) {
     if (depth > 12) return out;
     comp.layers.forEach(L => {
       if (!L.visible || t < L.in || t >= L.out) return;
-      if (L.type === 'video') out.push({ L, lt: t - L.start });
-      if (L.type === 'precomp') { const sub = LM.doc.comps.find(c => c.id === L.comp); if (sub) videosAt(sub, t - L.start, out, depth + 1); }
+      if (L.type === 'video') out.push({ L, lt: LM.srcTime(L, t), fps: comp.fps });
+      if (L.type === 'precomp') { const sub = LM.doc.comps.find(c => c.id === L.comp); if (sub) videosAt(sub, LM.srcTime(L, t), out, depth + 1); }
     });
     return out;
   }
   LM.videosAt = videosAt;
-  // precise seek of every visible video so the next render is frame-accurate
+  const seekTo = (v, target) => new Promise(res => {
+    if (!v.paused) v.pause();
+    if (Math.abs(v.currentTime - target) < 1e-4 && v.readyState >= 2) return res();
+    const done = () => { v.removeEventListener('seeked', done); clearTimeout(to); if (v.requestVideoFrameCallback) { let fin = false; const f = () => { if (!fin) { fin = true; res(); } }; v.requestVideoFrameCallback(f); setTimeout(f, 150); } else res(); };
+    const to = setTimeout(done, 3000);
+    v.addEventListener('seeked', done); v.currentTime = target;
+  });
+  // precise seek of every visible video so the next render is frame-accurate (with frame blending: two source frames)
   LM.seekVideos = async function (comp, t) {
     const vids = videosAt(comp, t);
-    await Promise.all(vids.map(({ L, lt }) => new Promise(res => {
-      const m = LM.media.get(L.asset); if (!m?.video) return res();
-      const v = m.video, target = Math.max(0, Math.min(lt, (v.duration || 1e9) - 0.001));
-      if (!v.paused) v.pause();
-      if (Math.abs(v.currentTime - target) < 1e-4 && v.readyState >= 2) return res();
-      const done = () => { v.removeEventListener('seeked', done); clearTimeout(to); if (v.requestVideoFrameCallback) { let fin = false; const f = () => { if (!fin) { fin = true; res(); } }; v.requestVideoFrameCallback(f); setTimeout(f, 150); } else res(); };
-      const to = setTimeout(done, 3000);
-      v.addEventListener('seeked', done); v.currentTime = target;
-    })));
+    for (const { L, lt, fps } of vids) {
+      const m = LM.media.get(L.asset); if (!m?.video) continue;
+      const v = m.video, dur = (v.duration || 1e9) - 0.001, clampT = x => Math.max(0, Math.min(x, dur));
+      if (m.fb) { m.fb.a?.close?.(); m.fb = null; }
+      const sfps = LM.assets.get(L.asset)?.fps || fps, f = lt * sfps, f0 = Math.floor(f + 1e-6), w = f - f0;
+      if (L.fb && w > 0.001 && (f0 + 1) / sfps < dur) {
+        await seekTo(v, clampT(f0 / sfps + 0.25 / sfps));
+        let img = null; try { img = await createImageBitmap(v); } catch (e) { }
+        await seekTo(v, clampT((f0 + 1) / sfps + 0.25 / sfps));
+        if (img) m.fb = { a: img, b: v, w, L };
+      } else await seekTo(v, clampT(lt));
+    }
   };
 })();

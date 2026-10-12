@@ -16,6 +16,13 @@ import { esc, fmtBytes, prefs, uid, imageFileToDataUrl, clamp } from './util.js'
 import { loadPdf } from './pdfjs.js';
 import { annotRect } from './annots.js';
 import { ocrDialog, runOcr } from './ocr.js';
+import { F as FF, autoDetectDialog, detectFields, addField, addFields, updateField, moveWidget, deleteField, pageWidgets } from './forms.js';
+import { compareDialog, closeCompare, compareOpen, compareBytes, runCompare, annotatedReport } from './compare.js';
+import { unlockForOpen, secureOutput, protectDialog, removeSecurity, unlockOwner, securityProperties, applyProtection } from './protect.js';
+import { describe as secDescribe, decryptPdf, encryptPdf, newSecurity } from './security.js';
+import { exportWordDialog, exportImagesDialog, exportTextDialog, exportWord, exportText as exportTextNew, exportImages } from './export.js';
+import { signDialog, digitalIdDialog, signaturesDialog, validateSignatures, signBytes, createIdentity, getIdentity, signCurrent, unlockIdentity, migrateIdentity, importP12, exportP12, changePassphrase, removeIdentity, ensureProtected, importDialog } from './digsig.js';
+import { beginEdit, applyTextEdit, applyParagraphEdit, analyzePage, lineAt, commitEdit } from './textedit.js';
 
 const $ = id => document.getElementById(id);
 const ICON = '../kit/icons/pdf.png';
@@ -24,23 +31,34 @@ const savedOpts = prefs.get('opts', null);
 if (savedOpts) for (const k of Object.keys(App.opts)) if (savedOpts[k]) Object.assign(App.opts[k], savedOpts[k]);
 
 /* ---------------- documents & tabs ---------------- */
-export async function openBytes(bytes, name = 'Document.pdf', path = null, extraAnnots = null) {
+export async function openBytes(bytes, name = 'Document.pdf', path = null, extraAnnots = null, opts = {}) {
   bytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   if (!isPdf(bytes)) { Aero.alert('Open', `“${name}” is not a PDF file.`); return null; }
   Aero.busy(`Opening ${name}…`);
   const d = new Doc(name); d.path = path;
   d.onPassword = (cb, reason, task) => { Aero.busy(); Aero.prompt(reason === 2 ? 'Incorrect password' : 'Password required', `“${name}” is password protected. Enter the password:`, '').then(p => { if (p == null) task.destroy(); else { Aero.busy('Opening…'); cb(p); } }); };
   try {
-    const imp = await importDocument(bytes);
+    let security = null; const input = bytes;
+    const signed = new TextDecoder('latin1').decode(bytes).includes('/ByteRange');
+    const un = await unlockForOpen(bytes, name, { password: opts.password ?? null });
+    if (!un) return null; // cancelled at the password prompt
+    if (un.bytes) { bytes = un.bytes; security = un.security; }
+    Aero.busy(`Opening ${name}…`);
+    const imp = await importDocument(bytes, { keepBytes: signed });
     d.readOnly = imp.readOnly || false;
-    d.state = { bytes: imp.bytes, pageIds: imp.pageIds || [], annots: imp.annots, form: {}, props: imp.props || {} };
+    if (signed) { d.origInput = input; d.sigs = await validateSignatures(input).catch(() => []); }
+    if (security && !security.owner && !security.perms.modify) d.readOnly = 'restricted';
+    d.state = { bytes: imp.bytes, pageIds: imp.pageIds || [], annots: imp.annots, form: {}, props: imp.props || {}, security };
     await d.loadBytes(d.state.bytes);
     if (extraAnnots) for (const a of extraAnnots) { const { pageIndex, ...rest } = a; d.state.annots.push({ id: uid(), replies: [], contents: '', ...rest, page: d.state.pageIds[pageIndex] }); }
     if (d.readOnly && !imp.props?.title) { try { const md = await d.pdf.getMetadata(); d.state.props = { title: md.info?.Title || '', author: md.info?.Author || '', subject: md.info?.Subject || '', keywords: md.info?.Keywords || '' }; } catch (e) { /* ignore */ } }
     d.hist = new Aero.History({ max: 60, onChange: () => { if (d === App.doc) renderHistory(); } });
     d.hist.reset('Open', d.snapshot());
     App.docs.push(d); activate(d);
-    if (d.readOnly) Aero.toast(d.readOnly === 'encrypted' ? 'Encrypted PDF opened read-only (view, search and print only)' : 'This PDF is damaged; opened read-only', 4500);
+    if (d.sigs?.length) { const g = d.sigs.filter(r => r.ok); const r0 = d.sigs[0]; Aero.toast(g.length === d.sigs.length ? `Signed by ${r0.signer?.CN || r0.name} — signature${d.sigs.length > 1 ? 's' : ''} valid${d.sigs.every(r => r.coversAll) ? ', document unchanged since signing' : ''} (Fill & Sign › Validate Signatures)` : `Warning: ${d.sigs.length - g.length} of ${d.sigs.length} signature(s) are INVALID — see Fill & Sign › Validate Signatures`, 6000); }
+    else if (d.readOnly === 'restricted') Aero.toast('Opened with restricted permissions — use File › Protect › Unlock Editing… with the permissions password to edit', 6000);
+    else if (security) Aero.toast(`Protected document opened (${secDescribe(security)}) — protection is kept when you save`, 4500);
+    else if (d.readOnly) Aero.toast(d.readOnly === 'encrypted' ? 'Encrypted PDF opened read-only (view, search and print only)' : 'This PDF is damaged; opened read-only', 4500);
     return d;
   } catch (e) {
     console.warn(e);
@@ -106,13 +124,16 @@ export async function openSample() {
 async function newBlank() { const b = await blankPdf(prefs.get('pagesize', 'letter')); return openBytes(b, 'Untitled.pdf'); }
 export async function save(as = false) {
   const d = App.doc; if (!d) return false;
-  if (d.readOnly) { Aero.alert('Save', 'This document was opened read-only (encrypted or damaged) and cannot be re-saved with changes.'); return false; }
+  if (d.readOnly) { Aero.alert('Save', d.readOnly === 'restricted' ? 'The author restricted changes to this document. Use File › Protect › Unlock Editing… with the permissions password first.' : 'This document was opened read-only (encrypted or damaged) and cannot be re-saved with changes.'); return false; }
   finishEdit();
   let name = /\.pdf$/i.test(d.name) ? d.name : d.name + '.pdf';
+  const unchanged = d.origInput && d.hist.index === 0 && d.hist.items.length >= 1;
+  if (d.sigs?.some(r => r.ok) && !unchanged && !(await Aero.confirm('Save', 'This document is digitally signed. Saving your changes rewrites the file, so the signatures will no longer validate. Save anyway?', 'Save Anyway'))) return false;
   if (as && !Aero.isDesktop) { const n = await Aero.prompt('Save As', 'File name', name); if (!n) return false; name = /\.pdf$/i.test(n) ? n : n + '.pdf'; }
   Aero.busy('Saving…');
   try {
-    const { bytes, warnings } = await buildOutput(d.state);
+    let { bytes, warnings } = unchanged ? { bytes: d.origInput, warnings: [] } : await buildOutput(d.state);
+    if (d.state.security && !unchanged) { Aero.busy('Encrypting…'); bytes = await secureOutput(d, bytes); }
     Aero.busy();
     const p = await Aero.saveFile({ name, data: bytes, filters: [{ name: 'PDF document', extensions: ['pdf'] }], path: as ? null : d.path });
     if (!p) return false;
@@ -126,7 +147,7 @@ export async function save(as = false) {
 async function saveFlattenedCopy() {
   const d = App.doc; if (!d || d.readOnly) return;
   Aero.busy('Flattening…');
-  try { const { bytes } = await buildOutput(d.state, { flatten: true }); Aero.busy(); await Aero.saveFile({ name: Aero.baseName(d.name) + ' (flattened).pdf', data: bytes, filters: [{ name: 'PDF document', extensions: ['pdf'] }] }); }
+  try { const { bytes: b0 } = await buildOutput(d.state, { flatten: true }); const bytes = await secureOutput(d, b0); Aero.busy(); await Aero.saveFile({ name: Aero.baseName(d.name) + ' (flattened).pdf', data: bytes, filters: [{ name: 'PDF document', extensions: ['pdf'] }] }); }
   catch (e) { Aero.alert('Save flattened copy', e.message); } finally { Aero.busy(); }
 }
 async function exportPng() {
@@ -146,15 +167,6 @@ async function exportPng() {
       } catch (e) { Aero.alert('Export', e.message); } finally { Aero.busy(); }
     }
   });
-}
-async function exportText() {
-  const d = App.doc; if (!d) return;
-  Aero.busy('Extracting text…');
-  try {
-    let out = '';
-    for (let i = 0; i < d.numPages; i++) { const t = await d.getPage(i).then(p => p.getTextContent()); out += `--- Page ${i + 1} ---\n` + t.items.map(it => it.str + (it.hasEOL ? '\n' : '')).join('') + '\n\n'; }
-    Aero.busy(); await Aero.saveFile({ name: Aero.baseName(d.name) + '.txt', data: out, filters: [{ name: 'Text', extensions: ['txt'] }] });
-  } finally { Aero.busy(); }
 }
 async function print() {
   const d = App.doc; if (!d) return;
@@ -208,11 +220,14 @@ on('histGo', i => { const d = App.doc; if (d) { const s = d.hist.go(i); if (s) r
 /* ---------------- events from modules ---------------- */
 on('annots', () => { renderComments(); refreshThumbAnnots(); markDirty(); updateStatus(); });
 on('sel', () => renderComments());
+on('ffsel', () => renderCmdbar());
 on('page', () => { updateStatus(); updateNav(); });
 on('zoom', () => { updateStatus(); updateNav(); });
-on('props', () => markDirty());
+on('props', () => { markDirty(); updateStatus(); });
 on('openBytes', ({ bytes, name }) => openBytes(bytes, name).then(d => { if (d) { d.dirty = true; markDirty(); } }));
 on('goto', i => goTo(i));
+on('openSigned', ({ bytes, name }) => openBytes(bytes, name));
+on('openReport', ({ bytes, name, annots }) => openBytes(bytes, name, null, annots).then(d => { if (d) { d.hist.reset('Compare report', d.snapshot()); d.dirty = true; renderHistory(); renderComments(); drawAllAnnots(); refreshThumbAnnots(); markDirty(); closeCompare(); Aero.toast(`Opened the revised document with ${annots.length} change marker${annots.length === 1 ? '' : 's'}`); } }));
 on('openUrl', url => openUrl(url));
 on('needSignature', () => { signatureManager(); });
 on('signatureReady', () => { if (App.tool !== 'sign') setTool('sign'); renderCmdbar(); Aero.toast('Click on the page to place your signature'); });
@@ -255,7 +270,7 @@ function updateStatus() {
   $('st-page').textContent = `Page ${V.cur + 1} of ${d.numPages}`;
   $('st-zoom').textContent = zoomPct() + '%';
   $('st-size').textContent = inf ? `${(inf.w / 72).toFixed(2)} × ${(inf.h / 72).toFixed(2)} in` : '';
-  $('st-msg').textContent = d.readOnly ? 'Read-only' : `${fmtBytes(d.state.bytes.length)} · ${d.state.annots.length} annotation${d.state.annots.length === 1 ? '' : 's'}`;
+  $('st-msg').textContent = (d.state.security ? 'Protected: ' + secDescribe(d.state.security) + ' · ' : '') + (d.readOnly ? 'Read-only' : `${fmtBytes(d.state.bytes.length)} · ${d.state.annots.length} annotation${d.state.annots.length === 1 ? '' : 's'}`);
 }
 const zoomSel = $('nv-zoom');
 function updateNav() {
@@ -298,17 +313,17 @@ function preferences() {
 }
 function shortcutsDialog() {
   const rows = [['#', 'File'], ['Ctrl+O', 'Open'], ['Ctrl+S / Ctrl+Shift+S', 'Save / Save As'], ['Ctrl+P', 'Print'], ['Ctrl+W', 'Close tab'], ['Ctrl+D', 'Document properties'],
-    ['#', 'View'], ['Ctrl+= / Ctrl+-', 'Zoom in / out (or Ctrl+wheel)'], ['Ctrl+0 / 1 / 2', 'Fit page / actual size / fit width'], ['Ctrl+L', 'Read mode (full screen)'], ['Ctrl+Shift+R / L', 'Rotate view'], ['PgUp / PgDn, Home / End', 'Previous / next, first / last page'], ['Ctrl+G', 'Go to page'], ['Ctrl+F, F3, Shift+F3', 'Find, next, previous'], ['Ctrl+Shift+O', 'Organize pages'],
+    ['#', 'View'], ['Ctrl+= / Ctrl+-', 'Zoom in / out (or Ctrl+wheel)'], ['Ctrl+0 / 1 / 2', 'Fit page / actual size / fit width'], ['Ctrl+L', 'Read mode (full screen)'], ['Ctrl+Shift+R / L', 'Rotate view'], ['PgUp / PgDn, Home / End', 'Previous / next, first / last page'], ['Ctrl+G', 'Go to page'], ['Ctrl+F, F3, Shift+F3', 'Find, next, previous'], ['Ctrl+Shift+O', 'Organize pages'], ['Ctrl+Shift+T', 'Recognize text (OCR)'], ['Ctrl+Shift+C', 'Compare files (F7 / F8 or ↑ / ↓: previous / next change)'],
     ['#', 'Tools'], ...TOOLS.filter(t => t && t.key).map(t => [t.key, t.title]),
-    ['#', 'Editing'], ['Ctrl+Z / Ctrl+Y', 'Undo / redo'], ['Delete', 'Delete selected annotation (or pages in Organize)'], ['Arrows (+Shift)', 'Nudge selected annotation'], ['Double-click', 'Edit text box / stamp / comment'], ['Esc', 'Deselect, close find, leave read mode']];
+    ['#', 'Editing'], ['Ctrl+Z / Ctrl+Y', 'Undo / redo'], ['Delete', 'Delete selected annotation (or pages in Organize)'], ['Arrows (+Shift)', 'Nudge selected annotation'], ['Double-click', 'Edit text box / stamp / comment'], ['Esc', 'Deselect, close find, leave read mode or compare'], ['#', 'Edit text & forms'], ['Enter / Esc', 'Apply / cancel a text edit (Edit Text tool)'], ['Shift+Enter', 'New line while editing a paragraph (Edit Text tool)'], ['Enter', 'Field properties (Prepare Form tool)'], ['Delete', 'Delete the selected form field (Prepare Form tool)']];
   const html = `<div class="kbd">${rows.map(([k, v]) => k === '#' ? `<h4>${v}</h4>` : `<b>${esc(k)}</b><span>${esc(v)}</span>`).join('')}</div>`;
   Aero.dialog({ title: 'Keyboard shortcuts', html, noCancel: true, width: 560 });
 }
 function about() {
   Aero.dialog({
     title: 'About Lumen PDF', noCancel: true, width: 480,
-    html: `<div style="display:flex;gap:14px;align-items:flex-start"><img src="${ICON}" style="width:64px;height:64px"><div><div style="font-size:20px;color:#1e395b;font-weight:300">Lumen PDF</div><div class="dim">View, annotate, fill, sign and organize PDF documents. Part of Lumen Studio.</div>
-      <div class="dnote" style="color:#333">Built with pdf.js ${'6.4.299'} (Apache-2.0) for rendering and pdf-lib 1.17.1 (MIT) for writing. Signature fonts: Great Vibes, Dancing Script, Sacramento, Allura, Caveat (SIL OFL 1.1). Everything runs locally — no network access.</div></div></div>`
+    html: `<div style="display:flex;gap:14px;align-items:flex-start"><img src="${ICON}" style="width:64px;height:64px"><div><div style="font-size:20px;color:#1e395b;font-weight:300">Lumen PDF</div><div class="dim">View, annotate, edit, fill, sign, protect, compare, convert and organize PDF documents. Part of Lumen Studio.</div>
+      <div class="dnote" style="color:#333">Built with pdf.js ${'6.4.299'} (Apache-2.0) for rendering, pdf-lib 1.17.1 (MIT) for writing and tesseract.js 7.0.0 with tesseract.js-core 7.0.0 and the English LSTM model (Apache-2.0) for OCR. Encryption, digital signatures (incl. PKCS#12 import/export and passphrase-encrypted keys), table detection and Word export are implemented in Lumen PDF itself. Signature fonts: Great Vibes, Dancing Script, Sacramento, Allura, Caveat (SIL OFL 1.1). Everything runs locally — no network access.</div></div></div>`
   });
 }
 
@@ -322,7 +337,8 @@ const M = {
     ['New Blank Document', 'Ctrl+N', newBlank], ['Open…', 'Ctrl+O', openDialog], ['Open Sample', '', openSample], { label: 'Close Tab', key: 'Ctrl+W', fn: () => closeDoc(), disabled: need }, '-',
     { label: 'Save', key: 'Ctrl+S', fn: () => save(false), disabled: ro }, { label: 'Save As…', key: 'Ctrl+Shift+S', fn: () => save(true), disabled: ro }, { label: 'Save Flattened Copy…', fn: saveFlattenedCopy, disabled: ro }, '-',
     '#Create', ['PDF from Images…', '', () => createFromImagesDialog()], ['Combine Files…', '', combineFilesUI], '-',
-    '#Export', { label: 'Page as PNG Image…', fn: exportPng, disabled: need }, { label: 'Text (.txt)…', fn: exportText, disabled: need }, '-',
+    '#Export', { label: 'Word Document (.docx)…', fn: exportWordDialog, disabled: need }, { label: 'All Pages as Images (.zip)…', fn: exportImagesDialog, disabled: need }, { label: 'Page as PNG Image…', fn: exportPng, disabled: need }, { label: 'Markdown (.md)…', fn: () => exportTextDialog('md'), disabled: need }, { label: 'Plain Text (.txt)…', fn: () => exportTextDialog('txt'), disabled: need }, '-',
+    '#Protect', { label: 'Encrypt with Password…', fn: protectDialog, disabled: ro }, { label: 'Remove Security…', fn: removeSecurity, disabled: () => !App.doc?.state?.security || (App.doc.readOnly && App.doc.readOnly !== 'restricted') }, { label: 'Unlock Editing…', fn: () => unlockOwner(false), disabled: () => App.doc?.readOnly !== 'restricted' }, { label: 'Security Properties…', fn: securityProperties, disabled: need }, '-',
     { label: 'Document Properties…', key: 'Ctrl+D', fn: propertiesDialog, disabled: need }, { label: 'Print…', key: 'Ctrl+P', fn: print, disabled: need }
   ],
   Edit: [
@@ -353,6 +369,8 @@ const M = {
     { label: 'Fill Form Fields', fn: tool('select'), disabled: need }, { label: 'Reset Form', fn: () => { const d = App.doc; if (!d || !Object.keys(d.state.form).length) return; d.state.form = {}; d.commit('Reset form'); syncForms(); markDirty(); }, disabled: () => !App.doc || !Object.keys(App.doc.state.form).length }, '-',
     { label: 'Add Text', key: 'X', fn: tool('filltext'), noShortcut: true, disabled: ro }, { label: 'Add Date', key: 'Y', fn: tool('date'), noShortcut: true, disabled: ro }, { label: 'Add Check Mark', key: 'C', fn: tool('check'), noShortcut: true, disabled: ro }, '-',
     { label: 'Sign…', key: 'G', fn: () => { if (!App.doc) return; if (App.signature) setTool('sign'); else signatureManager(); }, noShortcut: true, disabled: ro }, { label: 'Manage Signatures…', fn: () => signatureManager() }, '-',
+    '#Prepare form', { label: 'Prepare Form (Add Fields)', key: 'F', fn: tool('formfield'), noShortcut: true, checked: () => App.tool === 'formfield', disabled: ro }, { label: 'Auto-Detect Form Fields…', fn: () => { if (App.doc) autoDetectDialog(); }, disabled: ro }, '-',
+    '#Digital signatures', { label: 'Sign with Digital ID…', fn: () => signDialog({ page: V.cur }), disabled: ro }, { label: 'Validate Signatures…', fn: () => signaturesDialog(App.doc?.sigs), disabled: need }, { label: 'Digital ID…', fn: () => digitalIdDialog() }, { label: 'Import Digital ID (.p12 / .pfx)…', fn: () => importDialog() }, '-',
     { label: 'Flatten Form & Annotations…', fn: flatten, disabled: ro }
   ],
   Pages: [
@@ -364,10 +382,11 @@ const M = {
     { label: 'Crop Pages…', fn: () => cropDialog(null), disabled: ro }, { label: 'Crop Tool', key: 'O', fn: tool('crop'), noShortcut: true, disabled: ro }
   ],
   Tools: [
-    '#Edit page content', { label: 'Add Text to Page', fn: tool('edittext'), disabled: ro }, { label: 'Add Image to Page…', fn: () => { if (App.doc) pickImage(); }, disabled: ro },
+    '#Edit page content', { label: 'Edit Existing Text', key: 'M', fn: tool('retext'), noShortcut: true, checked: () => App.tool === 'retext', disabled: ro }, { label: 'Add Text to Page', fn: tool('edittext'), disabled: ro }, { label: 'Add Image to Page…', fn: () => { if (App.doc) pickImage(); }, disabled: ro },
     { label: 'Draw Shapes as Page Content', fn: () => { App.contentMode = !App.contentMode; renderCmdbar(); }, checked: () => App.contentMode }, '-',
     '#Redact', { label: 'Mark Area for Redaction', key: 'D', fn: tool('redact'), noShortcut: true, disabled: ro }, { label: 'Mark Selected Text for Redaction', fn: () => App.doc && markupFromSelection('redact'), disabled: ro }, { label: 'Apply Redactions…', fn: applyRedactionsDialog, disabled: ro }, '-',
     '#Scan & OCR', { label: 'Recognize Text (OCR)…', key: 'Ctrl+Shift+T', fn: ocrDialog, disabled: ro }, '-',
+    '#Compare', { label: 'Compare Files…', key: 'Ctrl+Shift+C', fn: compareDialog }, '-',
     '#Document', { label: 'Watermark…', fn: watermarkDialog, disabled: ro }, { label: 'Header & Footer / Bates…', fn: headerFooterDialog, disabled: ro }, { label: 'Reduce File Size…', fn: optimizeDialog, disabled: ro }
   ],
   Help: [['Keyboard Shortcuts', 'F1', shortcutsDialog], '-', ['About Lumen PDF', '', about]]
@@ -382,6 +401,7 @@ Aero.init({
 initTools($('tools'));
 Aero.shortcut('Escape', () => {
   if (document.documentElement.classList.contains('readmode')) return toggleRead(false);
+  if (compareOpen()) return closeCompare();
   if (!$('findbar').hidden) return closeFind();
   if (App.organize) return closeOrganizer();
   if (App.sel) return select(null);
@@ -412,7 +432,7 @@ renderCmdbar();
 // Test / automation hooks
 window.LumenPDF = {
   App, V, openBytes, openSample, save, buildOutput, undo, redo, setTool, addAnnot, select, deleteAnnot, markupFromSelection, search, findStep, goTo, setZoom, setMode, rotateView,
-  runOcr, rotatePages, deletePages, duplicatePages, insertBlank, movePages, extractPages, splitDoc, applyRedactions, addWatermark, addHeaderFooter, optimize, flatten, combineFiles, pdfFromImages,
+  runOcr, applyParagraphEdit, signDialog, signBytes, createIdentity, getIdentity, signCurrent, ensureProtected, unlockIdentity, migrateIdentity, importP12, exportP12, changePassphrase, removeIdentity, validateSignatures, exportWord, exportTextNew, exportImages, decryptPdf, encryptPdf, newSecurity, applyProtection, removeSecurity, unlockOwner, secureOutput, compareBytes, runCompare, closeCompare, annotatedReport, FF, detectFields, addField, addFields, updateField, moveWidget, deleteField, pageWidgets, applyTextEdit, analyzePage, lineAt, commitEdit, beginEdit, rotatePages, deletePages, duplicatePages, insertBlank, movePages, extractPages, splitDoc, applyRedactions, addWatermark, addHeaderFooter, optimize, flatten, combineFiles, pdfFromImages,
   preparePrint, typedSignature, whenRendered, vp, clientToPdf, openOrganizer, closeOrganizer, applyNewBytes, loadPdf, closeDoc, toggleRead, replaceAnnot, annotRect, drawAllAnnots, syncForms
 };
 const q = new URLSearchParams(location.search);

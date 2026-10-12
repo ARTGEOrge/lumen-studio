@@ -111,3 +111,19 @@ table.kbd td{padding:3px 8px;border-bottom:1px solid #eef2f7}
 table.kbd td:first-child{font-family:var(--mono);color:#1e395b;white-space:nowrap}
 .prow.small input[type=color]{width:30px;height:20px}
 .prow select[data-k$=Type]{width:78px}
+
+/* v1.1: appearance, live shapes, image trace, symbols, blends, threads */
+.ap-row{display:flex;align-items:center;gap:4px;padding:2px 2px;border-bottom:1px solid #eef2f7;font-size:11.5px;min-height:24px}
+.ap-row.off .grow,.ap-row.off .ap-chip,.ap-row.off .ap-fx{opacity:.4}
+.ap-row input[type=checkbox]{margin:0}
+.ap-chip{width:18px;height:18px}
+.ap-fx{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:3px;background:linear-gradient(#f3f7fc,#d9e5f2);border:1px solid #9ab3cd;font:italic 600 10px Georgia,serif;color:#1e395b;flex:none}
+.ap-b{min-width:18px!important;height:18px!important;padding:0 1px!important}
+.ap-b svg{width:12px;height:12px}
+#pAppear select{font-size:11px;max-width:120px}
+#pTrace select{min-width:0}
+.symrow{gap:6px;padding:2px 6px}
+.symthumb{width:30px;height:30px;flex:none;border:1px solid #9fb0c3;border-radius:3px;background:#8494a7 linear-gradient(45deg,#75879b 25%,transparent 25%,transparent 75%,#75879b 75%),linear-gradient(45deg,#75879b 25%,transparent 25%,transparent 75%,#75879b 75%);background-size:8px 8px;background-position:0 0,4px 4px}
+.isoBanner{display:inline-flex;align-items:center;gap:6px;padding:1px 4px 1px 8px;border-radius:3px;background:rgba(255,226,120,.28);box-shadow:inset 0 0 0 1px rgba(255,226,120,.6);white-space:nowrap}
+.isoBanner b{font-weight:600}
+#symbols{flex:1;min-height:60px}

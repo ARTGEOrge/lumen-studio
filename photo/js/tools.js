@@ -55,12 +55,25 @@ const Tools = {
         this.float = clone(maskedAt(t.canvas, L.x, L.y)); this.mask0 = clone(selection.mask);
         const self = this;
         live = { isMask: t.isMask, get() { const o = scratchSized('live', self.rest.width, self.rest.height), c = cx(o); c.drawImage(self.rest, 0, 0); c.drawImage(self.float, self.dx, self.dy); return o; } };
-      } else { this.mode = 'layer'; this.ox = L.x; this.oy = L.y; this.ot = L.text ? { ax: L.text.ax, ay: L.text.ay } : null; }
+      } else if (L.type === 'group') {
+        this.mode = 'group';
+        this.items = doc.layers.filter(x => x === L || isDescendant(x, L.id)).map(x => ({ L: x, x: x.x, y: x.y, t: x.text ? { ax: x.text.ax, ay: x.text.ay } : null }));
+        let bb = null; this.items.forEach(o => { if (o.L.canvas) { const b = boundsIn(o.L.canvas, o.L.x, o.L.y); if (b) bb = bb ? unionRect(bb, b) : b; } }); this.bounds = bb;
+      } else {
+        this.mode = 'layer'; this.ox = L.x; this.oy = L.y; this.ot = L.text ? { ax: L.text.ax, ay: L.text.ay } : null;
+        this.bounds = view2.snap && L.canvas && (L.canvas.width * L.canvas.height < 2.5e7) ? boundsIn(L.canvas, L.x, L.y) : null;
+      }
     },
-    move(p) { this.apply(Math.round(p.x - this.a.x), Math.round(p.y - this.a.y)); },
+    move(p, e) {
+      let dx = Math.round(p.x - this.a.x), dy = Math.round(p.y - this.a.y);
+      if (e?.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
+      if (this.bounds && (this.mode === 'layer' || this.mode === 'group')) { const s = snapRectDelta({ ...this.bounds, x: this.bounds.x + dx, y: this.bounds.y + dy }); dx += Math.round(s.x); dy += Math.round(s.y); }
+      this.apply(dx, dy);
+    },
     apply(dx, dy) {
       const L = layer(); this.dx = dx; this.dy = dy; this.moved = true;
-      if (this.mode === 'layer') { L.x = this.ox + dx; L.y = this.oy + dy; if (this.ot) { L.text.ax = this.ot.ax + dx; L.text.ay = this.ot.ay + dy; } requestRender(); }
+      if (this.mode === 'group') { this.items.forEach(o => { o.L.x = o.x + dx; o.L.y = o.y + dy; if (o.t) { o.L.text.ax = o.t.ax + dx; o.L.text.ay = o.t.ay + dy; } }); requestRender(); }
+      else if (this.mode === 'layer') { L.x = this.ox + dx; L.y = this.oy + dy; if (this.ot) { L.text.ax = this.ot.ax + dx; L.text.ay = this.ot.ay + dy; } requestRender(); }
       else if (this.mode === 'sel') { const m = cx(selection.mask); m.clearRect(0, 0, doc.w, doc.h); m.drawImage(this.mask0, dx, dy); setSel(selection.mask); requestRender(true); }
     },
     up() {
@@ -74,14 +87,14 @@ const Tools = {
         }
         this.rest = this.float = null;
       }
-      if (this.moved) pushHistory('Move', this.mode === 'layer' ? 'none' : 'active'); else requestRender();
+      if (this.moved) pushHistory('Move', this.mode === 'layer' || this.mode === 'group' ? 'none' : 'active'); else requestRender();
       this.mode = null;
     }
   },
   marquee: {
-    down(p, e) { this.a = p; this.b = p; this.mode = selMode(e); },
+    down(p, e) { p = snapPt(p); this.a = p; this.b = p; this.mode = selMode(e); },
     move(p, e) {
-      this.b = p;
+      p = snapPt(p); this.b = p;
       if (e.shiftKey && this.mode === 'new') { const s = Math.max(Math.abs(p.x - this.a.x), Math.abs(p.y - this.a.y)); this.b = { x: this.a.x + Math.sign(p.x - this.a.x) * s, y: this.a.y + Math.sign(p.y - this.a.y) * s }; }
       const r = normRect(this.a, this.b), el = opts.marquee === 'ellipse';
       preview = (c, px) => { c.beginPath(); el ? c.ellipse(r.x + r.w / 2, r.y + r.h / 2, r.w / 2, r.h / 2, 0, 0, Math.PI * 2) : c.rect(r.x, r.y, r.w, r.h); ants(c, px); };
@@ -125,10 +138,10 @@ const Tools = {
     up() { preview = null; if (!this.ok) return; if (this.moved) commitStroke(); else cancelStroke(); }
   },
   shape: {
-    down(p) { this.a = p; this.moved = false; this.ok = beginStroke('paint', opts.opacity, 'Shape'); },
+    down(p) { this.a = snapPt(p); this.moved = false; this.ok = beginStroke('paint', opts.opacity, 'Shape'); },
     move(p, e) {
       if (!this.ok) return;
-      const a = this.a, c = stroke.ctx; let b = p;
+      const a = this.a, c = stroke.ctx; let b = snapPt(p);
       if (e.shiftKey) {
         if (opts.shape === 'line') b = snap45(a, p);
         else { const s = Math.max(Math.abs(p.x - a.x), Math.abs(p.y - a.y)); b = { x: a.x + Math.sign(p.x - a.x) * s, y: a.y + Math.sign(p.y - a.y) * s }; }
@@ -150,7 +163,7 @@ const Tools = {
   text: {
     down(p) {
       for (let i = doc.layers.length - 1; i >= 0; i--) {
-        const L = doc.layers[i], r = L.type === 'text' && L.visible ? lrect(L) : null;
+        const L = doc.layers[i], r = L.type === 'text' && effVisible(L) ? lrect(L) : null;
         if (r && p.x >= r.x && p.y >= r.y && p.x <= r.x + r.w && p.y <= r.y + r.h) { doc.active = i; doc.editMask = false; updatePanels(); return textDialog(L, false); }
       }
       const L = newLayer('Text', null, 0, 0, 'text');
@@ -160,8 +173,10 @@ const Tools = {
     }
   },
   crop: {
-    down(p) { this.a = { x: clamp(p.x, 0, doc.w), y: clamp(p.y, 0, doc.h) }; cropRect = null; },
+    down(p) { p = snapPt(p); this.a = { x: clamp(p.x, 0, doc.w), y: clamp(p.y, 0, doc.h) }; cropRect = null; },
     move(p) {
+      p = snapPt(p);
+
       cropRect = normRect(this.a, { x: clamp(p.x, 0, doc.w), y: clamp(p.y, 0, doc.h) });
       const r = cropRect;
       preview = (c, px) => {

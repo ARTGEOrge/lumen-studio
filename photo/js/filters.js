@@ -114,12 +114,12 @@ const noteHtml = F => F.note ? `<p class="dnote">${F.note}</p>` : '';
 function runFilter(name) {
   const F = FILTERS[name], t = editTarget(); if (!t) return;
   const orig = clone(t.canvas);
-  if (!F.fields && !F.fieldsFor) { putResult(t, orig, F.fn(orig, {})); pushHistory(plainName(name)); return; }
+  if (!F.fields && !F.fieldsFor) { putResult(t, orig, F.fn(orig, {})); pushHistory(plainName(name)); recordStep({ type: 'filter', name, params: {} }); return; }
   const fields = fieldsOf(F, null, orig), init = defaultsOf({ fields });
   showDialog({
     title: plainName(name), fields, html: noteHtml(F), onInput: F.onInput,
     onChange: v => { F.onDialog?.(v, false, init); putResult(t, orig, F.fn(orig, v)); requestRender(); },
-    onOK: v => { F.onDialog?.(v, true, init); putResult(t, orig, F.fn(orig, v)); pushHistory(plainName(name)); },
+    onOK: v => { F.onDialog?.(v, true, init); putResult(t, orig, F.fn(orig, v)); pushHistory(plainName(name)); recordStep({ type: 'filter', name, params: v }); },
     onCancel: () => { putResult(t, orig, orig); requestRender(); }
   });
 }
@@ -132,7 +132,7 @@ function addAdjustmentLayer(kind) {
   L.mask = { canvas: newMaskCanvas(L, '#fff'), enabled: true };
   if (selection) { const c = cx(L.mask.canvas); c.fillStyle = '#000'; c.fillRect(0, 0, doc.w, doc.h); c.drawImage(selection.mask, 0, 0); }
   insertLayer(L); doc.editMask = false;
-  if (!F.fields && !F.fieldsFor) { pushHistory('New ' + plainName(kind)); return; }
+  if (!F.fields && !F.fieldsFor) { pushHistory('New ' + plainName(kind)); recordStep({ type: 'adjLayer', kind, params: {} }); return; }
   editAdjustment(L, true);
 }
 function editAdjustment(L, isNew) {
@@ -141,7 +141,8 @@ function editAdjustment(L, isNew) {
   showDialog({
     title: plainName(L.adjust.kind) + ' (adjustment layer)', fields: fieldsOf(F, L.adjust.params), html: noteHtml(F), onInput: F.onInput,
     onChange: v => { F.onDialog?.(v, false, old); L.adjust.params = { ...v }; requestRender(); },
-    onOK: v => { F.onDialog?.(v, true, old); L.adjust.params = { ...v }; pushHistory(isNew ? 'New ' + plainName(L.adjust.kind) : 'Edit Adjustment'); },
+    onOK: v => { F.onDialog?.(v, true, old); L.adjust.params = { ...v }; pushHistory(isNew ? 'New ' + plainName(L.adjust.kind) : 'Edit Adjustment'); if (isNew) recordStep({ type: 'adjLayer', kind: L.adjust.kind, params: v }); },
+
     onCancel: () => {
       if (isNew) { const i = doc.layers.indexOf(L); doc.layers.splice(i, 1); doc.active = clamp(i - 1, 0, doc.layers.length - 1); updatePanels(); }
       else L.adjust.params = old;

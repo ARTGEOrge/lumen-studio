@@ -17,7 +17,8 @@ precision highp float;
 in vec2 vUV; out vec4 o;
 uniform sampler2D uS; uniform float uBias;
 ${Geo.GLSL}
-uniform vec4 uSpot[128]; uniform int uNSpots;      // per spot: (dst.xy, src.xy) square coords, (radius, feather, opacity, heal)
+uniform vec4 uSpot[192]; uniform int uNSpots;      // per spot: (dst.xy, src.xy) square coords, (radius, feather, opacity, heal), (first texel, points, -, -)
+uniform highp sampler2D uPts;                       // stroke spots: texel = bbox, then the points (square coords)
 uniform vec3 uVigC;                                 // lens vignetting: amount, exponent, on
 uniform vec2 uCA;                                   // lateral CA: red / blue radial scale
 uniform float uSplit, uBefore;
@@ -42,7 +43,30 @@ vec3 sampleSrc(vec2 s, bool fx){
   vec2 P = s*uSq;
   for (int i = 0; i < 64; i++) {
     if (i >= uNSpots) break;
-    vec4 a = uSpot[2*i], b = uSpot[2*i+1];
+    vec4 a = uSpot[3*i], b = uSpot[3*i+1], e3 = uSpot[3*i+2];
+    if (e3.y > .5) {   // brush-stroke spot: distance to the polyline, heal across the stroke
+      int st = int(e3.x), n = int(e3.y);
+      vec4 bb = texelFetch(uPts, ivec2(st % 1024, st / 1024), 0);
+      if (P.x < bb.x || P.y < bb.y || P.x > bb.z || P.y > bb.w) continue;
+      vec2 prev = texelFetch(uPts, ivec2((st + 1) % 1024, (st + 1) / 1024), 0).xy, Q = prev, T = vec2(1., 0.); float best = length(P - prev);
+      for (int k = 1; k < 300; k++) {
+        if (k >= n) break;
+        int t = st + 1 + k; vec2 cur = texelFetch(uPts, ivec2(t % 1024, t / 1024), 0).xy, e = cur - prev; float l2 = dot(e, e);
+        if (l2 > 1e-12) { float u = clamp(dot(P - prev, e)/l2, 0., 1.); vec2 q = prev + e*u; float dd = length(P - q); if (dd < best) { best = dd; Q = q; T = e/sqrt(l2); } }
+        prev = cur;
+      }
+      if (best >= b.x) continue;
+      float w = (1. - smoothstep(b.x*(1. - b.y), b.x, best))*b.z;
+      vec2 off = a.zw - a.xy; vec3 src = tex((P + off)/uSq);
+      if (b.w > .5) {
+        vec2 N = vec2(-T.y, T.x); float lod = max(0., log2(b.x*max(float(textureSize(uS,0).x), float(textureSize(uS,0).y))*.15));
+        vec2 A = Q + N*b.x*1.15, B = Q - N*b.x*1.15;
+        vec3 dA = texL(A/uSq, lod) - texL((A + off)/uSq, lod), dB = texL(B/uSq, lod) - texL((B + off)/uSq, lod);
+        src = max(src + mix(dB, dA, clamp(dot(P - Q, N)/b.x*.5 + .5, 0., 1.)), vec3(0.));
+      }
+      c = mix(c, src, w);
+      continue;
+    }
     float d = length(P - a.xy);
     if (d >= b.x) continue;
     float w = (1. - smoothstep(b.x*(1. - b.y), b.x, d))*b.z;
@@ -138,11 +162,12 @@ void main(){
   const FS_DEV = `#version 300 es
 precision highp float;
 in vec2 vUV; out vec4 o;
-uniform sampler2D uG, uA, uB, uCurve;
+uniform sampler2D uG, uA, uB, uCurve, uL0, uL1, uL2, uLM;
+uniform float uHasL, uOverlay, uVis; uniform vec2 uFringe;
 uniform vec2 uPx;           // 1/output size
 uniform vec4 uView;         // crop-uv = uView.xy + vUV*uView.zw (for vignette / grain)
 uniform vec2 uFull;         // full crop size in output pixels
-uniform vec3 uWB; uniform float uExp;
+uniform vec2 uTT; uniform float uExp;
 uniform float uCon, uHi, uSh, uWh, uBl, uTex, uCla, uDehaze, uVib, uSat, uBW;
 uniform float uHue[8], uHSat[8], uLum[8];
 uniform vec3 uGS, uGM, uGH, uGL; uniform float uGBal, uGBlend;
@@ -162,6 +187,7 @@ vec3 rgb2hsv(vec3 c){
   float d = q.x - min(q.w, q.y); float e = 1.0e-10;
   return vec3(abs(q.z + (q.w - q.y)/(6.*d + e)), d/(q.x + e), q.x);
 }
+vec3 wbMul(float t, float n){ vec3 m = vec3(exp2(t*.9), exp2(-n*.6), exp2(-t*.9)); return m/dot(m, LW); }
 vec3 hsv2rgb(vec3 c){ vec3 p = abs(fract(c.xxx + vec3(1., 2./3., 1./3.))*6. - 3.); return c.z*mix(vec3(1.), clamp(p - 1., 0., 1.), c.y); }
 float hash(vec2 p){ p = fract(p*vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x*p.y); }
 float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.-2.*f);
@@ -175,21 +201,36 @@ void main(){
   vec2 tc = vec2(vUV.x, 1.-vUV.y);
   vec4 g0 = texture(uG, tc); vec3 c = g0.rgb;
   if (uBefore > .5 || vUV.x < uSplit) { o = vec4(enc(c), g0.a); return; }
+  // ---- local adjustments (sum of all masks): exposure, contrast, highlights, shadows | temp, tint, saturation, clarity | dehaze, sharpness, noise
+  vec4 L0 = vec4(0.), L1 = vec4(0.), L2 = vec4(0.);
+  if (uHasL > .5) { L0 = texture(uL0, tc); L1 = texture(uL1, tc); L2 = texture(uL2, tc); }
+  float nrL = clamp(uNR.x + L2.z, 0., 1.);
 
   // ---- noise reduction (bilateral luminance + chroma smoothing) ----
-  if (uNR.x > 0.) {
-    float cy = enc1(luma(c)); float rs = .015 + .09*uNR.x; vec3 acc = vec3(0.); float ws = 0.;
+  if (nrL > 0.) {
+    float cy = enc1(luma(c)); float rs = .015 + .09*nrL; vec3 acc = vec3(0.); float ws = 0.;
     for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
       vec3 s = texture(uG, tc + vec2(float(i), float(j))*uPx).rgb; float d = enc1(luma(s)) - cy;
-      float w = exp(-float(i*i + j*j)/(2.*(.8 + 1.6*uNR.x)) - d*d/(2.*rs*rs)); acc += s*w; ws += w; }
-    c = mix(c, acc/ws, min(1., uNR.x*1.4));
+      float w = exp(-float(i*i + j*j)/(2.*(.8 + 1.6*nrL)) - d*d/(2.*rs*rs)); acc += s*w; ws += w; }
+    c = mix(c, acc/ws, min(1., nrL*1.4));
   }
   vec3 cA = texture(uA, tc).rgb;
   if (uNR.y > 0.) { float lc = luma(c), la = max(luma(cA), 1e-5); c = mix(c, cA*(lc/la), uNR.y); }
+  // ---- defringe: desaturate purple / green fringes along strong edges ----
+  if (uFringe.x > 0. || uFringe.y > 0.) {
+    vec3 e = enc(c); vec3 hv = rgb2hsv(clamp(e, 0., 1.));
+    float edge = smoothstep(.015, .07, abs(enc1(luma(c)) - enc1(luma(cA))) + length(e - enc(cA))*.5);
+    float bp = smoothstep(.70, .76, hv.x)*(1. - smoothstep(.90, .96, hv.x)), bg = smoothstep(.20, .25, hv.x)*(1. - smoothstep(.42, .47, hv.x));
+    float w = clamp(edge*(bp*uFringe.x + bg*uFringe.y)*smoothstep(.04, .15, hv.y), 0., 1.);
+    c = mix(c, vec3(luma(c)), w);
+  }
+  // local negative sharpness = soften
+  if (L2.y < 0.) c = mix(c, cA, clamp(-L2.y, 0., 1.));
 
   // ---- sharpening (detail computed on the perceptual luminance, added after tone) ----
   float sharpD = 0.;
-  if (uSharp.x > 0.) {
+  float sAmt = uSharp.x + max(L2.y, 0.)*1.2;
+  if (sAmt > 0.) {
     float r = uSharp.y; float b = 0.; float wsum = 0.;
     for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
       float w = (i == 0 && j == 0) ? 4. : (i == 0 || j == 0) ? 2. : 1.;
@@ -199,21 +240,22 @@ void main(){
     float gx = enc1(luma(texture(uG, tc + vec2(uPx.x*2.,0.)).rgb)) - enc1(luma(texture(uG, tc - vec2(uPx.x*2.,0.)).rgb));
     float gy = enc1(luma(texture(uG, tc + vec2(0.,uPx.y*2.)).rgb)) - enc1(luma(texture(uG, tc - vec2(0.,uPx.y*2.)).rgb));
     float edge = smoothstep(uSharp.w*.12, uSharp.w*.12 + .04, length(vec2(gx,gy)));
-    sharpD = uSharp.x*1.6*d*mix(1., edge, step(.001, uSharp.w));
+    sharpD = sAmt*1.6*d*mix(1., edge, step(.001, uSharp.w));
   }
 
   // ---- white balance, exposure ----
-  vec3 k = uWB*exp2(uExp);
+  vec3 k = wbMul(uTT.x + L1.x, uTT.y + L1.y)*exp2(uExp + L0.x);
   c *= k; vec3 bB = texture(uB, tc).rgb*k; cA *= k;
 
   // ---- dehaze (dark-channel style, using the large blur as the haze map) ----
-  if (uDehaze > 0.) {
+  float dz = clamp(uDehaze + L2.x, -1., 1.);
+  if (dz > 0.) {
     float A = .95; float dark = clamp(min(min(bB.r,bB.g),bB.b)/A, 0., 1.);
-    float t = max(1. - uDehaze*.9*dark, .12);
+    float t = max(1. - dz*.9*dark, .12);
     c = max((c - A*(1.-t))/t, 0.); bB = max((bB - A*(1.-t))/t, 0.); cA = max((cA - A*(1.-t))/t, 0.);
-    float l = luma(c); c = mix(vec3(l), c, 1. + uDehaze*.25);
-  } else if (uDehaze < 0.) {
-    float hz = -uDehaze; vec3 fog = vec3(.75)*mix(1., luma(bB)*1.3 + .2, .5);
+    float l = luma(c); c = mix(vec3(l), c, 1. + dz*.25);
+  } else if (dz < 0.) {
+    float hz = -dz; vec3 fog = vec3(.75)*mix(1., luma(bB)*1.3 + .2, .5);
     c = mix(c, fog, hz*.6); bB = mix(bB, fog, hz*.6); cA = mix(cA, fog, hz*.6);
   }
 
@@ -223,13 +265,14 @@ void main(){
   float dY = 0.;
   dY += uTex*1.1*(Y - YA);
   float mid = 1. - pow(abs(2.*Y - 1.), 2.);
-  dY += uCla*.85*(Y - YB)*(.35 + .65*mid);
+  dY += (uCla + L1.w)*.85*(Y - YB)*(.35 + .65*mid);
 
   // ---- tone: highlights / shadows (local masks), whites / blacks (end points) ----
   float Ym = clamp(mix(Y, YB, .55), 0., 1.);
   float shM = pow(1. - smoothstep(0., .62, Ym), 1.6), hiM = smoothstep(.35, 1., Ym);
-  dY += uSh*.36*shM*(uSh > 0. ? (1. - .5*Y) : (.4 + Y));
-  dY += uHi*.34*hiM*(uHi < 0. ? (.3 + .7*Y) : (1.05 - Y)*1.5);
+  float sh = clamp(uSh + L0.w, -1.5, 1.5), hi = clamp(uHi + L0.z, -1.5, 1.5);
+  dY += sh*.36*shM*(sh > 0. ? (1. - .5*Y) : (.4 + Y));
+  dY += hi*.34*hiM*(hi < 0. ? (.3 + .7*Y) : (1.05 - Y)*1.5);
   p += dY + sharpD;
   // whites / blacks: soft levels on the end points
   if (uWh != 0. || uBl != 0.) {
@@ -239,7 +282,8 @@ void main(){
   }
 
   // ---- contrast ----
-  p = vec3(contrastCurve(p.r, uCon), contrastCurve(p.g, uCon), contrastCurve(p.b, uCon));
+  float con = clamp(uCon + L0.y, -1., 1.5);
+  p = vec3(contrastCurve(p.r, con), contrastCurve(p.g, con), contrastCurve(p.b, con));
 
   // ---- vibrance / saturation ----
   float gy = luma(p);
@@ -247,7 +291,7 @@ void main(){
   vec3 hsv0 = rgb2hsv(clamp(p, 0., 1.));
   float skin = 1. - .6*exp(-pow((hsv0.x - .07)/.05, 2.));
   float vib = uVib > 0. ? uVib*(1. - clamp(sat*1.4, 0., 1.))*skin : uVib;
-  p = gy + (p - gy)*max(0., (1. + uSat)*(1. + vib));
+  p = gy + (p - gy)*max(0., (1. + uSat)*(1. + vib)*max(0., 1. + L1.z));
 
   // ---- HSL colour mixer (8 bands) ----
   {
@@ -303,6 +347,8 @@ void main(){
     float n = vnoise(gp) - .5; n = mix(n, (vnoise(gp*2.7 + 17.) - .5), uGrain.z*.6);
     float L = luma(p); p += n*uGrain.x*.32*(1. - .6*abs(2.*L - 1.));
   }
+  if (uOverlay > .5) p = mix(p, vec3(1., .16, .1), texture(uLM, tc).r*.6);
+  if (uVis > .5) { float e = abs(Y - YA)*14. + abs(Y - YB)*2.; p = vec3(1. - clamp(e, 0., 1.)); }
   p += (hash(gl_FragCoord.xy + .37) - .5)/255.;    // dither
   o = vec4(clamp(p, 0., 1.), g0.a);
 }`;
@@ -327,7 +373,7 @@ void main(){
     if (!gl) return false;
     hasFloat = !!gl.getExtension('EXT_color_buffer_float'); gl.getExtension('OES_texture_float_linear');
     maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
-    progs.geom = compile(FS_GEOM); progs.down = compile(FS_DOWN); progs.blur = compile(FS_BLUR); progs.dev = compile(FS_DEV);
+    progs.geom = compile(FS_GEOM); progs.mask = compile(FS_MASK); progs.down = compile(FS_DOWN); progs.blur = compile(FS_BLUR); progs.dev = compile(FS_DEV);
     vao = gl.createVertexArray(); gl.bindVertexArray(vao);
     const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -344,6 +390,7 @@ void main(){
     let f = fbos[name];
     if (f && f.w === w && f.h === h && f.fmt === fmt) return f;
     if (f) { gl.deleteTexture(f.tex); gl.deleteFramebuffer(f.fb); }
+    gl.activeTexture(gl.TEXTURE15);   // never disturb the units bound for a pass
     const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
     const float = fmt === 'f' && hasFloat;
     const levels = name.endsWith('G') ? Math.floor(Math.log2(Math.max(w, h))) + 1 : 1;
@@ -369,6 +416,7 @@ void main(){
       x.drawImage(img, 0, 0, c.width, c.height); img = c; w = c.width; h = c.height;
     }
     dropSource(key);
+    gl.activeTexture(gl.TEXTURE15);
     const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
     const levels = Math.floor(Math.log2(Math.max(w, h))) + 1;
     gl.texStorage2D(gl.TEXTURE_2D, levels, gl.SRGB8_ALPHA8, w, h);
@@ -471,7 +519,7 @@ void main(){
       const m = M[i];
       data[i * 4] = Math.round(look(R, m) * 255); data[i * 4 + 1] = Math.round(look(G, m) * 255); data[i * 4 + 2] = Math.round(look(B, m) * 255); data[i * 4 + 3] = 255;
     }
-    gl.bindTexture(gl.TEXTURE_2D, curveTex);
+    gl.activeTexture(gl.TEXTURE15); gl.bindTexture(gl.TEXTURE_2D, curveTex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
   }
 
@@ -504,25 +552,129 @@ void main(){
      opt.split: 0..1 before/after split position (-1 off); opt.before: render the unedited image
      opt.extraSharpen: added sharpening (export for screen)
      opt.target: 'screen' (blit to Engine.canvas) or 'fbo' (default) */
+  /* ---------- brush rasters (mask strokes) → RG8 textures ---------- */
+  const brushTex = new Map();   // raster entry → {tex, ver}
+  let zeroTex = null;
+  function getZero() {
+    if (zeroTex) return zeroTex;
+    gl.activeTexture(gl.TEXTURE15); zeroTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, zeroTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    return zeroTex;
+  }
+  function brushTexture(ent) {
+    let t = brushTex.get(ent);
+    gl.activeTexture(gl.TEXTURE15); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    if (!t) {
+      // free textures of evicted rasters first
+      brushTex.forEach((v, k) => { if (k.dead) { gl.deleteTexture(v.tex); brushTex.delete(k); } });
+      const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RG8, ent.w, ent.h);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, ent.w, ent.h, gl.RG, gl.UNSIGNED_BYTE, ent.data);
+      t = { tex, ver: ent.ver }; brushTex.set(ent, t); ent.dirty = null;
+    } else if (t.ver !== ent.ver) {
+      gl.bindTexture(gl.TEXTURE_2D, t.tex);
+      const d = ent.dirty || { y0: 0, y1: ent.h };
+      const y0 = Math.max(0, d.y0), y1 = Math.min(ent.h, d.y1);
+      if (y1 > y0) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, y0, ent.w, y1 - y0, gl.RG, gl.UNSIGNED_BYTE, ent.data.subarray(y0 * ent.w * 2, y1 * ent.w * 2));
+      t.ver = ent.ver; ent.dirty = null;
+    }
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    return t.tex;
+  }
+  function mrt(name, w, h) {
+    w = Math.max(1, Math.round(w)); h = Math.max(1, Math.round(h));
+    let f = fbos[name]; if (f && f.w === w && f.h === h) return f;
+    if (f) { f.texs.forEach(t => gl.deleteTexture(t)); gl.deleteFramebuffer(f.fb); }
+    gl.activeTexture(gl.TEXTURE15);
+    const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    const texs = [0, 1, 2].map(i => {
+      const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, w, h);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, t, 0); return t;
+    });
+    return (fbos[name] = { fb, w, h, texs, mrt: true, tex: texs[0] });
+  }
+  // stroke-spot points → RGBA32F data texture (1024 texels per row)
+  let ptsTex = null, ptsKey = '';
+  function ptsTexture(arr) {
+    if (!ptsTex) { gl.activeTexture(gl.TEXTURE15); ptsTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, ptsTex); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST); ptsKey = null; }
+    const key = arr.join(',');
+    if (key !== ptsKey) {
+      ptsKey = key; const n = Math.max(1, arr.length / 4), W = Math.min(1024, n), H = Math.ceil(n / 1024), d = new Float32Array(W * H * 4); d.set(arr);
+      gl.activeTexture(gl.TEXTURE15); gl.bindTexture(gl.TEXTURE_2D, ptsTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, W, H, 0, gl.RGBA, gl.FLOAT, d);
+    }
+    return ptsTex;
+  }
+  const maskHasAdj = m => Model.LOCAL.some(([k]) => m.adj[k]);
+  function setGeoUniforms(P, gu) {
+    gl.uniform3fv(P.u('uA1x'), gu.A1x); gl.uniform3fv(P.u('uA1y'), gu.A1y); gl.uniform3fv(P.u('uA2x'), gu.A2x); gl.uniform3fv(P.u('uA2y'), gu.A2y);
+    gl.uniformMatrix3fv(P.u('uHinv'), false, gu.Hinv); gl.uniform2fv(P.u('uOsz'), gu.osz); gl.uniform2fv(P.u('uSq'), gu.sq); gl.uniform1f(P.u('uK'), gu.K);
+  }
+  function maskUniforms(P, g, m) {
+    const sq = g.sq, adj = m.adj, f = v => v / 100;
+    gl.uniform1i(P.u('uType'), m.type === 'linear' ? 0 : m.type === 'radial' ? 1 : 2);
+    gl.uniform1f(P.u('uInvert'), m.invert ? 1 : 0); gl.uniform1f(P.u('uAmt'), m.amount / 100);
+    if (m.type === 'linear') { const l = m.lin; gl.uniform4f(P.u('uP0'), l.x0 * sq[0], l.y0 * sq[1], l.x1 * sq[0], l.y1 * sq[1]); gl.uniform4f(P.u('uP1'), 1, 0, 0, 0); }
+    else { const r = m.rad, a = r.angle * Math.PI / 180; gl.uniform4f(P.u('uP0'), r.cx * sq[0], r.cy * sq[1], r.rx, r.ry); gl.uniform4f(P.u('uP1'), Math.cos(a), Math.sin(a), r.feather / 100, 0); }
+    const rg = m.range;
+    gl.uniform4f(P.u('uRange'), rg.mode === 'lum' ? 1 : rg.mode === 'color' ? 2 : 0, rg.lo / 100, rg.hi / 100, rg.smooth / 100 * .5);
+    gl.uniform4f(P.u('uRangeC'), rg.L, rg.a, rg.b, rg.tol / 100);
+    gl.uniform4f(P.u('uA0'), adj.exposure, f(adj.contrast), f(adj.highlights), f(adj.shadows));
+    gl.uniform4f(P.u('uA1'), f(adj.temp), f(adj.tint), f(adj.saturation), f(adj.clarity));
+    gl.uniform4f(P.u('uA2'), f(adj.dehaze), f(adj.sharpness), f(adj.noise), 0);
+  }
+  function bindBrush(P, ref, m, g) {
+    let tex = null;
+    if (m.strokes.length && typeof Masks !== 'undefined') { const ent = Masks.raster(ref, m, g.w, g.h); if (ent) tex = brushTexture(ent); }
+    gl.uniform1f(P.u('uHasBrush'), tex ? 1 : 0); bindTex(1, tex || getZero());
+  }
+
+  /* render(key, settings, opt)
+     opt.outW/outH: pixel size of the output
+     opt.view: {x,y,w,h} sub-rectangle of the cropped frame (crop-uv) to render (default full)
+     opt.fullCrop: ignore crop (crop editing mode; straighten / rotate / flip still applied)
+     opt.split: 0..1 before/after split position (-1 off); opt.before: render the unedited image
+     opt.extraSharpen: added sharpening (export for screen)
+     opt.overlay: id of a mask whose weight is tinted red; opt.visSpots: edge visualisation (spot removal)
+     opt.noLocal: skip spots and masks
+     opt.target: 'screen' (blit to Engine.canvas) or 'fbo' (default) */
   function render(key, st, opt) {
     const src = sources.get(key); if (!src) return null; src.used = performance.now();
-    const crop = st.crop, full = !!opt.fullCrop, view = opt.view || { x: 0, y: 0, w: 1, h: 1 };
+    const ref = key.split(':')[1] || key;    // file id: brush rasters are cached per original
+    const full = !!opt.fullCrop, view = opt.view || { x: 0, y: 0, w: 1, h: 1 };
     const outW = Math.max(1, Math.round(opt.outW)), outH = Math.max(1, Math.round(opt.outH));
     // full crop size in output px
     const fullW = outW / view.w, fullH = outH / view.h, fullLong = Math.max(fullW, fullH);
     gl.disable(gl.BLEND); gl.bindVertexArray(vao);
 
-    // 1. geometry
-    const map = mapper(src.w, src.h, crop, full);
-    const mv = (u, v) => map(view.x + u * view.w, view.y + v * view.h);
-    const p00 = mv(0, 0), p10 = mv(1, 0), p01 = mv(0, 1);
+    // 1. geometry (crop / straighten / rotate / flip, upright, lens corrections, spot removal)
+    const g = Geo.build(src.w, src.h, st, full, view), gu = Geo.uniforms(g);
     const slot = opt.slot || 'v';
     const G = fbo(slot + 'G', outW, outH, 'f');
     let P = progs.geom; gl.useProgram(P);
-    gl.uniform3f(P.u('uM0'), p10[0] - p00[0], p01[0] - p00[0], p00[0]);
-    gl.uniform3f(P.u('uM1'), p10[1] - p00[1], p01[1] - p00[1], p00[1]);
-    const scale = Math.max(outW / src.w, outH / src.h);
+    setGeoUniforms(P, gu);
+    const scale = Math.max(outW / src.w, outH / src.h) * g.scale;
     gl.uniform1f(P.u('uBias'), scale < .5 ? -.35 : 0);
+    const spots = opt.noLocal ? [] : (st.spots || []).slice(0, 64), sd = new Float32Array(192 * 4), pts = [];
+    spots.forEach((p, i) => {
+      let st0 = 0, n = 0;
+      if (p.pts && p.pts.length > 1) {
+        const q = p.pts.map(([u, v]) => [u * g.sq[0], v * g.sq[1]]), xs = q.map(t => t[0]), ys = q.map(t => t[1]);
+        st0 = pts.length / 4; n = q.length;
+        pts.push(Math.min(...xs) - p.r, Math.min(...ys) - p.r, Math.max(...xs) + p.r, Math.max(...ys) + p.r); q.forEach(t => pts.push(t[0], t[1], 0, 0));
+      }
+      sd.set([p.x * g.sq[0], p.y * g.sq[1], p.sx * g.sq[0], p.sy * g.sq[1], p.r, Math.max(.02, p.feather / 100), p.opacity / 100, p.mode === 'heal' ? 1 : 0, st0, n, 0, 0], i * 12);
+    });
+    gl.uniform4fv(P.u('uSpot[0]'), sd); gl.uniform1i(P.u('uNSpots'), spots.length);
+    gl.uniform1i(P.u('uPts'), 2); bindTex(2, ptsTexture(pts));
+    const ln = st.lens || {};
+    gl.uniform3f(P.u('uVigC'), (ln.vig || 0) / 100 * 1.4, .6 + (ln.vigMid ?? 50) / 100 * 2.4, ln.vig ? 1 : 0);
+    gl.uniform2f(P.u('uCA'), (ln.caR || 0) * 4e-5, (ln.caB || 0) * 4e-5);
+    gl.uniform1f(P.u('uSplit'), opt.split == null ? -1 : opt.split); gl.uniform1f(P.u('uBefore'), opt.before ? 1 : 0);
     gl.uniform1i(P.u('uS'), 0); bindTex(0, src.tex);
     drawTo(G, outW, outH);
     bindTex(0, G.tex); gl.generateMipmap(gl.TEXTURE_2D);
@@ -541,27 +693,50 @@ void main(){
     };
     const A = blur('A', Math.max(.6, .0022 * fullLong)), B = blur('B', .016 * fullLong);
 
+    // 3b. masks → summed local adjustments (3 × RGBA16F), optional overlay weight of one mask
+    const masks = opt.noLocal || opt.before || !hasFloat ? [] : (st.masks || []).filter(m => m.on && maskHasAdj(m));
+    let Lf = null, LM = null;
+    const maskPass = () => { P = progs.mask; gl.useProgram(P); setGeoUniforms(P, gu); gl.uniform1i(P.u('uG'), 0); gl.uniform1i(P.u('uBrush'), 1); bindTex(0, G.tex); };
+    if (masks.length) {
+      Lf = mrt(slot + 'L', outW, outH);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, Lf.fb); gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
+      gl.viewport(0, 0, Lf.w, Lf.h); [0, 1, 2].forEach(i => gl.clearBufferfv(gl.COLOR, i, [0, 0, 0, 0]));
+      maskPass(); gl.uniform1i(P.u('uMode'), 0);
+      gl.enable(gl.BLEND); gl.blendEquation(gl.FUNC_ADD); gl.blendFunc(gl.ONE, gl.ONE);
+      masks.forEach(m => { maskUniforms(P, g, m); bindBrush(P, ref, m, g); gl.bindFramebuffer(gl.FRAMEBUFFER, Lf.fb); gl.viewport(0, 0, Lf.w, Lf.h); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); });
+      gl.disable(gl.BLEND);
+    }
+    const ovm = opt.overlay && !opt.before ? (st.masks || []).find(m => m.id === opt.overlay) : null;
+    if (ovm) {
+      LM = fbo(slot + 'LM', outW, outH, 'b');
+      maskPass(); gl.uniform1i(P.u('uMode'), 1); maskUniforms(P, g, ovm); bindBrush(P, ref, ovm, g);
+      drawTo(LM, outW, outH);
+    }
+
     // 4. develop
     updateCurve(st.curve);
     const OUT = fbo(slot + 'OUT', outW, outH, 'b');
     P = progs.dev; gl.useProgram(P);
-    ['uG', 'uA', 'uB', 'uCurve'].forEach((n, i) => gl.uniform1i(P.u(n), i));
+    ['uG', 'uA', 'uB', 'uCurve', 'uL0', 'uL1', 'uL2', 'uLM'].forEach((n, i) => gl.uniform1i(P.u(n), i));
     bindTex(0, G.tex); bindTex(1, A.tex); bindTex(2, B.tex); bindTex(3, curveTex);
+    const z = getZero();
+    bindTex(4, Lf ? Lf.texs[0] : z); bindTex(5, Lf ? Lf.texs[1] : z); bindTex(6, Lf ? Lf.texs[2] : z); bindTex(7, LM ? LM.tex : z);
+    gl.uniform1f(P.u('uHasL'), Lf ? 1 : 0); gl.uniform1f(P.u('uOverlay'), LM ? 1 : 0); gl.uniform1f(P.u('uVis'), opt.visSpots ? 1 : 0);
+    gl.uniform2f(P.u('uFringe'), opt.before ? 0 : (ln.fringeP || 0) / 20, opt.before ? 0 : (ln.fringeG || 0) / 20);
     gl.uniform2f(P.u('uPx'), 1 / outW, 1 / outH);
     gl.uniform4f(P.u('uView'), view.x, view.y, view.w, view.h);
     gl.uniform2f(P.u('uFull'), fullW, fullH);
-    const wb = wbMult(st.wb.temp, st.wb.tint);
-    gl.uniform3f(P.u('uWB'), wb[0], wb[1], wb[2]); gl.uniform1f(P.u('uExp'), st.exposure);
+    gl.uniform2f(P.u('uTT'), st.wb.temp / 100, st.wb.tint / 100); gl.uniform1f(P.u('uExp'), st.exposure);
     const f = v => v / 100;
     gl.uniform1f(P.u('uCon'), f(st.contrast)); gl.uniform1f(P.u('uHi'), f(st.highlights)); gl.uniform1f(P.u('uSh'), f(st.shadows));
     gl.uniform1f(P.u('uWh'), f(st.whites)); gl.uniform1f(P.u('uBl'), f(st.blacks));
     gl.uniform1f(P.u('uTex'), f(st.texture)); gl.uniform1f(P.u('uCla'), f(st.clarity)); gl.uniform1f(P.u('uDehaze'), f(st.dehaze));
     gl.uniform1f(P.u('uVib'), f(st.vibrance)); gl.uniform1f(P.u('uSat'), f(st.saturation)); gl.uniform1f(P.u('uBW'), st.bw ? 1 : 0);
     gl.uniform1fv(P.u('uHue[0]'), st.hsl.hue.map(f)); gl.uniform1fv(P.u('uHSat[0]'), st.hsl.sat.map(f)); gl.uniform1fv(P.u('uLum[0]'), st.hsl.lum.map(f));
-    const g = st.grade;
-    gl.uniform3fv(P.u('uGS'), gradeColor(g.sh.h, g.sh.s)); gl.uniform3fv(P.u('uGM'), gradeColor(g.mid.h, g.mid.s)); gl.uniform3fv(P.u('uGH'), gradeColor(g.hi.h, g.hi.s));
-    gl.uniform3f(P.u('uGL'), f(g.sh.l), f(g.mid.l), f(g.hi.l)); gl.uniform1f(P.u('uGBal'), f(g.bal)); gl.uniform1f(P.u('uGBlend'), f(g.blend));
-    const zoom = fullLong / Math.max(cropSize(src.w, src.h, crop, full).w, cropSize(src.w, src.h, crop, full).h);  // output px per working px
+    const gr = st.grade;
+    gl.uniform3fv(P.u('uGS'), gradeColor(gr.sh.h, gr.sh.s)); gl.uniform3fv(P.u('uGM'), gradeColor(gr.mid.h, gr.mid.s)); gl.uniform3fv(P.u('uGH'), gradeColor(gr.hi.h, gr.hi.s));
+    gl.uniform3f(P.u('uGL'), f(gr.sh.l), f(gr.mid.l), f(gr.hi.l)); gl.uniform1f(P.u('uGBal'), f(gr.bal)); gl.uniform1f(P.u('uGBlend'), f(gr.blend));
+    const zoom = fullLong / Math.max(cropSize(src.w, src.h, st.crop, full).w, cropSize(src.w, src.h, st.crop, full).h) / g.scale;  // output px per working px
     const sAmt = (st.sharpen.amount + (opt.extraSharpen || 0)) / 100;
     gl.uniform4f(P.u('uSharp'), sAmt, Math.max(.5, st.sharpen.radius * Math.min(1.5, zoom)), st.sharpen.detail / 100, st.sharpen.mask / 100);
     gl.uniform2f(P.u('uNR'), st.nr.lum / 100, st.nr.color / 100);

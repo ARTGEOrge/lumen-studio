@@ -4,6 +4,7 @@ const TIPN = 128;
 const tipMaps = {};
 function tipMap(name) {
   if (name === 'round') return null;
+  if (name.startsWith('img:')) return typeof customTipMap === 'function' ? customTipMap(name) : null; // imported / user tips (abr.js)
   if (tipMaps[name]) return tipMaps[name];
   const N = TIPN, m = new Float32Array(N * N), rnd = mulberry32(name.length * 977 + name.charCodeAt(0));
   const nz = makeValueNoise(name.charCodeAt(1) * 31 + 5, 64);
@@ -56,7 +57,7 @@ function grainMap(type, tooth = false) {
   const N = GRAINN, g = new Float32Array(N * N);
   // tileable terms: lattice period = 512/k so the map wraps seamlessly every 512 px
   const S = (seed, k, ky = k) => { const n = makeValueNoise(seed, N / k, N / ky); return (x, y) => n(x / k, y / ky); };
-  const n8 = S(11, 8), n4 = S(23, 4), n2 = S(37, 2), n16 = S(41, 16), n1 = S(53, 1), sA = S(61, 2, 16), sB = S(67, 16, 2);
+  const n8 = S(11, 8), n4 = S(23, 4), n2 = S(37, 2), n16 = S(41, 16), n1 = S(53, 1), n3 = S(59, 4), sA = S(61, 2, 16), sB = S(67, 16, 2);
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
     let v;
     if (type === 'cold') v = n8(x, y) * 0.22 + n4(x, y) * 0.33 + n2(x, y) * 0.3 + n1(x, y) * 0.15;
@@ -128,9 +129,9 @@ function sanitizeBrush(b) {
     if (!(k in b)) continue; const v = b[k];
     if (typeof def === 'number' && Number.isFinite(+v)) out[k] = clamp(+v, -1000, 5000);
     else if (typeof def === 'boolean') out[k] = !!v;
-    else if (typeof def === 'string' && typeof v === 'string') out[k] = v.slice(0, 20);
+    else if (typeof def === 'string' && typeof v === 'string') out[k] = v.slice(0, 48);
   }
   if (!['paint', 'erase', 'smudge', 'oil', 'water'].includes(out.mode)) delete out.mode;
-  if (!['round', 'chalk', 'charcoal', 'crayon', 'pencil', 'bristle', 'flat', 'knife', 'sponge'].includes(out.tip)) delete out.tip;
+  if (!['round', 'chalk', 'charcoal', 'crayon', 'pencil', 'bristle', 'flat', 'knife', 'sponge'].includes(out.tip) && !/^img:[\w-]{1,40}$/.test(out.tip || '')) delete out.tip;
   return out;
 }

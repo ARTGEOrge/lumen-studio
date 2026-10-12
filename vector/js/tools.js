@@ -14,23 +14,35 @@
   let snapData = null;
   LV.buildSnap = (exclude = []) => {
     const ex = new Set(); exclude.forEach(it => LV.leaves(it).concat([it]).forEach(x => ex.add(x)));
-    const xs = [], ys = [], pts = [];
+    const xs = [], ys = [], pts = [], boxes = [];
     const addB = (b, src) => { xs.push({ v: b.left, a: b.top, b: b.bottom }, { v: b.center.x, a: b.top, b: b.bottom }, { v: b.right, a: b.top, b: b.bottom }); ys.push({ v: b.top, a: b.left, b: b.right }, { v: b.center.y, a: b.left, b: b.right }, { v: b.bottom, a: b.left, b: b.right }); };
     LV.doc.artboards.forEach(ab => { const b = LV.boardRect(ab); addB(b); [b.topLeft, b.topRight, b.bottomLeft, b.bottomRight, b.center].forEach(p => pts.push(p)); });
     LV.doc.guides.x.forEach(x => xs.push({ v: x, a: -1e6, b: 1e6, guide: true })); LV.doc.guides.y.forEach(y => ys.push({ v: y, a: -1e6, b: 1e6, guide: true }));
     LV.allObjects().forEach(o => {
       if (ex.has(o) || !o.visible || !LV.ancestorsOk(o)) return;
-      addB(o.bounds);
+      addB(o.bounds); boxes.push(o.bounds.clone());
       LV.leaves(o).forEach(l => { if (ex.has(l)) return; const segs = l instanceof P.Path ? l.segments : l instanceof P.CompoundPath ? l.children.flatMap(c => c.segments) : []; if (pts.length < 6000) segs.forEach(s => pts.push(l.localToGlobal(s.point))); });
     });
-    snapData = { xs, ys, pts }; return snapData;
+    snapData = { xs, ys, pts, boxes }; return snapData;
   };
   LV.clearSnap = () => { snapData = null; LV.smartLines = []; };
   const gridSnap = v => { const g = LV.prefs.gridSize; return Math.round(v / g) * g; };
-  // snap a single point; returns {pt, lines}
-  LV.snapPoint = (pt, { exclude } = {}) => {
+  const tolPx = () => LV.tol(LV.prefs.snapTol || 6);
+  // angle guides: snap the direction origin → pt to 0/45/90… and to multiples of the preference increment
+  const ANG = () => { const inc = Math.max(1, +LV.prefs.angleInc || 45), out = new Set(); for (let a = 0; a < 360; a += 45) out.add(a); for (let a = 0; a < 360 - 1e-9; a += inc) out.add(Math.round(a * 1000) / 1000); return [...out]; };
+  LV.angleSnap = (origin, pt) => {
+    if (!LV.prefs.smart || !LV.prefs.smartAngles || !origin) return null;
+    const v = pt.subtract(origin), len = v.length; if (len * P.view.zoom < 12) return null;
+    let best = null, bd = tolPx();
+    for (const a of ANG()) { const dir = new P.Point(Math.cos(a * Math.PI / 180), Math.sin(a * Math.PI / 180)), along = v.dot(dir); if (along <= 0) continue; const perp = Math.abs(v.x * dir.y - v.y * dir.x); if (perp < bd) { bd = perp; best = { a, dir, along }; } }
+    if (!best) return null;
+    const p = origin.add(best.dir.multiply(best.along)), shown = (360 - best.a) % 360;
+    return { pt: p, dir: best.dir, a: shown, line: { a: origin, b: origin.add(best.dir.multiply(best.along + 40 / P.view.zoom)), label: LV.fmt(shown) + '°', angle: true } };
+  };
+  // snap a single point; returns {pt, lines}. origin: reference point for angle guides (pen / line / anchor drag)
+  LV.snapPoint = (pt, { exclude, origin } = {}) => {
     if (!snapData) LV.buildSnap(exclude || LV.sel);
-    const tol = LV.tol(6), lines = [];
+    const tol = tolPx(), lines = [];
     if (LV.prefs.snapPoint) {
       let best = null, bd = tol; for (const p of snapData.pts) { const d = p.getDistance(pt); if (d < bd) { bd = d; best = p; } }
       if (best) { LV.smartLines = [{ pt: best, label: 'anchor' }]; return { pt: best.clone(), lines: LV.smartLines }; }
@@ -40,24 +52,69 @@
       let bx = tol; for (const c of snapData.xs) { if (!LV.prefs.smart && !c.guide) continue; const d = Math.abs(c.v - pt.x); if (d < bx) { bx = d; sx = c; } }
       let by = tol; for (const c of snapData.ys) { if (!LV.prefs.smart && !c.guide) continue; const d = Math.abs(c.v - pt.y); if (d < by) { by = d; sy = c; } }
     }
-    if (sx) x = sx.v; else if (LV.prefs.snapGrid) x = gridSnap(x);
-    if (sy) y = sy.v; else if (LV.prefs.snapGrid) y = gridSnap(y);
+    const ang = !(sx && sy) && LV.angleSnap(origin, pt);
+    if (ang) { // combine the angle guide with one alignment guide where possible (intersection), else follow the angle
+      const d = ang.dir;
+      if (sx && Math.abs(d.x) > 1e-6 && (sx.v - origin.x) / d.x > 0) { const t = (sx.v - origin.x) / d.x; x = sx.v; y = origin.y + d.y * t; sy = null; }
+      else if (sy && Math.abs(d.y) > 1e-6 && (sy.v - origin.y) / d.y > 0) { const t = (sy.v - origin.y) / d.y; y = sy.v; x = origin.x + d.x * t; sx = null; }
+      else { x = ang.pt.x; y = ang.pt.y; sx = sy = null; }
+      ang.line.b = origin.add(d.multiply(new P.Point(x, y).subtract(origin).length + 40 / P.view.zoom));
+      lines.push(ang.line);
+    } else {
+      if (sx) x = sx.v; else if (LV.prefs.snapGrid) x = gridSnap(x);
+      if (sy) y = sy.v; else if (LV.prefs.snapGrid) y = gridSnap(y);
+    }
     if (sx && !sx.guide) lines.push({ a: new P.Point(x, Math.min(sx.a, y)), b: new P.Point(x, Math.max(sx.b, y)) });
     if (sy && !sy.guide) lines.push({ a: new P.Point(Math.min(sy.a, x), y), b: new P.Point(Math.max(sy.b, x), y) });
     LV.smartLines = lines; return { pt: new P.Point(x, y), lines };
   };
+  // equal-spacing guides along one axis for a moving box r (returns {off, lines} or null)
+  function spacingSnap(r, horiz, tol) {
+    const lo = horiz ? 'left' : 'top', hi = horiz ? 'right' : 'bottom', clo = horiz ? 'top' : 'left', chi = horiz ? 'bottom' : 'right';
+    const row = snapData.boxes.filter(b => b[chi] > r[clo] && b[clo] < r[chi] && !(b[hi] > r[lo] + tol && b[lo] < r[hi] - tol));
+    const before = row.filter(b => b[hi] <= r[lo] + tol).sort((a, b) => b[hi] - a[hi]), after = row.filter(b => b[lo] >= r[hi] - tol).sort((a, b) => a[lo] - b[lo]);
+    const size = r[hi] - r[lo], L = before[0], Rb = after[0], cands = [];
+    const gaps = []; for (let i = 0; i + 1 < before.length; i++) gaps.push([before[i + 1], before[i]]); for (let i = 0; i + 1 < after.length; i++) gaps.push([after[i], after[i + 1]]);
+    if (L && Rb) cands.push({ start: (L[hi] + Rb[lo] - size) / 2, kind: 'center' });
+    gaps.forEach(([p, q]) => { const g = q[lo] - p[hi]; if (g <= 0) return; if (L) cands.push({ start: L[hi] + g, kind: 'left', g, ref: [p, q] }); if (Rb) cands.push({ start: Rb[lo] - g - size, kind: 'right', g, ref: [p, q] }); });
+    let best = null, bd = tol; cands.forEach(c => { const d = Math.abs(c.start - r[lo]); if (d < bd) { bd = d; best = c; } });
+    if (!best) return null;
+    const off = best.start - r[lo], s = best.start, e = best.start + size;
+    const mid = (p, q) => (Math.max(p[clo], q[clo]) + Math.min(p[chi], q[chi])) / 2;
+    const mk = (a, b, c) => horiz ? { a: new P.Point(a, c), b: new P.Point(b, c), label: LV.fmt(b - a), gap: true } : { a: new P.Point(c, a), b: new P.Point(c, b), label: LV.fmt(b - a), gap: true };
+    const lines = [], me = { [clo]: r[clo], [chi]: r[chi] };
+    if (L && best.kind !== 'right') lines.push(mk(L[hi], s, mid(L, me)));
+    if (Rb && best.kind !== 'left') lines.push(mk(e, Rb[lo], mid(Rb, me)));
+    if (best.ref) lines.push(mk(best.ref[0][hi], best.ref[1][lo], mid(best.ref[0], best.ref[1])));
+    return { off, lines, d: bd };
+  }
   // snap a moving rectangle: returns adjusted delta
   LV.snapMove = (b0, d) => {
     if (!snapData) LV.buildSnap(LV.sel);
-    const tol = LV.tol(6), lines = []; let dx = d.x, dy = d.y;
+    const tol = tolPx(), lines = []; let dx = d.x, dy = d.y;
     if (LV.prefs.smart || LV.prefs.guides) {
       const cxs = [b0.left, b0.center.x, b0.right], cys = [b0.top, b0.center.y, b0.bottom];
       let bx = tol, hx = null; for (const c of snapData.xs) { if (!LV.prefs.smart && !c.guide) continue; for (const v of cxs) { const dd = Math.abs(c.v - (v + d.x)); if (dd < bx) { bx = dd; hx = { c, off: c.v - v }; } } }
       let by = tol, hy = null; for (const c of snapData.ys) { if (!LV.prefs.smart && !c.guide) continue; for (const v of cys) { const dd = Math.abs(c.v - (v + d.y)); if (dd < by) { by = dd; hy = { c, off: c.v - v }; } } }
+      let gx = null, gy = null;
+      if (LV.prefs.smart && LV.prefs.smartSpacing) { // equal spacing wins over a weaker alignment snap
+        const moved = (ox, oy) => new P.Rectangle(b0.x + ox, b0.y + oy, b0.width, b0.height);
+        gx = spacingSnap(moved(d.x, hy ? hy.off : d.y), true, tol); gy = spacingSnap(moved(hx ? hx.off : d.x, d.y), false, tol);
+        if (gx && hx && bx < gx.d - 1e-9) gx = null; if (gy && hy && by < gy.d - 1e-9) gy = null;
+      }
+      if (gx) { dx = d.x + gx.off; hx = null; }
+      if (gy) { dy = d.y + gy.off; hy = null; }
       if (hx) { dx = hx.off; if (!hx.c.guide) lines.push({ a: new P.Point(hx.c.v, Math.min(hx.c.a, b0.top + dy)), b: new P.Point(hx.c.v, Math.max(hx.c.b, b0.bottom + dy)) }); }
       if (hy) { dy = hy.off; if (!hy.c.guide) lines.push({ a: new P.Point(Math.min(hy.c.a, b0.left + dx), hy.c.v), b: new P.Point(Math.max(hy.c.b, b0.right + dx), hy.c.v) }); }
-      if (!hx && LV.prefs.snapGrid) dx = gridSnap(b0.left + d.x) - b0.left;
-      if (!hy && LV.prefs.snapGrid) dy = gridSnap(b0.top + d.y) - b0.top;
+      // gap markers are placed after the final delta is known
+      const fin = new P.Rectangle(b0.x + dx, b0.y + dy, b0.width, b0.height);
+      if (gx) lines.push(...(spacingSnap(fin, true, 1e-6 + LV.tol(0.5)) || gx).lines);
+      if (gy) lines.push(...(spacingSnap(fin, false, 1e-6 + LV.tol(0.5)) || gy).lines);
+      // angle guide for the move direction when nothing else snapped
+      if (!hx && !hy && !gx && !gy) { const ag = LV.angleSnap(b0.center, b0.center.add(d)); if (ag) { const nd = ag.pt.subtract(b0.center); dx = nd.x; dy = nd.y; lines.push(ag.line); } }
+      const angled = lines.some(l => l.angle);
+      if (!hx && !gx && !angled && LV.prefs.snapGrid) dx = gridSnap(b0.left + d.x) - b0.left;
+      if (!hy && !gy && !angled && LV.prefs.snapGrid) dy = gridSnap(b0.top + d.y) - b0.top;
     } else if (LV.prefs.snapGrid) { dx = gridSnap(b0.left + d.x) - b0.left; dy = gridSnap(b0.top + d.y) - b0.top; }
     LV.smartLines = lines; return new P.Point(dx, dy);
   };
@@ -89,6 +146,33 @@
     for (const [i, y] of LV.doc.guides.y.entries()) if (Math.abs(LV.v(new P.Point(0, y)).y - vp.y) < 4) return { axis: 'y', i };
     return null;
   }
+  /* text-frame ports (threading): in-port at the frame's top-left, out-port at its bottom-right */
+  const portsOf = g => { const s = g.children.find(c => c.data.role === 'frame').segments; return { inP: LV.v(s[0].point), outP: LV.v(s[2].point) }; };
+  function threadPortHit(vp) {
+    if (LV.toolId !== 'select' || LV.sel.length !== 1 || LV.kind(LV.sel[0]) !== 'areatext') return null;
+    const g = LV.sel[0], { outP } = portsOf(g); return outP.getDistance(vp) <= 7 ? g : null;
+  }
+  LV.overlays = LV.overlays || [];
+  LV.overlays.push(ctx => {
+    const frames = LV.sel.filter(it => LV.kind(it) === 'areatext' && it.parent); if (!frames.length || LV.textEditing) return;
+    const box = (p, fill) => { ctx.fillStyle = fill; ctx.strokeStyle = LV.SEL_COLOR; ctx.lineWidth = 1; ctx.fillRect(Math.round(p.x) - 4, Math.round(p.y) - 4, 9, 9); ctx.strokeRect(Math.round(p.x) - 3.5, Math.round(p.y) - 3.5, 8, 8); };
+    const tri = p => { ctx.fillStyle = LV.SEL_COLOR; ctx.beginPath(); ctx.moveTo(p.x - 2, p.y - 3); ctx.lineTo(p.x + 3, p.y + 0.5); ctx.lineTo(p.x - 2, p.y + 4); ctx.closePath(); ctx.fill(); };
+    const drawn = new Set();
+    frames.forEach(sel => {
+      const chain = sel.data.next || sel.data.prev ? LV.threadChain(sel) : [sel];
+      chain.forEach((g, i) => {
+        if (drawn.has(g)) return; drawn.add(g);
+        const { inP, outP } = portsOf(g), next = chain[i + 1];
+        if (g !== sel && chain.length > 1) { ctx.strokeStyle = 'rgba(47,122,229,.55)'; ctx.setLineDash([3, 2]); ctx.beginPath(); LV.tracePath(ctx, g); ctx.stroke(); ctx.setLineDash([]); }
+        box(inP, '#fff'); if (i > 0) tri(inP);
+        if (next) { const n = portsOf(next).inP; ctx.strokeStyle = LV.SEL_COLOR; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(outP.x, outP.y); ctx.bezierCurveTo(outP.x + 40, outP.y, n.x - 40, n.y, n.x, n.y); ctx.stroke(); box(outP, '#fff'); tri(outP); }
+        else if (g.data.overflow) { box(outP, '#fff'); ctx.strokeStyle = '#e0261b'; ctx.beginPath(); ctx.moveTo(outP.x - 2, outP.y + .5); ctx.lineTo(outP.x + 3, outP.y + .5); ctx.moveTo(outP.x + .5, outP.y - 2); ctx.lineTo(outP.x + .5, outP.y + 3); ctx.stroke(); }
+        else box(outP, '#fff');
+      });
+    });
+    if (LV.threadLoad && LV.hover && LV.hover !== LV.threadLoad) { ctx.strokeStyle = LV.SEL_COLOR; ctx.lineWidth = 2; ctx.beginPath(); LV.tracePath(ctx, LV.hover); ctx.stroke(); }
+  });
+  LV.overlays.push(ctx => LV.live.drawWidgets(ctx));
   LV.duplicateSel = () => { const c = LV.sel.map(it => LV.reUid(it.clone())); LV.setSel(c); return c; };
   LV.transformSel = (m) => { LV.sel.forEach(it => { it.transform(m); afterTransform(it); }); };
   function afterTransform(it) { // keep text frames / text on path consistent after transforms
@@ -102,6 +186,14 @@
     name: 'Selection', showBBox: true, cursor: 'default',
     down(ev) {
       this.mode = null; this.changed = false; const r = LV.selBounds();
+      if (LV.threadLoad) { // loaded text cursor: click a frame / closed path to link it, click or drag on empty canvas for a new frame
+        const hit = LV.hitTest(ev.pt);
+        this.mode = 'threadNew'; this.threadHit = hit && hit !== LV.threadLoad && (LV.kind(hit) === 'areatext' || (LV.isPathItem(hit) && hit.closed !== false)) ? hit : null; return;
+      }
+      const lw = LV.live.widgetHit(ev.vp);
+      if (lw) { this.mode = 'live'; this.live = LV.live.dragStart(lw, ev); return; }
+      const port = threadPortHit(ev.vp);
+      if (port) { LV.threadLoad = port; setCursor('copy'); LV.toast('Click a text frame or closed shape to link it, or click / drag on the canvas for a new frame (Esc cancels)'); this.mode = 'port'; return; }
       if (r && LV.prefs.bbox) {
         const h = handleHit(ev.vp, r);
         if (h) {
@@ -143,7 +235,8 @@
         if (ev.shift) a = Math.round(a / 45) * 45;
         LV.sel.forEach(it => it.rotate(a - this.prev, c)); this.prev = a; this.changed = true;
         LV.status(`Rotate ${LV.fmt(((a % 360) + 540) % 360 - 180)}°`);
-      } else if (m === 'marquee') LV.marquee = new P.Rectangle(ev.down, ev.pt);
+      } else if (m === 'marquee' || (m === 'threadNew' && !this.threadHit)) LV.marquee = new P.Rectangle(ev.down, ev.pt);
+      else if (m === 'live') { if (this.live) { LV.live.dragMove(this.live, ev); this.changed = true; } }
       else if (m === 'guide') {
         const arr = LV.doc.guides[this.g.axis]; arr[this.g.i] = this.g.axis === 'x' ? ev.pt.x : ev.pt.y; this.changed = true;
       }
@@ -151,6 +244,20 @@
     },
     up(ev) {
       const m = this.mode; this.mode = null;
+      if (m === 'threadNew') {
+        const src = LV.threadLoad, r = LV.marquee; LV.threadLoad = null; LV.marquee = null; setCursor('default');
+        if (!src || !src.parent) return;
+        let target = this.threadHit;
+        if (!target) {
+          const g0 = LV.areaGeom(src), rect = r && r.width * P.view.zoom > 8 && r.height * P.view.zoom > 8 ? r : new P.Rectangle(ev.down, new P.Size(g0.W, g0.H));
+          target = LV.newAreaText(rect, '', LV.textStyleOf(src)); target.name = 'Area Type'; target.insertAbove(src); LV.uidOf(target);
+        }
+        const linked = LV.threadLink(src, target);
+        if (linked) { LV.setSel([linked]); LV.commit('Thread Text'); } else { LV.toast('Only text frames and closed shapes can be threaded'); LV.redraw(); }
+        return;
+      }
+      if (m === 'live') { this.live = null; if (this.changed) LV.commit('Edit Shape'); LV.status(''); LV.emit('selection'); return; }
+      if (m === 'port') return;
       if (m === 'marquee' && LV.marquee) {
         const r = LV.marquee; LV.marquee = null;
         if (r.width * P.view.zoom > 2 || r.height * P.view.zoom > 2) {
@@ -175,13 +282,18 @@
       this.duped = false; LV.clearSnap(); LV.redraw(); LV.emit('selection');
     },
     move(ev) {
+      if (LV.threadLoad) { LV.hover = LV.hitTest(ev.pt); setCursor('copy'); LV.redraw(); return; }
+      if (LV.live.widgetHit(ev.vp) || threadPortHit(ev.vp)) { LV.hover = null; setCursor('pointer'); LV.redraw(); return; }
       const r = LV.selBounds(), h = r && LV.prefs.bbox && handleHit(ev.vp, r);
       LV.hover = h ? null : LV.hitTest(ev.pt);
       setCursor(h ? (h.type === 'rotate' ? ROT_CURSOR : SCALE_CURSORS[h.idx]) : guideHit(ev.vp) && !LV.hover ? 'move' : 'default');
       LV.redraw();
     },
+    deactivate() { LV.threadLoad = null; },
     dbl(ev) {
-      const hit = LV.hitTest(ev.pt); if (!hit) return;
+      const hit = LV.hitTest(ev.pt);
+      if (!hit) { if (LV.isoRoot()) LV.sym.finishEdit(); return; }
+      if (LV.kind(hit) === 'symbol') { LV.sym.edit(hit); return; }
       if (LV.isTextLike(hit)) { LV.setTool('type'); LV.beginTextEdit(hit); return; }
       if (hit instanceof P.Group) { const leaf = LV.hitTest(ev.pt, { leaf: true }); let c = leaf; while (c && c.parent !== hit) c = c.parent; if (c) LV.setSel([c]); }
     }
@@ -213,7 +325,7 @@
         const owner = ownerOf(seg.path);
         if (ev.shift) { const s = new Set(LV.selSegs); s.has(seg) ? s.delete(seg) : s.add(seg); LV.setSel([...new Set([...LV.sel, owner])], [...s]); }
         else if (!LV.selSegs.has(seg)) LV.setSel([owner], [seg]);
-        this.mode = 'segs'; this.grab = seg; this.last = seg.path.localToGlobal(seg.point); LV.buildSnap([]); return;
+        this.mode = 'segs'; this.grab = seg; this.last = seg.path.localToGlobal(seg.point); this.origin = this.last.clone(); LV.buildSnap([]); return;
       }
       if (leaf) {
         const owner = leaf instanceof P.Path ? ownerOf(leaf) : leaf;
@@ -239,7 +351,7 @@
       if (m === 'segs') {
         let target = ev.pt;
         if (ev.shift) target = constrain45(ev.down, ev.pt);
-        else if (!this.free) target = LV.snapPoint(ev.pt, { exclude: [] }).pt;
+        else if (!this.free) target = LV.snapPoint(ev.pt, { exclude: [], origin: this.origin }).pt;
         const inc = target.subtract(this.last); this.last = target;
         if (!inc.isZero()) { LV.selSegs.forEach(s => { s.point = s.path.globalToLocal(s.path.localToGlobal(s.point).add(inc)); }); this.changed = true; }
         LV.sel.forEach(o => { if (o.data.kind === 'pathtext') LV.layoutPathText(o); });
@@ -287,7 +399,7 @@
       if (this.path && this.path.parent) {
         const last = this.path.lastSegment.point, first = this.path.firstSegment.point;
         if (this.path.segments.length > 1 && vdist(ev.pt, first) < 7) { this.path.closed = true; this.seg = this.path.firstSegment; this.mode = 'close'; return; }
-        pt = ev.shift ? constrain45(last, pt) : LV.snapPoint(pt, { exclude: [this.path] }).pt;
+        pt = ev.shift ? constrain45(last, pt) : LV.snapPoint(pt, { exclude: [this.path], origin: last }).pt;
         this.seg = this.path.add(pt); this.mode = 'new'; return;
       }
       // editing existing selected paths: continue / delete / add / convert
@@ -323,7 +435,7 @@
     up() { LV.clearSnap(); if (this.mode === 'close') this.finish(); this.mode = null; LV.redraw(); },
     move(ev) {
       this.hoverPt = ev.pt;
-      if (this.path && this.path.parent) { if (ev.shift) this.hoverPt = constrain45(this.path.lastSegment.point, ev.pt); else this.hoverPt = LV.snapPoint(ev.pt, { exclude: [this.path] }).pt; }
+      if (this.path && this.path.parent) { if (ev.shift) this.hoverPt = constrain45(this.path.lastSegment.point, ev.pt); else this.hoverPt = LV.snapPoint(ev.pt, { exclude: [this.path], origin: this.path.lastSegment.point }).pt; }
       else {
         const paths = pathsOf(LV.sel), seg = anchorAt(paths, ev.vp);
         let hint = '';
@@ -362,14 +474,13 @@
     if (kind === 'line') { const e = ev.shift ? constrain45(a, b) : b; item = new P.Path.Line({ from: a, to: e, insert: false }); }
     else if (kind === 'polygon' || kind === 'star') {
       const r = Math.max(b.getDistance(a), 0.5), ang = ev.shift ? 0 : b.subtract(a).angle + 90;
-      item = kind === 'polygon' ? new P.Path.RegularPolygon({ center: a, sides: Math.max(3, LV.shape.sides | 0), radius: r, insert: false }) : new P.Path.Star({ center: a, points: Math.max(3, LV.shape.points | 0), radius1: r, radius2: r * LV.shape.inner / 100, insert: false });
-      if (ang) item.rotate(ang, a);
+      item = kind === 'polygon' ? LV.live.polygon(a, LV.shape.sides, r, ang) : LV.live.star(a, LV.shape.points, r, r * LV.shape.inner / 100, ang);
     } else {
       let w = b.x - a.x, h = b.y - a.y;
       if (ev.shift) { const s = Math.max(Math.abs(w), Math.abs(h)); w = Math.sign(w || 1) * s; h = Math.sign(h || 1) * s; }
       const rect = ev.alt ? new P.Rectangle(a.subtract([w, h]), a.add([w, h])) : new P.Rectangle(a, a.add([w, h]));
       if (rect.width < 0.01 || rect.height < 0.01) return null;
-      item = kind === 'ellipse' ? new P.Path.Ellipse({ rectangle: rect, insert: false }) : new P.Path.Rectangle({ rectangle: rect, radius: kind === 'rounded' ? Math.min(LV.shape.radius, rect.width / 2, rect.height / 2) : 0, insert: false });
+      item = kind === 'ellipse' ? LV.live.ellipse(rect) : LV.live.rect(rect, kind === 'rounded' ? Math.max(0, LV.shape.radius) : 0);
     }
     if (kind === 'line') { item.strokeColor = LV.specToColor(LV.paint.stroke || '#1d2733'); item.strokeWidth = LV.paint.strokeWidth || 1; }
     else LV.applyDefaultPaint(item);
@@ -383,11 +494,12 @@
       fields: f.map(([key, label, value]) => ({ key, label, type: 'number', value, min: 0 })),
       onOK: v => {
         let item;
-        if (kind === 'polygon') { item = new P.Path.RegularPolygon({ center: at, sides: Math.max(3, v.n | 0), radius: v.r, insert: false }); S.sides = v.n | 0; }
-        else if (kind === 'star') { item = new P.Path.Star({ center: at, points: Math.max(3, v.n | 0), radius1: v.r, radius2: v.r2, insert: false }); S.points = v.n | 0; }
+        if (!(v.r >= 0) && kind !== 'rect' && kind !== 'ellipse' && kind !== 'line') return;
+        if (kind === 'polygon') { item = LV.live.polygon(at, v.n, v.r); S.sides = Math.max(3, v.n | 0); }
+        else if (kind === 'star') { item = LV.live.star(at, v.n, v.r, v.r2); S.points = Math.max(3, v.n | 0); }
         else if (kind === 'line') { const r = v.a * Math.PI / 180; item = new P.Path.Line({ from: at, to: at.add([Math.cos(r) * v.l, -Math.sin(r) * v.l]), insert: false }); }
-        else if (kind === 'ellipse') item = new P.Path.Ellipse({ rectangle: new P.Rectangle(at, new P.Size(v.w, v.h)), insert: false });
-        else { item = new P.Path.Rectangle({ rectangle: new P.Rectangle(at, new P.Size(v.w, v.h)), radius: kind === 'rounded' ? v.r : 0, insert: false }); if (kind === 'rounded') S.radius = v.r; }
+        else if (kind === 'ellipse') { if (!(v.w > 0 && v.h > 0)) return; item = LV.live.ellipse(new P.Rectangle(at, new P.Size(v.w, v.h))); }
+        else { if (!(v.w > 0 && v.h > 0)) return; item = LV.live.rect(new P.Rectangle(at, new P.Size(v.w, v.h)), kind === 'rounded' ? Math.max(0, v.r) : 0); if (kind === 'rounded') S.radius = v.r; }
         if (kind === 'line') { item.strokeColor = LV.specToColor(LV.paint.stroke || '#1d2733'); item.strokeWidth = LV.paint.strokeWidth || 1; } else LV.applyDefaultPaint(item);
         item.name = { rect: 'Rectangle', rounded: 'Rounded Rectangle', ellipse: 'Ellipse', polygon: 'Polygon', star: 'Star', line: 'Line' }[kind];
         LV.insert(item); LV.setSel([item]); LV.commit(item.name);
@@ -399,7 +511,7 @@
     down(ev) { this.a = kind === 'polygon' || kind === 'star' ? ev.pt : LV.snapPoint(ev.pt, { exclude: [] }).pt; this.item = null; },
     drag(ev) {
       if (this.item) this.item.remove();
-      const b = ev.shift && kind !== 'line' ? ev.pt : LV.snapPoint(ev.pt, { exclude: [] }).pt;
+      const b = ev.shift && kind !== 'line' ? ev.pt : LV.snapPoint(ev.pt, { exclude: [], origin: kind === 'line' ? this.a : null }).pt;
       this.item = makeShape(kind, this.a, b, ev); if (this.item) LV.insert(this.item); LV.redraw();
       if (this.item) LV.status(`W ${LV.fmt(this.item.bounds.width)}  H ${LV.fmt(this.item.bounds.height)}`);
     },
@@ -608,6 +720,127 @@
       LV.redraw();
     },
     overlay(ctx) { if (!this.pts) return; ctx.strokeStyle = '#e0261b'; ctx.lineWidth = 1.2; ctx.beginPath(); this.pts.forEach((p, i) => { const v = LV.v(p); i ? ctx.lineTo(v.x, v.y) : ctx.moveTo(v.x, v.y); }); ctx.stroke(); }
+  };
+
+  /* ---------------- Blend tool: click two shapes ---------------- */
+  const blendable = it => it && LV.isPathItem(it) && !it.clipMask;
+  T.blend = {
+    name: 'Blend', cursor: 'crosshair',
+    activate() { this.first = null; },
+    deactivate() { this.first = null; },
+    down(ev) {
+      const hit = LV.hitTest(ev.pt);
+      if (!blendable(hit)) { LV.toast('Click a path or shape (then a second one) to blend between them'); return; }
+      if (!this.first || !this.first.parent) { this.first = hit; LV.setSel([hit]); LV.status('Now click the object to blend to'); return; }
+      if (hit === this.first) return;
+      const a = this.first; this.first = null; LV.blend.make([a, hit]); LV.status('');
+    },
+    move(ev) { const h = LV.hitTest(ev.pt); LV.hover = blendable(h) ? h : null; LV.redraw(); },
+    key(e) { if (e.key === 'Escape' && this.first) { this.first = null; LV.setSel([]); return true; } return false; },
+    overlay(ctx) { if (!this.first || !this.first.parent) return; ctx.strokeStyle = '#ff2fb0'; ctx.lineWidth = 2; ctx.beginPath(); LV.tracePath(ctx, this.first); ctx.stroke(); if (LV.cursor) { const a = LV.v(this.first.bounds.center), b = LV.v(LV.cursor); ctx.setLineDash([4, 3]); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.setLineDash([]); } }
+  };
+
+  /* ---------------- Shape Builder: drag across regions of the selected shapes to merge them (Alt erases) ---------------- */
+  const sbTargets = () => LV.sortZ(LV.sel).filter(it => LV.isPathItem(it) && !it.clipMask && (it instanceof P.CompoundPath || it.closed));
+  T.shapebuilder = {
+    name: 'Shape Builder', cursor: 'crosshair',
+    regions() {
+      const t = sbTargets(); if (t.length < 2) return null;
+      const key = t.map(i => i.id + ':' + i._version + ':' + i.bounds.toString()).join('|');
+      if (this.key !== key) { this.key = key; try { this.pieces = LV.dividePieces(t); } catch (e) { console.warn(e); this.pieces = []; } }
+      return this.pieces;
+    },
+    at(pt) { const r = this.regions(); return r && r.find(pc => pc.path.contains(pt)); },
+    activate() { this.key = null; this.picks = null; if (sbTargets().length < 2) LV.toast('Select two or more overlapping shapes, then drag across regions to merge them (Alt-drag erases)'); },
+    deactivate() { this.picks = null; this.pieces = null; this.key = null; },
+    down(ev) {
+      if (!this.regions()) { const hit = LV.hitTest(ev.pt); if (hit) LV.addSel(hit); LV.toast('Select two or more overlapping shapes first'); return; }
+      this.picks = this.at(ev.pt) ? [ev.pt] : []; this.alt = ev.alt;
+    },
+    drag(ev) { if (!this.picks) return; if (this.at(ev.pt) && (!this.picks.length || vdist(this.picks[this.picks.length - 1], ev.pt) > 3)) this.picks.push(ev.pt); this.alt = ev.alt; LV.redraw(); },
+    up(ev) {
+      const picks = this.picks; this.picks = null; if (!picks || !picks.length) return LV.redraw();
+      const res = LV.shapeBuild(sbTargets(), picks, ev.alt || this.alt); this.key = null;
+      if (!res) return LV.redraw();
+      LV.setSel(res.made); LV.commit(ev.alt || this.alt ? 'Shape Builder Erase' : 'Shape Builder');
+    },
+    move(ev) { this.hoverPc = this.at(ev.pt) || null; LV.hover = null; setCursor(ev.alt ? 'not-allowed' : 'crosshair'); LV.redraw(); },
+    overlay(ctx) {
+      const r = this.regions(); if (!r) return;
+      const hl = new Set(); if (this.picks) this.picks.forEach(p => { const pc = r.find(x => x.path.contains(p)); if (pc) hl.add(pc); }); else if (this.hoverPc) hl.add(this.hoverPc);
+      ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(47,122,229,.5)'; ctx.setLineDash([3, 3]); r.forEach(pc => { ctx.beginPath(); LV.tracePath(ctx, pc.path); ctx.stroke(); }); ctx.setLineDash([]);
+      hl.forEach(pc => { ctx.beginPath(); LV.tracePath(ctx, pc.path); ctx.fillStyle = this.alt ? 'rgba(224,38,27,.35)' : 'rgba(47,122,229,.25)'; ctx.fill('evenodd'); ctx.strokeStyle = this.alt ? '#e0261b' : LV.SEL_COLOR; ctx.lineWidth = 1.5; ctx.stroke(); });
+      if (this.picks && this.picks.length > 1) { ctx.strokeStyle = this.alt ? '#e0261b' : LV.SEL_COLOR; ctx.lineWidth = 1; ctx.beginPath(); this.picks.forEach((p, i) => { const v = LV.v(p); i ? ctx.lineTo(v.x, v.y) : ctx.moveTo(v.x, v.y); }); ctx.stroke(); }
+    }
+  };
+
+  /* ---------------- Width tool: drag on a stroke to add / adjust width points ---------------- */
+  const strokedPath = it => it instanceof P.Path && it.hasStroke() && it.segments.length > 1 && !(it.parent instanceof P.CompoundPath);
+  T.width = {
+    name: 'Width', cursor: 'crosshair',
+    activate() { this.path = LV.sel.find(strokedPath) || null; this.selPt = -1; },
+    deactivate() { this.path = null; this.mode = null; },
+    geo(path, i) { // width point i: centre, normal, handle positions (document coordinates)
+      const w = LV.width.get(path), p = w.pts[i], L = path.length, off = Math.min(L, p.t * L), c = path.getPointAt(off), n = path.getNormalAt(off), hw = path.strokeWidth / 2;
+      return { c, n, lp: c.add(n.multiply(p.l * hw)), rp: c.subtract(n.multiply(p.r * hw)), off };
+    },
+    pick(ev) {
+      const paths = [this.path, ...LV.sel].filter(p => p && p.parent && strokedPath(p));
+      for (const p of paths) { const w = LV.width.get(p); if (!w) continue; for (let i = 0; i < w.pts.length; i++) { const g = this.geo(p, i); if (vdist(ev.pt, g.lp) <= 6) return { p, i, side: 'l' }; if (vdist(ev.pt, g.rp) <= 6) return { p, i, side: 'r' }; if (vdist(ev.pt, g.c) <= 6) return { p, i, side: 'c' }; } }
+      return null;
+    },
+    pathAt(ev) {
+      const hit = LV.hitTest(ev.pt, { leaf: true, filter: strokedPath }) || (this.path && this.path.parent && this.path.getNearestPoint(ev.pt).getDistance(ev.pt) <= this.path.strokeWidth / 2 * LV.width.maxRatio(this.path) + LV.tol(5) ? this.path : null);
+      return strokedPath(hit) ? hit : null;
+    },
+    down(ev) {
+      this.mode = null; this.changed = false;
+      const h = this.pick(ev);
+      if (h) { this.path = h.p; this.selPt = h.i; this.mode = h.side === 'c' ? 'slide' : 'side'; this.side = h.side; this.alt = ev.alt; LV.setSel([h.p]); return; }
+      const p = this.pathAt(ev); if (!p) { this.selPt = -1; LV.redraw(); return; }
+      this.path = p; LV.setSel([p]);
+      const L = p.length, loc = p.getNearestLocation(ev.pt), t = loc.offset / L, w = LV.width.get(p), v = LV.width.valueAt(w ? w.pts : [], t, p.closed);
+      const pts = (w ? w.pts : [{ t: 0, l: 1, r: 1 }, { t: 1, l: 1, r: 1 }]).concat([{ t, l: v.l, r: v.r }]);
+      LV.width.set(p, pts); this.selPt = LV.width.get(p).pts.findIndex(q => q.t === Math.min(1, Math.max(0, t)) && q.l === v.l);
+      const n = p.getNormalAt(loc.offset); this.side = ev.pt.subtract(loc.point).dot(n) >= 0 ? 'l' : 'r'; this.alt = ev.alt; this.mode = 'side'; this.changed = true;
+    },
+    drag(ev) {
+      const p = this.path; if (!p || !this.mode) return; const w = LV.width.get(p); if (!w) return; const pts = w.pts.map(q => ({ ...q })), i = this.selPt, q = pts[i]; if (!q) return;
+      if (this.mode === 'side') {
+        const g = this.geo(p, i), d = Math.abs(ev.pt.subtract(g.c).dot(g.n)), ratio = Math.min(100, d / (p.strokeWidth / 2));
+        if (this.alt || ev.alt) q[this.side] = ratio; else { q.l = ratio; q.r = ratio; }
+        LV.status(`Width ${LV.fmt((q.l + q.r) * p.strokeWidth / 2)}  (side 1 ${LV.fmt(q.l * p.strokeWidth / 2)}, side 2 ${LV.fmt(q.r * p.strokeWidth / 2)})`);
+      } else if (this.mode === 'slide') {
+        const t = p.getNearestLocation(ev.pt).offset / p.length, lo = i > 0 ? pts[i - 1].t + 1e-3 : 0, hi = i < pts.length - 1 ? pts[i + 1].t - 1e-3 : 1;
+        q.t = Math.min(hi, Math.max(lo, t));
+      }
+      LV.width.set(p, pts); this.changed = true; LV.redraw();
+    },
+    up() { if (this.changed) LV.commit('Width'); this.mode = null; this.changed = false; LV.emit('selection'); },
+    move(ev) { const h = this.pick(ev); this.hoverPath = h ? h.p : this.pathAt(ev); setCursor(h ? (h.side === 'c' ? 'ew-resize' : 'pointer') : this.hoverPath ? 'crosshair' : 'default'); LV.hover = null; LV.redraw(); },
+    deletePoint() {
+      const p = this.path, w = p && LV.width.get(p); if (!w || this.selPt < 0 || !w.pts[this.selPt]) return false;
+      const pts = w.pts.filter((_, j) => j !== this.selPt); LV.width.set(p, pts.length ? pts : null); this.selPt = -1; LV.commit('Delete Width Point'); return true;
+    },
+    key(e) { if ((e.key === 'Delete' || e.key === 'Backspace') && this.deletePoint()) return true; if (e.key === 'Escape' && this.selPt >= 0) { this.selPt = -1; LV.redraw(); return true; } return false; },
+    dbl(ev) {
+      const h = this.pick(ev); if (!h) return; const p = h.p, w = LV.width.get(p), q = w.pts[h.i], hw = p.strokeWidth / 2;
+      Aero.dialog({ title: 'Width Point Edit', fields: [{ key: 'l', label: 'Side 1', type: 'number', min: 0, step: 0.5, value: LV.round(q.l * hw, 2) }, { key: 'r', label: 'Side 2', type: 'number', min: 0, step: 0.5, value: LV.round(q.r * hw, 2) }, { key: 'del', label: 'Delete this point', type: 'checkbox', value: false }],
+        onOK: v => { const pts = w.pts.map(x => ({ ...x })); if (v.del) pts.splice(h.i, 1); else { pts[h.i].l = Math.max(0, v.l) / hw; pts[h.i].r = Math.max(0, v.r) / hw; } LV.width.set(p, pts.length ? pts : null); LV.commit('Width Point Edit'); } });
+    },
+    overlay(ctx) {
+      const show = new Set([this.path, this.hoverPath, ...LV.sel].filter(p => p && p.parent && strokedPath(p)));
+      show.forEach(p => {
+        const o = LV.width.outline(p); ctx.strokeStyle = LV.SEL_COLOR; ctx.lineWidth = 1; ctx.beginPath(); LV.tracePath(ctx, o || p); ctx.stroke();
+        const w = LV.width.get(p); if (!w) return;
+        w.pts.forEach((_, i) => {
+          const g = this.geo(p, i), c = LV.v(g.c), a = LV.v(g.lp), b = LV.v(g.rp), sel = p === this.path && i === this.selPt;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+          [a, b].forEach(q => { ctx.beginPath(); ctx.arc(q.x, q.y, 3.2, 0, 7); ctx.fillStyle = sel ? LV.SEL_COLOR : '#fff'; ctx.fill(); ctx.stroke(); });
+          ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(Math.PI / 4); ctx.fillStyle = sel ? LV.SEL_COLOR : '#fff'; ctx.fillRect(-3.5, -3.5, 7, 7); ctx.strokeRect(-3.5, -3.5, 7, 7); ctx.restore();
+        });
+      });
+    }
   };
 
   /* ---------------- Hand / Zoom ---------------- */

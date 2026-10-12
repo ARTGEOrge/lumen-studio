@@ -13,7 +13,8 @@ const LABEL_KEYS = ['red', 'yellow', 'green', 'blue', 'purple'];
 /* ---------- visible list ---------- */
 function computeList() {
   const f = S.filter, src = S.source, t = f.text.trim().toLowerCase();
-  let coll = null; if (src.type === 'coll') coll = new Set(Cat.collections.find(c => c.id === src.id)?.ids || []);
+  let coll = null, smart = null;
+  if (src.type === 'coll') { const c = Cat.collections.find(c => c.id === src.id); if (c?.smart) smart = c.smart; else coll = new Set(c?.ids || []); }
   const arr = [...Cat.photos.values()].filter(p => {
     if (src.type === 'picks' && p.flag !== 1) return false;
     if (src.type === 'rejected' && p.flag !== -1) return false;
@@ -21,6 +22,8 @@ function computeList() {
     if (src.type === 'last' && p.importId !== S.lastImport) return false;
     if (src.type === 'copies' && !p.copyName) return false;
     if (coll && !coll.has(p.id)) return false;
+    if (smart && !Smart.matches(p, smart)) return false;
+    if (src.type === 'date') { const t = p.exif.date || p.added; if (t < src.from || t >= src.to) return false; }
     if (f.rating === -1 ? p.rating !== 0 : f.rating === 5 ? p.rating !== 5 : p.rating < f.rating) return false;
     if (f.flag === 'picked' && p.flag !== 1) return false; if (f.flag === 'unflagged' && p.flag !== 0) return false;
     if (f.flag === 'rejected' && p.flag !== -1) return false; if (f.flag === 'notrej' && p.flag === -1) return false;
@@ -42,35 +45,61 @@ const selectedIds = () => { const s = S.list.filter(id => S.sel.has(id)); return
 const FLAG_SVG = { 1: '<svg viewBox="0 0 16 16" class="flag"><path d="M3 15V2h9l-2 3 2 3H4" fill="#fff" stroke="#2a3a4a" stroke-width="1.2" stroke-linejoin="round"/></svg>', '-1': '<svg viewBox="0 0 16 16" class="flag"><path d="M3 15V2h9l-2 3 2 3H4" fill="#1a1a1a" stroke="#000" stroke-width="1.2"/><path d="M6 3.5l3 3M9 3.5l-3 3" stroke="#fff" stroke-width="1.2"/></svg>' };
 const starsHTML = r => `<span class="stars">${[1, 2, 3, 4, 5].map(i => `<span data-r="${i}" class="${i <= r ? 'on' : ''}">${i <= r ? '★' : '☆'}</span>`).join('')}</span>`;
 function cellHTML(p, i) {
-  const u = Cat.thumbURL.get(p.id);
+  const u = Cat.thumb(p.id);
   return `<div class="ph">${u ? `<img src="${u}" alt="" draggable="false">` : '<div class="aero-spin"></div>'}</div>
     ${FLAG_SVG[p.flag] || ''}<span class="num">${i + 1}</span>
     <div class="badge">${p.edited ? '<i title="Edited">±</i>' : ''}${p.copyName ? '<i class="vc" title="Virtual copy">⧉</i>' : ''}</div>
     <div class="meta">${starsHTML(p.rating)}<span class="nm" title="${esc(Cat.displayName(p))}">${esc(Cat.displayName(p))}</span>${p.label ? `<span class="lab" style="background:${Model.LABELS[p.label]}"></span>` : ''}</div>`;
 }
+/* The grid is virtualised: only the rows in (and near) the viewport exist in the DOM, so 10,000+ photos stay fast. */
+const GV = { cols: 1, cw: 170, rh: 208, pad: 10, gap: 8, rendered: new Map(), from: 0, to: -1 };
+function gridLayout() {
+  const g = $('#grid'), W = g.clientWidth - GV.pad * 2, ts = S.tsize;
+  GV.cols = Math.max(1, Math.floor((W + GV.gap) / (ts + GV.gap)));
+  GV.cw = (W - GV.gap * (GV.cols - 1)) / GV.cols; GV.rh = ts + 30 + GV.gap;
+  const rows = Math.ceil(S.list.length / GV.cols);
+  let sz = g.querySelector('.gsizer'); if (!sz) { sz = el('div', 'gsizer'); g.appendChild(sz); }
+  sz.style.height = (rows * GV.rh - (rows ? GV.gap : 0) + GV.pad * 2) + 'px';
+}
+function makeCell(id, i) {
+  const p = Cat.photos.get(id), c = el('div', 'cell');
+  c.dataset.id = id; if (p.label) c.dataset.label = p.label;
+  c.classList.toggle('sel', S.sel.has(id)); c.classList.toggle('active', id === S.active); c.classList.toggle('rej', p.flag === -1);
+  c.draggable = true; c.innerHTML = cellHTML(p, i);
+  const r = Math.floor(i / GV.cols), k = i % GV.cols;
+  c.style.cssText = `left:${GV.pad + k * (GV.cw + GV.gap)}px;top:${GV.pad + r * GV.rh}px;width:${GV.cw}px;height:${GV.rh - GV.gap}px`;
+  return c;
+}
+function renderVisible(force) {
+  const g = $('#grid'); if (g.hidden) return;
+  const top = g.scrollTop, h = g.clientHeight || 600, r0 = Math.max(0, Math.floor((top - GV.pad) / GV.rh) - 2), r1 = Math.ceil((top + h) / GV.rh) + 2;
+  const from = Math.min(S.list.length, r0 * GV.cols), to = Math.min(S.list.length, r1 * GV.cols) - 1;
+  if (!force && from === GV.from && to === GV.to) return;
+  GV.from = from; GV.to = to;
+  const want = new Set(S.list.slice(from, to + 1));
+  GV.rendered.forEach((c, id) => { if (!want.has(id) || force) { c.remove(); GV.rendered.delete(id); } });
+  const frag = document.createDocumentFragment();
+  for (let i = from; i <= to; i++) { const id = S.list[i]; if (!GV.rendered.has(id)) { const c = makeCell(id, i); GV.rendered.set(id, c); frag.appendChild(c); } }
+  g.appendChild(frag);
+}
 function renderGrid() {
-  const g = $('#grid'); const frag = document.createDocumentFragment();
-  S.list.forEach((id, i) => {
-    const p = Cat.photos.get(id), c = el('div', 'cell');
-    c.dataset.id = id; if (p.label) c.dataset.label = p.label;
-    c.classList.toggle('sel', S.sel.has(id)); c.classList.toggle('active', id === S.active); c.classList.toggle('rej', p.flag === -1);
-    c.draggable = true; c.innerHTML = cellHTML(p, i); frag.appendChild(c);
-  });
-  g.replaceChildren(frag);
+  gridLayout(); renderVisible(true);
   $('#f-count').textContent = `${S.list.length} of ${Cat.photos.size} photo${Cat.photos.size === 1 ? '' : 's'}`;
 }
 function updateCell(id) {
-  const c = $(`#grid .cell[data-id="${id}"]`), p = Cat.photos.get(id); if (!c || !p) return;
+  const c = GV.rendered.get(id), p = Cat.photos.get(id); if (!c || !p) return;
   if (p.label) c.dataset.label = p.label; else delete c.dataset.label;
   c.classList.toggle('rej', p.flag === -1); c.innerHTML = cellHTML(p, S.list.indexOf(id));
 }
 function updateSelClasses() {
-  $$('#grid .cell').forEach(c => { c.classList.toggle('sel', S.sel.has(c.dataset.id)); c.classList.toggle('active', c.dataset.id === S.active); });
-  $$('#filmstrip .fs').forEach(c => { c.classList.toggle('sel', S.sel.has(c.dataset.id)); c.classList.toggle('active', c.dataset.id === S.active); });
+  GV.rendered.forEach((c, id) => { c.classList.toggle('sel', S.sel.has(id)); c.classList.toggle('active', id === S.active); });
+  FS.rendered.forEach((c, id) => { c.classList.toggle('sel', S.sel.has(id)); c.classList.toggle('active', id === S.active); });
 }
 function scrollToActive() {
-  const c = $(`#grid .cell[data-id="${S.active}"]`); c?.scrollIntoView({ block: 'nearest' });
-  const f = $(`#filmstrip .fs[data-id="${S.active}"]`); f?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  const i = S.list.indexOf(S.active); if (i < 0) return;
+  const g = $('#grid');
+  if (!g.hidden) { const top = GV.pad + Math.floor(i / GV.cols) * GV.rh; if (top < g.scrollTop) g.scrollTop = top - GV.pad; else if (top + GV.rh > g.scrollTop + g.clientHeight) g.scrollTop = top + GV.rh - g.clientHeight + GV.pad; renderVisible(); }
+  const f = $('#filmstrip'); if (!f.hidden) { const left = FS.pad + i * FS.w; if (left < f.scrollLeft) f.scrollLeft = left - FS.pad; else if (left + FS.w > f.scrollLeft + f.clientWidth) f.scrollLeft = left + FS.w - f.clientWidth + FS.pad; renderFilmVisible(); }
 }
 
 function select(id, { ctrl = false, shift = false } = {}) {
@@ -94,18 +123,31 @@ function moveActive(d, extend) {
   let i = S.list.indexOf(S.active); i = i < 0 ? 0 : Math.max(0, Math.min(S.list.length - 1, i + d));
   select(S.list[i], { shift: extend });
 }
-function gridCols() { const g = $('#grid'); const cs = getComputedStyle(g).gridTemplateColumns.split(' ').length; return Math.max(1, cs); }
+function gridCols() { return GV.cols; }
 
-/* ---------- filmstrip ---------- */
+/* ---------- filmstrip (virtualised, fixed-width cells) ---------- */
+const FS = { w: 104, pad: 8, rendered: new Map(), from: 0, to: -1 };
+function makeFilmCell(id, i) {
+  const p = Cat.photos.get(id), d = el('div', 'fs'); d.dataset.id = id; d.title = Cat.displayName(p);
+  const u = Cat.thumb(id); d.innerHTML = (u ? `<img src="${u}" alt="" draggable="false">` : '') + (p.rating ? `<span class="s">${'★'.repeat(p.rating)}</span>` : '');
+  d.classList.toggle('sel', S.sel.has(id)); d.classList.toggle('active', id === S.active); d.style.left = (FS.pad + i * FS.w) + 'px';
+  return d;
+}
+function renderFilmVisible(force) {
+  const fs = $('#filmstrip'); if (fs.hidden) return;
+  const l = fs.scrollLeft, w = fs.clientWidth || 1000, from = Math.max(0, Math.floor((l - FS.pad) / FS.w) - 4), to = Math.min(S.list.length - 1, Math.ceil((l + w) / FS.w) + 4);
+  if (!force && from === FS.from && to === FS.to) return;
+  FS.from = from; FS.to = to;
+  const want = new Set(S.list.slice(from, to + 1));
+  FS.rendered.forEach((c, id) => { if (!want.has(id) || force) { c.remove(); FS.rendered.delete(id); } });
+  const frag = document.createDocumentFragment();
+  for (let i = from; i <= to; i++) { const id = S.list[i]; if (!FS.rendered.has(id)) { const c = makeFilmCell(id, i); FS.rendered.set(id, c); frag.appendChild(c); } }
+  fs.appendChild(frag);
+}
 function renderFilmstrip() {
-  const fs = $('#filmstrip'); const frag = document.createDocumentFragment();
-  S.list.forEach(id => {
-    const p = Cat.photos.get(id), d = el('div', 'fs'); d.dataset.id = id; d.title = Cat.displayName(p);
-    const u = Cat.thumbURL.get(id); d.innerHTML = (u ? `<img src="${u}" alt="" draggable="false">` : '') + (p.rating ? `<span class="s">${'★'.repeat(p.rating)}</span>` : '');
-    d.classList.toggle('sel', S.sel.has(id)); d.classList.toggle('active', id === S.active);
-    frag.appendChild(d);
-  });
-  fs.replaceChildren(frag);
+  const fs = $('#filmstrip'); let sz = fs.querySelector('.fsizer'); if (!sz) { sz = el('div', 'fsizer'); fs.appendChild(sz); }
+  sz.style.width = (FS.pad * 2 + S.list.length * FS.w) + 'px';
+  renderFilmVisible(true);
 }
 
 /* ---------- left panel ---------- */
@@ -116,7 +158,7 @@ function renderLeft() {
   $('#catlist').innerHTML = items.map(([t, n, c, g]) => `<div class="aero-item${S.source.type === t ? ' sel' : ''}" data-src="${t}"><svg class="ic" viewBox="0 0 16 16"><rect x="1.5" y="3" width="13" height="10" rx="1.5" fill="url(${g})" stroke="#24476e" stroke-width=".8"/><circle cx="6" cy="7" r="1.6" fill="#fff" opacity=".85"/><path d="M2.5 12l4-3.5 2.5 2 2-1.5 2.5 3z" fill="#fff" opacity=".7"/></svg><span class="grow">${n}</span><span class="cnt">${c}</span></div>`).join('');
   const colls = Cat.collections;
   $('#collcount').textContent = colls.length || '';
-  $('#colllist').innerHTML = colls.length ? colls.map(c => `<div class="aero-item${S.source.type === 'coll' && S.source.id === c.id ? ' sel' : ''}" data-coll="${esc(c.id)}"><svg class="ic" viewBox="0 0 16 16"><path d="M1.5 4.5h5l1.5 1.5h6.5v7.5h-13z" fill="url(#gGold)" stroke="#8a5a0a" stroke-width=".8"/></svg><span class="grow">${esc(c.name)}</span><span class="cnt">${c.ids.filter(id => Cat.photos.has(id)).length}</span></div>`).join('') : '<div class="dim" style="padding:6px 8px">No collections yet. Select photos and click the + button below, or drag photos onto a collection.</div>';
+  $('#colllist').innerHTML = colls.length ? colls.map(c => `<div class="aero-item${S.source.type === 'coll' && S.source.id === c.id ? ' sel' : ''}${c.smart ? ' smart' : ''}" data-coll="${esc(c.id)}" title="${c.smart ? 'Smart collection — double-click to edit its rules' : 'Collection — double-click to rename'}">${c.smart ? '<svg class="ic" viewBox="0 0 16 16"><path d="M1.5 4.5h5l1.5 1.5h6.5v7.5h-13z" fill="url(#gBlue)" stroke="#174a85" stroke-width=".8"/><path d="M9 7.2l-2.4 3.3h2l-.6 2.6 2.6-3.6h-2z" fill="#ffe27a" stroke="#8a5a0a" stroke-width=".5"/></svg>' : '<svg class="ic" viewBox="0 0 16 16"><path d="M1.5 4.5h5l1.5 1.5h6.5v7.5h-13z" fill="url(#gGold)" stroke="#8a5a0a" stroke-width=".8"/></svg>'}<span class="grow">${esc(c.name)}</span><span class="cnt">${c.smart ? Smart.count(c) : c.ids.filter(id => Cat.photos.has(id)).length}</span></div>`).join('') : '<div class="dim" style="padding:6px 8px">No collections yet. Select photos and click the + button below, or drag photos onto a collection.</div>';
   const kws = Cat.keywords();
   $('#kwcount').textContent = kws.length || '';
   $('#kwlist').innerHTML = kws.length ? kws.map(([k, n]) => `<div class="aero-item${S.filter.keyword === k ? ' sel' : ''}" data-kw="${esc(k)}"><svg class="ic" viewBox="0 0 16 16"><path d="M2 8.5V3h5.5l7 7-5.5 5.5z" fill="url(#gBlue)" stroke="#174a85" stroke-width=".8"/><circle cx="5" cy="6" r="1.2" fill="#fff"/></svg><span class="grow">${esc(k)}</span><span class="cnt">${n}</span></div>`).join('') : '<div class="dim" style="padding:6px 8px">Keywords you add appear here.</div>';
@@ -144,7 +186,7 @@ function renderRight() {
 }
 let histImg = new Image();
 function drawLibHist(p) {
-  const c = $('#lhist'); const u = p && Cat.thumbURL.get(p.id);
+  const c = $('#lhist'); const u = p && Cat.thumb(p.id);
   if (!u) { drawHistogram(c, null); return; }
   histImg.onload = () => {
     const t = Decode.mkCanvas(histImg.naturalWidth, histImg.naturalHeight), x = t.getContext('2d'); x.drawImage(histImg, 0, 0);
@@ -192,19 +234,28 @@ async function newCollectionFromSel() {
   const ids = selectedIds(); const name = await Aero.prompt('New Collection', 'Collection name', ids.length ? `Collection (${ids.length} photos)` : 'New collection');
   if (!name) return; const c = Cat.newCollection(name.trim().slice(0, 80) || 'Collection', ids); Aero.toast(`Created “${c.name}”` + (ids.length ? ` with ${ids.length} photos` : ''));
 }
+const isSmart = id => !!Cat.collections.find(c => c.id === id)?.smart;
 async function addSelToCollection(cid) {
   const ids = selectedIds(); if (!ids.length) return Aero.toast('Select photos first');
+  if (cid && isSmart(cid)) return Aero.toast('Smart collections fill themselves from their rules — double-click it to edit them');
   if (!cid) {
     if (!Cat.collections.length) return newCollectionFromSel();
     const cur = S.source.type === 'coll' ? S.source.id : Cat.collections[0].id;
-    const v = await new Promise(res => Aero.dialog({ title: 'Add to Collection', fields: [{ key: 'c', label: 'Collection', type: 'select', value: cur, options: Cat.collections.map(c => [c.id, c.name]) }], onOK: v => res(v.c), onCancel: () => res(null) }));
+    const plain = Cat.collections.filter(c => !c.smart); if (!plain.length) return newCollectionFromSel();
+    const v = await new Promise(res => Aero.dialog({ title: 'Add to Collection', fields: [{ key: 'c', label: 'Collection', type: 'select', value: plain.some(c => c.id === cur) ? cur : plain[0].id, options: plain.map(c => [c.id, c.name]) }], onOK: v => res(v.c), onCancel: () => res(null) }));
     if (!v) return; cid = v;
   }
   Cat.addToCollection(cid, ids); Aero.toast(`Added ${ids.length} photo${ids.length > 1 ? 's' : ''} to “${Cat.collections.find(c => c.id === cid)?.name}”`);
 }
 function removeSelFromCollection() {
   if (S.source.type !== 'coll') return Aero.toast('Open a collection first');
+  if (isSmart(S.source.id)) return Aero.toast('Smart collections fill themselves from their rules — edit the rules instead');
   const ids = selectedIds(); if (!ids.length) return; Cat.removeFromCollection(S.source.id, ids);
+}
+function editSmartCollection() {
+  const c = S.source.type === 'coll' && Cat.collections.find(x => x.id === S.source.id);
+  if (!c || !c.smart) return Aero.toast('Select a smart collection to edit');
+  Smart.dialog(c);
 }
 async function renameCollection() {
   const c = S.source.type === 'coll' && Cat.collections.find(x => x.id === S.source.id); if (!c) return Aero.toast('Select a collection to rename');
@@ -217,7 +268,7 @@ async function deleteCollection() {
 }
 
 /* ---------- module / view ---------- */
-function setSource(src) { S.source = src; refreshList(); renderLeft(); }
+function setSource(src) { S.source = src; refreshList(); renderLeft(); syncFilterUI(); }
 function refreshList(keepScroll = true) {
   const g = $('#grid'), st = g.scrollTop;
   computeList();
@@ -231,6 +282,7 @@ function updateEmpty() {
   const empty = Cat.photos.size === 0;
   $('#empty').hidden = !empty;
   $('#filterbar').hidden = empty || !(S.module === 'library' && S.view === 'grid');
+  if (empty) $('#dates').hidden = true;
 }
 function setModule(m) {
   if (m === 'develop' && !activePhoto()) { if (S.list[0]) select(S.list[0]); else return Aero.toast('Import or open photos first'); }
@@ -244,12 +296,13 @@ function setModule(m) {
 }
 function setView(v) { S.view = v; if (S.module !== 'library') setModule('library'); else applyView(); }
 function applyView() {
-  const grid = S.module === 'library' && S.view === 'grid';
-  $('#grid').hidden = !grid; $('#viewer').hidden = grid;
-  $('#filmstrip').hidden = grid || !S.filmstrip;
-  $('#v-grid').classList.toggle('on', S.view === 'grid'); $('#v-loupe').classList.toggle('on', S.view === 'loupe');
+  const lib = S.module === 'library', grid = lib && S.view === 'grid', dates = lib && S.view === 'dates';
+  $('#grid').hidden = !grid; $('#viewer').hidden = grid || dates; $('#dates').hidden = !dates;
+  $('#filmstrip').hidden = grid || dates || !S.filmstrip;
+  $('#v-grid').classList.toggle('on', S.view === 'grid'); $('#v-loupe').classList.toggle('on', S.view === 'loupe'); $('#v-dates').classList.toggle('on', S.view === 'dates');
   updateEmpty();
-  if (!grid) { Dev.photoChanged(); } else { scrollToActive(); $('#grid').focus({ preventScroll: true }); }
+  if (dates) Dates.render();
+  else if (!grid) { Dev.photoChanged(); renderFilmstrip(); } else { renderGrid(); scrollToActive(); $('#grid').focus({ preventScroll: true }); }
   updateStatus();
 }
 
@@ -280,22 +333,26 @@ function wire() {
   });
   // filmstrip
   $('#filmstrip').addEventListener('click', e => { const c = e.target.closest('.fs'); if (c) select(c.dataset.id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey }); });
+  let gq = false; grid.addEventListener('scroll', () => { if (gq) return; gq = true; requestAnimationFrame(() => { gq = false; renderVisible(); }); }, { passive: true });
+  let fq = false; $('#filmstrip').addEventListener('scroll', () => { if (fq) return; fq = true; requestAnimationFrame(() => { fq = false; renderFilmVisible(); }); }, { passive: true });
+  new ResizeObserver(() => { const old = GV.cols; if (!grid.hidden) { gridLayout(); renderVisible(old !== GV.cols); } renderFilmVisible(); }).observe(grid);
   $('#filmstrip').addEventListener('wheel', e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); $('#filmstrip').scrollLeft += e.deltaY; } }, { passive: false });
   // left
   $('#catlist').addEventListener('click', e => { const it = e.target.closest('[data-src]'); if (it) setSource({ type: it.dataset.src }); });
   const cl = $('#colllist');
   cl.addEventListener('click', e => { const it = e.target.closest('[data-coll]'); if (it) setSource({ type: 'coll', id: it.dataset.coll }); });
-  cl.addEventListener('dblclick', e => { if (e.target.closest('[data-coll]')) renameCollection(); });
+  cl.addEventListener('dblclick', e => { const it = e.target.closest('[data-coll]'); if (it) isSmart(it.dataset.coll) ? editSmartCollection() : renameCollection(); });
   cl.addEventListener('dragover', e => { const it = e.target.closest('[data-coll]'); if (it && e.dataTransfer.types.includes('text/x-darkroom-ids')) { e.preventDefault(); e.stopPropagation(); $$('#colllist .drop').forEach(x => x.classList.remove('drop')); it.classList.add('drop'); } });
   cl.addEventListener('dragleave', e => { e.target.closest?.('[data-coll]')?.classList.remove('drop'); });
   cl.addEventListener('drop', e => {
     const it = e.target.closest('[data-coll]'); const raw = e.dataTransfer.getData('text/x-darkroom-ids'); if (!it || !raw) return;
     e.preventDefault(); e.stopPropagation(); it.classList.remove('drop');
+    if (isSmart(it.dataset.coll)) return Aero.toast('Smart collections fill themselves from their rules');
     try { const ids = JSON.parse(raw).filter(id => Cat.photos.has(id)); Cat.addToCollection(it.dataset.coll, ids); Aero.toast(`Added ${ids.length} photo${ids.length > 1 ? 's' : ''} to collection`); } catch (err) { }
   });
   $('#kwlist').addEventListener('click', e => { const it = e.target.closest('[data-kw]'); if (it) { S.filter.keyword = S.filter.keyword === it.dataset.kw ? '' : it.dataset.kw; syncFilterUI(); refreshList(false); renderLeft(); } });
   $('#c-new').onclick = newCollectionFromSel; $('#c-add').onclick = () => addSelToCollection(S.source.type === 'coll' ? S.source.id : null);
-  $('#c-rem').onclick = removeSelFromCollection; $('#c-ren').onclick = renameCollection; $('#c-del').onclick = deleteCollection;
+  $('#c-smart').onclick = () => Smart.dialog(); $('#c-rem').onclick = removeSelFromCollection; $('#c-ren').onclick = renameCollection; $('#c-del').onclick = deleteCollection;
   // right (metadata)
   const mp = $('#metapane');
   mp.addEventListener('click', e => {
@@ -316,11 +373,14 @@ function wire() {
   $('#f-kw').onclick = e => { if (e.target.tagName === 'BUTTON') { S.filter.keyword = ''; syncFilterUI(); refreshList(false); renderLeft(); } };
   // cmdbar
   $('#m-lib').onclick = () => setModule('library'); $('#m-dev').onclick = () => setModule('develop');
-  $('#v-grid').onclick = () => setView('grid'); $('#v-loupe').onclick = () => setView('loupe');
+  $('#v-grid').onclick = () => setView('grid'); $('#v-loupe').onclick = () => setView('loupe'); $('#v-dates').onclick = () => setView('dates');
+  Dates.wire();
+  $('#f-date').onclick = e => { if (e.target.tagName === 'BUTTON') setSource({ type: 'all' }); else setView('dates'); };
+  Cat.thumbPriority = id => GV.rendered.has(id) || FS.rendered.has(id);
   $('#b-import').onclick = importDialog; $('#b-export').onclick = () => IO.exportDialog();
   $('#sort').onchange = e => { S.sort.key = e.target.value; refreshList(false); };
   $('#sortdir').onclick = () => { S.sort.dir *= -1; $('#sortdir').textContent = S.sort.dir > 0 ? '↑' : '↓'; refreshList(false); };
-  $('#tsize').oninput = e => { S.tsize = +e.target.value; grid.style.setProperty('--ts', S.tsize + 'px'); };
+  $('#tsize').oninput = e => { S.tsize = +e.target.value; grid.style.setProperty('--ts', S.tsize + 'px'); const i = S.list.indexOf(S.active); renderGrid(); if (i >= 0) scrollToActive(); };
   $('#e-import').onclick = importDialog; $('#e-sample').onclick = () => Sample.open(); $('#e-open').onclick = () => IO.openBackup();
   // arrows (own handler so focused sliders keep their arrow keys)
   document.addEventListener('keydown', e => {
@@ -343,6 +403,7 @@ function wire() {
 function syncFilterUI() {
   const f = S.filter; $('#f-text').value = f.text; $('#f-rating').value = f.rating; $('#f-flag').value = f.flag;
   $$('#f-labels .lsw').forEach(x => x.classList.toggle('on', f.labels.has(x.dataset.l)));
+  const dc = $('#f-date'), ds = S.source.type === 'date' ? S.source : null; dc.hidden = !ds; dc.innerHTML = ds ? `Date: ${esc(ds.label)}<button title="Show all dates">×</button>` : '';
   const kc = $('#f-kw'); kc.hidden = !f.keyword; kc.innerHTML = f.keyword ? `Keyword: ${esc(f.keyword)}<button title="Clear keyword filter">×</button>` : '';
 }
 
@@ -390,6 +451,7 @@ async function handleFiles(files) {
 async function doUndo() { if (S.module === 'develop' && Dev.undo()) return; if (!await Cat.undo()) Aero.toast('Nothing to undo'); }
 async function doRedo() { if (S.module === 'develop' && Dev.redo()) return; if (!await Cat.redo()) Aero.toast('Nothing to redo'); }
 async function removeSelected() {
+  if (S.module === 'develop' && Local.deleteSelected()) return;
   const ids = selectedIds(); if (!ids.length) return;
   if (S.source.type === 'coll') { Cat.removeFromCollection(S.source.id, ids); Aero.toast('Removed from collection (photos stay in the catalog)'); return; }
   if (!await Aero.confirm('Remove from Catalog', `Remove ${ids.length} photo${ids.length > 1 ? 's' : ''} from the catalog? Edits, ratings and the stored original${ids.length > 1 ? 's' : ''} are deleted from Darkroom (files on your disk are not touched). You can undo this until you close the app.`, 'Remove')) return;
@@ -405,10 +467,11 @@ async function rotate(d) {
 
 /* ---------- dialogs ---------- */
 function shortcutsDialog() {
-  const rows = [['Library', ''], ['G / E / D', 'Grid · Loupe · Develop'], ['← → ↑ ↓', 'Previous / next photo (Shift extends selection)'], ['0 – 5', 'Star rating'], ['P / X / U', 'Pick · Reject · Unflag'],
-    ['6 7 8 9', 'Red · Yellow · Green · Blue label'], ['Ctrl+K', 'Add keywords'], ["Ctrl+'", 'Create virtual copy'], ['Ctrl+[ / Ctrl+]', 'Rotate left / right'], ['Delete', 'Remove from catalog (or from the open collection)'],
+  const rows = [['Library', ''], ['G / E / D', 'Grid · Loupe · Develop'], ['Shift+D', 'Dates (calendar) view'], ['Ctrl+Alt+N', 'New smart collection'], ['← → ↑ ↓', 'Previous / next photo (Shift extends selection)'], ['0 – 5', 'Star rating'], ['P / X / U', 'Pick · Reject · Unflag'],
+    ['6 7 8 9', 'Red · Yellow · Green · Blue label'], ['Ctrl+K', 'Add keywords'], ['Ctrl+H / Ctrl+M', 'Photo Merge: HDR / Panorama (select 2+ photos)'], ["Ctrl+'", 'Create virtual copy'], ['Ctrl+[ / Ctrl+]', 'Rotate left / right'], ['Delete', 'Remove from catalog (or from the open collection)'],
     ['Ctrl+A / Ctrl+D', 'Select all / none'], ['Develop', ''], ['R', 'Crop & straighten (Ctrl-drag a line to level)'], ['W', 'White balance selector'], ['V', 'Convert to black & white'], ['\\', 'Before / after split'], ['Y', 'Before / after side by side'],
-    ['Ctrl+U', 'Auto tone'], ['Ctrl+Shift+C / V', 'Copy / paste settings'], ['Ctrl+Alt+S', 'Sync settings to selected'], ['Ctrl+Shift+R', 'Reset all settings'], ['Ctrl+Z / Ctrl+Y', 'Undo / redo (photo edit history in Develop)'],
+    ['Q', 'Spot removal (click a spot or paint a stroke over a scratch; drag the shapes; Delete removes)'], ['Ctrl+Shift+U', 'Upright: Auto'], ['M', 'Masking tool'], ['Shift+M / Shift+R / K', 'New linear / radial / brush mask'], ['O', 'Show mask overlay'],
+    ['[ / ]', 'Brush or spot size'], ['Alt + paint', 'Erase from a brush mask'], ['Ctrl+G', 'Transform grid overlay'], ['Ctrl+U', 'Auto tone'], ['Ctrl+Shift+C / V', 'Copy / paste settings'], ['Ctrl+Alt+S', 'Sync settings to selected'], ['Ctrl+Shift+R', 'Reset all settings'], ['Ctrl+Z / Ctrl+Y', 'Undo / redo (photo edit history in Develop)'],
     ['Ctrl+0 / Ctrl+1', 'Fit / 100%'], ['Ctrl+= / Ctrl+-', 'Zoom in / out'], ['Double-click a slider label', 'Reset that slider'], ['File', ''], ['Ctrl+Shift+I', 'Import photos'], ['Ctrl+Shift+E', 'Export'], ['Ctrl+S / Ctrl+O', 'Save / open catalog backup (.ldarkroom)']];
   Aero.dialog({ title: 'Keyboard Shortcuts', noCancel: true, width: 520, html: `<table style="width:100%;border-collapse:collapse">${rows.map(([k, v]) => v ? `<tr><td style="padding:2px 12px 2px 0;white-space:nowrap" class="mono">${esc(k)}</td><td>${esc(v)}</td></tr>` : `<tr><td colspan="2" style="padding:8px 0 2px;color:var(--navy);font-weight:600">${esc(k)}</td></tr>`).join('')}</table>` });
 }
@@ -441,13 +504,21 @@ function buildMenus() {
       '#Flag', ['Pick', 'P', () => setFlag(1)], ['Reject', 'X', () => setFlag(-1)], ['Unflag', 'U', () => setFlag(0)],
       '#Color label', ...LABEL_KEYS.map((l, i) => [l[0].toUpperCase() + l.slice(1), i < 4 ? String(i + 6) : '', () => setLabel(l)]), ['None', '', () => setLabel('')], '-',
       ['Add Keywords…', 'Ctrl+K', promptKeywords], ["Create Virtual Copy", "Ctrl+'", async () => { const m = await Cat.virtualCopy(selectedIds()); if (m.length) { S.sel = new Set(m); S.active = m[0]; refreshList(); } }],
-      ['Add to Collection…', 'Ctrl+B', () => addSelToCollection()], ['New Collection from Selection…', '', newCollectionFromSel], '-',
-      ['Rotate Left', 'Ctrl+[', () => rotate(-1)], ['Rotate Right', 'Ctrl+]', () => rotate(1)]
+      ['Add to Collection…', 'Ctrl+B', () => addSelToCollection()], ['New Collection from Selection…', '', newCollectionFromSel],
+      ['New Smart Collection…', 'Ctrl+Alt+N', () => Smart.dialog()], { label: 'Edit Smart Collection…', fn: editSmartCollection, disabled: () => !(S.source.type === 'coll' && isSmart(S.source.id)) }, '-',
+      ['Rotate Left', 'Ctrl+[', () => rotate(-1)], ['Rotate Right', 'Ctrl+]', () => rotate(1)], '-',
+      '#Photo Merge', { label: 'HDR…', key: 'Ctrl+H', fn: () => Merge.hdrDialog(), disabled: () => selectedIds().length < 2 }, { label: 'Panorama…', key: 'Ctrl+M', fn: () => Merge.panoDialog(), disabled: () => selectedIds().length < 2 }
     ],
     Develop: [
       ['Open in Develop', 'D', () => setModule('develop')], '-',
       ['Auto Tone', 'Ctrl+U', () => Dev.autoTone()], ['Convert to Black & White', 'V', () => Dev.toggleBW()],
       ['Crop & Straighten', 'R', () => Dev.toggleCrop()], ['White Balance Selector', 'W', () => Dev.toggleWBPick()], '-',
+      { label: 'Spot Removal', key: 'Q', fn: () => Local.setTool('spot'), checked: () => Local.tool === 'spot' },
+      { label: 'Visualize Spots', fn: () => Local.toggleVis(), checked: () => Local.vis },
+      { label: 'Masking', key: 'M', fn: () => Local.setTool('mask'), checked: () => Local.tool === 'mask' },
+      ['New Linear Gradient Mask', 'Shift+M', () => Local.addMask('linear')], ['New Radial Gradient Mask', 'Shift+R', () => Local.addMask('radial')], ['New Brush Mask', 'K', () => Local.addMask('brush')],
+      { label: 'Show Mask Overlay', key: 'O', fn: () => Local.toggleOverlay(), checked: () => Local.overlay }, '-',
+      '#Upright (Transform)', ['Upright: Level', '', () => Dev.autoLevel()], ['Upright: Vertical', '', () => Dev.autoUpright('vertical')], ['Upright: Auto', 'Ctrl+Shift+U', () => Dev.autoUpright('auto')], ['Upright: Full', '', () => Dev.autoUpright('full')], '-',
       ['Copy Settings…', 'Ctrl+Shift+C', () => Dev.copySettings()], ['Paste Settings', 'Ctrl+Shift+V', () => Dev.pasteSettings()], ['Sync Settings to Selected…', 'Ctrl+Alt+S', () => Dev.syncSettings()],
       ['Reset All Settings', 'Ctrl+Shift+R', () => Dev.resetAll()], '-', ['New Preset from Settings…', 'Ctrl+Shift+N', () => Dev.newPreset()], '-',
       { label: 'Before / After: Off', fn: () => Dev.setBA('off'), checked: () => Dev.ba === 'off' },
@@ -457,11 +528,13 @@ function buildMenus() {
     View: [
       { label: 'Library Grid', key: 'G', fn: () => setView('grid'), checked: () => S.module === 'library' && S.view === 'grid' },
       { label: 'Library Loupe', key: 'E', fn: () => setView('loupe'), checked: () => S.module === 'library' && S.view === 'loupe' },
+      { label: 'Library Dates (Calendar)', key: 'Shift+D', fn: () => setView('dates'), checked: () => S.module === 'library' && S.view === 'dates' },
       { label: 'Develop', fn: () => setModule('develop'), checked: dev }, '-',
       ['Zoom In', 'Ctrl+=', () => Dev.zoomStep(1)], ['Zoom Out', 'Ctrl+-', () => Dev.zoomStep(-1)], ['Fit in Window', 'Ctrl+0', () => Dev.setZoom('fit')], ['Actual Pixels (100%)', 'Ctrl+1', () => Dev.setZoom(1)], '-',
       ['Larger Thumbnails', '=', () => { const t = $('#tsize'); t.value = +t.value + 30; t.oninput({ target: t }); }], ['Smaller Thumbnails', '-', () => { const t = $('#tsize'); t.value = +t.value - 30; t.oninput({ target: t }); }],
       { label: 'Show Filmstrip', key: 'F6', fn: () => { S.filmstrip = !S.filmstrip; applyView(); }, checked: () => S.filmstrip },
-      { label: 'Show Info Overlay', key: 'I', fn: () => { Dev.showInfo = !Dev.showInfo; Dev.requestRender(); }, checked: () => Dev.showInfo }
+      { label: 'Show Info Overlay', key: 'I', fn: () => { Dev.showInfo = !Dev.showInfo; Dev.requestRender(); }, checked: () => Dev.showInfo },
+      { label: 'Show Transform Grid', key: 'Ctrl+G', fn: () => { if (S.module !== 'develop') setModule('develop'); Dev.gridOn = !Dev.gridOn; }, checked: () => Dev.gridOn }
     ],
     Help: [['Keyboard Shortcuts', 'F1', shortcutsDialog], ['About Lumen Darkroom', '', aboutDialog]]
   };
@@ -476,20 +549,26 @@ async function boot() {
   });
   wire(); syncFilterUI();
   if (!Engine.init()) Aero.alert('WebGL2 unavailable', 'Lumen Darkroom needs WebGL2 for its develop engine. Previews and editing will not work in this browser.');
-  Dev.init();
+  Dev.init(); Local.init();
   Cat.on((what, data) => {
-    if (what === 'thumb') { const u = Cat.thumbURL.get(data); $$(`[data-id="${data}"] img`).forEach(i => i.src = u); const c = $(`#grid .cell[data-id="${data}"] .ph`); if (c && !c.querySelector('img')) updateCell(data); const f = $(`#filmstrip .fs[data-id="${data}"]`); if (f && !f.querySelector('img')) renderFilmstrip(); if (data === S.active) { drawLibHist(activePhoto()); Dev.thumbChanged(); } }
-    else if (what === 'meta') { const needList = S.filter.rating || S.filter.flag !== 'all' || S.filter.labels.size || S.filter.keyword || S.source.type === 'picks' || S.source.type === 'rejected' || S.sort.key === 'rating' || S.sort.key === 'label';
+    if (what === 'thumb') {
+      const u = Cat.thumbURL.get(data), c = GV.rendered.get(data), f = FS.rendered.get(data);
+      if (c) { const im = c.querySelector('.ph img'); if (im) im.src = u; else updateCell(data); }
+      if (f) { const im = f.querySelector('img'); if (im) im.src = u; else f.insertAdjacentHTML('afterbegin', `<img src="${u}" alt="" draggable="false">`); }
+      if (data === S.active) { drawLibHist(activePhoto()); Dev.thumbChanged(); }
+    }
+    else if (what === 'meta') { const needList = S.source.type === 'coll' && isSmart(S.source.id) || S.filter.rating || S.filter.flag !== 'all' || S.filter.labels.size || S.filter.keyword || S.source.type === 'picks' || S.source.type === 'rejected' || S.sort.key === 'rating' || S.sort.key === 'label';
       if (needList) refreshList(); else { data.forEach(updateCell); renderFilmstrip(); renderRight(); } renderLeft(); }
     else if (what === 'settings') { if (data === S.active) Dev.settingsChanged(); const c = $(`#grid .cell[data-id="${data}"] .badge`); if (c) updateCell(data); }
     else if (what === 'history') { if (data === S.active) Dev.renderHistory(); }
-    else if (what === 'import' || what === 'remove' || what === 'load') { refreshList(); renderLeft(); }
+    else if (what === 'import' || what === 'remove' || what === 'load') { refreshList(); renderLeft(); if (S.view === 'dates') Dates.render(); }
     else if (what === 'collections') { renderLeft(); if (S.source.type === 'coll') { if (!Cat.collections.some(c => c.id === S.source.id)) S.source = { type: 'all' }; refreshList(); } }
     else if (what === 'presets') Dev.renderPresets();
   });
   try { navigator.storage?.persist?.(); } catch (e) { }
   Aero.busy('Opening catalog…');
   try { await Cat.load(); } catch (e) { console.error(e); Aero.toast('Could not open the catalog database: ' + e.message); }
+  await IO.loadExportPresets();
   Aero.busy();
   const last = [...Cat.photos.values()].sort((a, b) => b.seq - a.seq)[0]; if (last) S.lastImport = last.importId;
   refreshList(false); renderLeft(); setModule('library');

@@ -241,10 +241,16 @@ export function interpret(ctx, src, resources, { paths: wantPaths = false } = {}
   const fontRes = resources?.lookup(PDFName.of('Font'));
   const csRes = resources?.lookup(PDFName.of('ColorSpace'));
   const fontCache = new Map();
+  const byRef = new Map();
   const getFont = name => {
     if (fontCache.has(name)) return fontCache.get(name);
     let fi = null;
-    try { const d = fontRes instanceof PDFDict ? fontRes.lookup(PDFName.of(name)) : null; if (d instanceof PDFDict) fi = fontInfo(ctx, d); } catch (e) { fi = null; }
+    try {
+      const raw = fontRes instanceof PDFDict ? fontRes.get(PDFName.of(name)) : null;
+      const key = raw instanceof PDFRef ? raw.tag : null;
+      if (key && byRef.has(key)) fi = byRef.get(key);
+      else { const d = fontRes instanceof PDFDict ? fontRes.lookup(PDFName.of(name)) : null; if (d instanceof PDFDict) { fi = fontInfo(ctx, d); fi.key = key || ('n:' + name); if (key) byRef.set(key, fi); } }
+    } catch (e) { fi = null; }
     fontCache.set(name, fi); return fi;
   };
   const csFamily = name => {
@@ -252,13 +258,13 @@ export function interpret(ctx, src, resources, { paths: wantPaths = false } = {}
     try { const v = csRes instanceof PDFDict ? csRes.lookup(PDFName.of(name)) : null; if (v instanceof PDFArray) { const f = v.get(0)?.decodeText?.(); if (f === 'ICCBased') { const s = ctx.lookup(v.get(1)); const N = num(s?.dict?.lookup(PDFName.of('N'))); return N === 4 ? 'DeviceCMYK' : N === 1 ? 'DeviceGray' : 'DeviceRGB'; } return f || 'DeviceRGB'; } if (v instanceof PDFName) return v.decodeText(); } catch (e) { /* ignore */ }
     return 'DeviceRGB';
   };
-  let gs = { ctm: ID.slice(), fillCS: 'DeviceGray', fill: { op: 'g', v: [0] }, strokeCS: 'DeviceGray', stroke: { op: 'g', v: [0] }, Tc: 0, Tw: 0, Th: 1, TL: 0, font: null, size: 0, Tr: 0, Ts: 0, lw: 1, clip: false };
+  let gs = { ctm: ID.slice(), fillCS: 'DeviceGray', fill: { op: 'g', v: [0] }, strokeCS: 'DeviceGray', stroke: { op: 'g', v: [0] }, Tc: 0, Tw: 0, Th: 1, TL: 0, font: null, size: 0, Tr: 0, Ts: 0, lw: 1, clip: false, clipBox: null };
   const stack = []; let tm = ID.slice(), tlm = ID.slice(), bt = -1, btCount = 0;
-  const shows = [], paths = []; let path = [], cur = null, start = null;
+  const shows = [], paths = [], xobjs = []; let path = [], cur = null, start = null;
   const newLine = (tx, ty) => { tlm = mul([1, 0, 0, 1, tx, ty], tlm); tm = tlm.slice(); };
   const showText = (op, items) => {
     const fi = gs.font ? getFont(gs.font) : null;
-    const rec = { op: op.op, start: op.start, end: op.end, fontName: gs.font, fi, size: gs.size, tm: tm.slice(), ctm: gs.ctm.slice(), Tc: gs.Tc, Tw: gs.Tw, Th: gs.Th, Ts: gs.Ts, Tr: gs.Tr, fill: gs.fill, bt, glyphs: [], text: '', adv: 0, unknown: 0 };
+    const rec = { op: op.op, start: op.start, end: op.end, fontName: gs.font, fontKey: fi ? fi.key : null, fi, size: gs.size, tm: tm.slice(), ctm: gs.ctm.slice(), Tc: gs.Tc, Tw: gs.Tw, Th: gs.Th, Ts: gs.Ts, Tr: gs.Tr, fill: gs.fill, stroke: gs.stroke, clipBox: gs.clipBox, bt, glyphs: [], text: '', adv: 0, unknown: 0 };
     let x = 0;
     for (const it of items) {
       if (typeof it === 'number') { x -= it / 1000 * gs.size * gs.Th; continue; }
@@ -284,8 +290,10 @@ export function interpret(ctx, src, resources, { paths: wantPaths = false } = {}
     shows.push(rec);
   };
   const tp = (x, y) => apply(gs.ctm, x, y);
+  let pathStart = -1, pathClip = false;
   for (const op of ops) {
     const a = op.args;
+    if (wantPaths && pathStart < 0 && /^(m|re)$/.test(op.op)) pathStart = op.start;
     switch (op.op) {
       case 'q': stack.push({ ...gs, ctm: gs.ctm.slice() }); break;
       case 'Q': if (stack.length) gs = stack.pop(); break;
@@ -327,13 +335,18 @@ export function interpret(ctx, src, resources, { paths: wantPaths = false } = {}
       case 'S': case 's': case 'f': case 'F': case 'f*': case 'B': case 'B*': case 'b': case 'b*': case 'n':
         if (wantPaths && path.length && op.op !== 'n') {
           const sc = Math.sqrt(Math.abs(gs.ctm[0] * gs.ctm[3] - gs.ctm[1] * gs.ctm[2])) || 1;
-          paths.push({ segs: path, paint: op.op, lw: gs.lw * sc, stroke: gs.stroke, fill: gs.fill });
+          paths.push({ segs: path, paint: op.op, lw: gs.lw * sc, stroke: gs.stroke, fill: gs.fill, start: pathStart, end: op.end, clip: pathClip, inText: bt >= 0, ctm: gs.ctm.slice(), clipBox: gs.clipBox });
         }
-        path = []; cur = null; break;
-      case 'W': case 'W*': if (stack.length === 0) gs.clip = true; break;
+        if (wantPaths && pathClip && path.length) { // the clip applies after this paint operator
+          const pts = path.flatMap(sg => sg.t === 're' ? sg.pts : [sg.p, ...(sg.a ? [sg.a] : [])]).filter(Boolean);
+          if (pts.length) { const b = [Math.min(...pts.map(q => q[0])), Math.min(...pts.map(q => q[1])), Math.max(...pts.map(q => q[0])), Math.max(...pts.map(q => q[1]))]; const c = gs.clipBox; gs.clipBox = c ? [Math.max(c[0], b[0]), Math.max(c[1], b[1]), Math.min(c[2], b[2]), Math.min(c[3], b[3])] : b; }
+        }
+        path = []; cur = null; pathStart = -1; pathClip = false; break;
+      case 'W': case 'W*': pathClip = true; if (stack.length === 0) gs.clip = true; break;
+      case 'Do': case 'BI': { const q = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y]) => tp(x, y)); xobjs.push({ op: op.op, start: op.start, end: op.end, ctm: gs.ctm.slice(), inText: bt >= 0, clipBox: gs.clipBox, name: op.args[0] instanceof Name ? op.args[0].n : null, bbox: [Math.min(...q.map(p => p[0])), Math.min(...q.map(p => p[1])), Math.max(...q.map(p => p[0])), Math.max(...q.map(p => p[1]))] }); break; }
     }
   }
-  return { ops, shows, paths, endDepth: stack.length, endCtm: gs.ctm, endClip: gs.clip || stack.some(s => s.clip) };
+  return { ops, shows, paths, xobjs, endDepth: stack.length, endCtm: gs.ctm, endClip: gs.clip || stack.some(s => s.clip) };
 }
 
 /* ---------- page helpers ---------- */

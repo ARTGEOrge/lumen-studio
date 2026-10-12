@@ -33,7 +33,7 @@
         </div>
         <div class="aero-stage" id="stage">
           <canvas id="glc"></canvas><canvas id="ovl"></canvas>
-          <div id="refpanel" class="refpanel" hidden><div class="rp-title"><span>Reference</span><button class="rp-x" title="Close">×</button></div><div class="rp-body"><canvas id="refcv"></canvas><div class="rp-empty">Drop an image here or use File › Place Reference Image…</div></div><div class="rp-foot"><button class="aero-btn small" id="rp-open">Open…</button><button class="aero-btn small" id="rp-fit">Fit</button><span class="dim">Click image to pick color</span></div></div>
+          <div id="refpanel" class="refpanel" hidden><div class="rp-title"><span>Reference</span><button class="rp-x" title="Close">×</button></div><div class="rp-body"><canvas id="refcv"></canvas><div class="rp-empty">Drop an image here or use File › Place Reference Image…</div></div><div class="rp-foot"><button class="aero-btn small" id="rp-open">Open…</button><button class="aero-btn small" id="rp-fit">Fit</button><button class="aero-btn small" id="rp-pal-btn" title="Extract a color palette from the reference image">Palette</button><span class="dim">Click image to pick color</span></div></div>
           <div class="aero-pill zenpill" id="zenpill" hidden><span>Zen mode</span><button class="aero-btn small" id="zenexit">Exit (Tab)</button></div>
           <div class="aero-pill tfpill" id="tfpill" hidden></div>
         </div>
@@ -49,6 +49,7 @@
           <div id="histpane" class="tabpane" hidden><div class="aero-list" id="history"></div></div>
         </div>
       </div>
+      <div class="animbar" id="animbar" hidden></div>
       <div class="aero-status"><span id="st-zoom">100%</span><span id="st-size"></span><span id="st-pos"></span><span id="st-rec"></span><span id="st-msg">Ready</span></div>
     </div>
   </div>
@@ -69,6 +70,13 @@
 <script src="js/color.js"></script>
 <script src="js/tools.js"></script>
 <script src="js/panels.js"></script>
+<script src="js/masks.js"></script>
+<script src="js/adjust.js"></script>
+<script src="js/text.js"></script>
+<script src="js/abr.js"></script>
+<script src="js/palette.js"></script>
+<script src="js/pressure.js"></script>
+<script src="js/anim.js"></script>
 <script src="js/io.js"></script>
 <script src="js/timelapse.js"></script>
 <script src="js/sample.js"></script>

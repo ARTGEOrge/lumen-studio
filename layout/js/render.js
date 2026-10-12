@@ -1,6 +1,7 @@
 'use strict';
 /* Lumen Layout — canvas renderer for page content (screen, thumbnails, PNG/JPEG export, print).
-   Coordinates: the caller sets up ctx so that 1 unit = 1 pt with the page's top-left at the origin. */
+   Coordinates: the caller sets up ctx so that 1 unit = 1 pt with the page's top-left at the origin.
+   Colors go through Color.css so swatches, tints, CMYK preview and separation plates all apply. */
 (function () {
   const KAPPA = 0.5522847498;
   function shapePath(ctx, it) {
@@ -17,21 +18,59 @@
   }
   let lastFont = '';
   function setFont(ctx, st) { const f = Fonts.css(st.fk, st.size); if (ctx.font !== f || lastFont !== f) { ctx.font = f; lastFont = f; } }
+  // glyph outlines for runs using OpenType features canvas text cannot express (or ligatures switched off)
+  function drawGlyphRun(ctx, r, y) {
+    const st = r.st, synth = Fonts.parse(st.fk).synthItalic;
+    for (let k = 0; k < r.px.length; k++) {
+      const gs = r.g && r.g[k];
+      if (!gs) { setFont(ctx, st); ctx.fillText(r.parts[k], r.px[k], y); continue; }
+      for (const g of gs) {
+        const gp = Fonts.glyphPath(st.fk, g.id); if (!gp) continue;
+        const s = st.size / gp.upem;
+        ctx.save(); ctx.translate(r.px[k] + g.x * st.size / 100, y - g.y * st.size / 100);
+        if (synth) ctx.transform(1, 0, -0.21, 1, 0, 0);
+        ctx.scale(s, -s); ctx.fill(gp.path); ctx.restore();
+      }
+    }
+  }
 
-  function drawLines(ctx, lines, opt = {}) {
+  function drawLines(ctx, lines, env = {}) {
     lastFont = '';
     try { ctx.fontKerning = 'none'; } catch (e) { }
     ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
     for (const ln of lines) {
-      if (ln.drop) { setFont(ctx, ln.drop.st); ctx.fillStyle = ln.drop.st.color; ctx.fillText(ln.drop.text, ln.drop.x, ln.drop.y); }
+      if (ln.block) { drawBlock(ctx, ln.block, env); continue; }
+      if (ln.drop) { setFont(ctx, ln.drop.st); ctx.fillStyle = Color.css(ln.drop.st.color); ctx.fillText(ln.drop.text, ln.drop.x, ln.drop.y); }
       for (const r of ln.runs) {
-        const st = r.st; setFont(ctx, st); ctx.fillStyle = st.color;
+        const st = r.st; setFont(ctx, st); ctx.fillStyle = Color.css(st.color);
         const y = ln.y - st.shift;
-        if (st.track && r.parts) for (let k = 0; k < r.parts.length; k++) ctx.fillText(r.parts[k], r.px[k], y);
+        if (r.path && !r.marker && !r.leader && !r.hy) drawGlyphRun(ctx, r, y);
+        else if (st.track && r.parts && r.parts.length > 1) for (let k = 0; k < r.parts.length; k++) ctx.fillText(r.parts[k], r.px[k], y);
         else ctx.fillText(r.text, r.x, y);
-        if (st.under || st.strike) {
-          ctx.fillRect(r.x, st.under ? y + st.size * 0.12 : y - st.size * 0.28, r.end - r.x, Math.max(0.4, st.size * 0.06));
-        }
+        if ((st.under || st.strike) && !r.marker && !r.leader) ctx.fillRect(r.x, st.under ? y + st.size * 0.12 : y - st.size * 0.28, r.end - r.x, Math.max(0.4, st.size * 0.06));
+      }
+      if (ln.objs) for (const o of ln.objs) drawGraphic(ctx, o.o, o.x, ln.y - o.o.item.h - (o.o.shift || 0), env);
+    }
+  }
+  function drawGraphic(ctx, o, x, y, env) {
+    const it = { ...o.item, x, y, rot: 0, opacity: 1, id: 'inline' };
+    drawItem(ctx, it, { ...env, engine: null });
+  }
+  function drawBlock(ctx, b, env) {
+    if (b.kind === 'graphic') { drawGraphic(ctx, b.obj, b.x, b.y, env); return; }
+    ctx.save(); ctx.translate(b.x, b.y); drawTableRows(ctx, b.obj, b.rows, b.rh); ctx.restore();
+  }
+  function drawNotes(ctx, blocks) {
+    for (const nb of blocks || []) {
+      const st = nb.st; if (!st) continue;
+      ctx.fillStyle = Color.css(st.color); ctx.fillRect(nb.x, nb.y + 2, Math.min(72, nb.w / 3), 0.5);
+      let y = nb.y + Layout.FN_SEP;
+      setFont(ctx, st);
+      for (const n of nb.notes) {
+        const asc = st.m.asc * st.size;
+        if (!n.cont) ctx.fillText(String(n.num), nb.x, y + asc);
+        n.lines.forEach((l, k) => ctx.fillText(l.text, nb.x + n.ind, y + asc + k * st.lead));
+        y += n.h;
       }
     }
   }
@@ -47,55 +86,31 @@
         else if (c === '\n') ctx.fillText('¶', x + 1, ln.y);
         else if (c === '\t') ctx.fillText('»', x + 1, ln.y);
         else if (c === '\u2028') ctx.fillText('¬', x + 1, ln.y);
+        else if (c === '￼') ctx.fillText('⚓', x - 4, ln.y + 8);
       }
       if (ln.b === text.length && ln.a <= text.length) { ctx.font = '9px "Segoe UI",sans-serif'; ctx.fillText('#', (ln.xs[ln.xs.length - 1] || ln.L) + 1, ln.y); }
     }
     ctx.restore();
   }
 
-  function drawTable(ctx, it) {
-    const ncol = it.colW.length, nrow = it.rowH.length;
-    let y = 0;
-    const fkB = Fonts.resolve(it.tfont, 700, false), fk = Fonts.resolve(it.tfont, 400, false);
-    for (let r = 0; r < nrow; r++) {
-      let x = 0; const rh = it.rowH[r];
-      for (let c = 0; c < ncol; c++) {
-        const cw = it.colW[c], cell = it.cells[r][c] || { t: '' };
-        const head = r < (it.header || 0);
-        const fill = cell.fill || (head ? it.hfill : (it.zebra && (r - (it.header || 0)) % 2 === 1 ? it.zebra : null));
-        if (fill) { ctx.fillStyle = fill; ctx.fillRect(x, y, cw, rh); }
-        const lines = tableCellLines(it, r, c);
-        ctx.fillStyle = cell.color || (head ? it.hcolor : it.tcolor);
-        ctx.font = Fonts.css(head || cell.bold ? fkB : fk, it.tsize);
-        for (const l of lines) ctx.fillText(l.text, x + l.x, y + l.y);
-        x += cw;
-      }
-      y += rh;
-    }
-    if (it.bw > 0) {
-      ctx.strokeStyle = it.bcolor; ctx.lineWidth = it.bw; ctx.beginPath();
-      let yy = 0; for (let r = 0; r <= nrow; r++) { ctx.moveTo(0, yy); ctx.lineTo(it.w, yy); yy += it.rowH[r] || 0; }
-      let xx = 0; for (let c = 0; c <= ncol; c++) { ctx.moveTo(xx, 0); ctx.lineTo(xx, it.h); xx += it.colW[c] || 0; }
-      ctx.stroke();
-    }
+  function drawTableRows(ctx, t, rows, rhs) {
+    const d = Tables.display(t, rows, rhs);
+    for (const f of d.fills) { ctx.fillStyle = Color.css(f.color); ctx.fillRect(f.x, f.y, f.w, f.h); }
+    ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+    for (const x of d.texts) { ctx.fillStyle = Color.css(x.color); ctx.font = Fonts.css(x.fk, x.size); ctx.fillText(x.text, x.x, x.y); }
+    lastFont = '';
+    if (t.bw > 0 && d.borders.length) { ctx.strokeStyle = Color.css(t.bcolor); ctx.lineWidth = t.bw; ctx.beginPath(); for (const [x0, y0, x1, y1] of d.borders) { ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); } ctx.stroke(); }
   }
+  function drawTable(ctx, it) { drawTableRows(ctx, it, it.rowH.map((_, r) => r), it.rowH); }
   // positioned lines inside a table cell (shared with PDF)
-  function tableCellLines(it, r, c) {
-    const cell = it.cells[r][c] || { t: '' }, head = r < (it.header || 0);
-    const fk = Fonts.resolve(it.tfont, head || cell.bold ? 700 : 400, false);
-    const pad = it.pad ?? 4, cw = it.colW[c], rh = it.rowH[r];
-    const ls = Layout.simpleLines(cell.t || '', fk, it.tsize, cw - pad * 2);
-    const lh = it.tsize * 1.25, m = Fonts.metrics(fk);
-    const total = ls.length * lh;
-    const y0 = (rh - total) / 2 + lh / 2 + m.cap * it.tsize / 2;
-    const align = cell.align || (c === 0 ? 'left' : it.calign?.[c] || 'left');
-    return ls.map((l, k) => ({ text: l.text, fk, x: align === 'right' ? cw - pad - l.w : align === 'center' ? (cw - l.w) / 2 : pad, y: y0 + k * lh }));
-  }
+  function tableCellLines(it, r, c) { return Tables.cellText(it, r, c, it.colW[c], it.rowH[r]); }
 
   // linear gradient fill: it.grad = {angle (deg, 0 = left→right, 90 = top→bottom), c0, o0, c1, o1}
   function gradPts(it) { const a = (it.grad.angle || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), L = (Math.abs(it.w * c) + Math.abs(it.h * s)) / 2; return [it.w / 2 - c * L, it.h / 2 - s * L, it.w / 2 + c * L, it.h / 2 + s * L]; }
-  function rgba(hex, o) { const m = /^#?([0-9a-f]{6})$/i.exec(hex || '') ; const n = m ? parseInt(m[1], 16) : 0; return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${o ?? 1})`; }
+  const rgba = (ref, o) => Color.rgba(ref, o);
   function gradStyle(ctx, it) { const [x0, y0, x1, y1] = gradPts(it), g = ctx.createLinearGradient(x0, y0, x1, y1), G = it.grad; g.addColorStop(0, rgba(G.c0, G.o0)); g.addColorStop(1, rgba(G.c1, G.o1)); return g; }
+  // overprinted paint leaves a separation plate untouched where it carries none of that ink (PDF /OPM 1 semantics)
+  function opSkip(op, refs) { if (!op || !Color.plate) return false; return refs.every(r => Color.plateAmount(Color.parse(r), Color.plate) <= 0); }
   // env: {engine, images (id -> {el,w,h}), label, hidden (show hidden chars), skipText}
   function drawItem(ctx, it, env) {
     if (it.hidden) return;
@@ -104,22 +119,27 @@
     ctx.save();
     if (it.opacity != null && it.opacity < 1) ctx.globalAlpha *= it.opacity;
     applyTransform(ctx, it);
-    if (it.type !== 'line' && (it.grad || it.fill)) { shapePath(ctx, it); ctx.fillStyle = it.grad ? gradStyle(ctx, it) : it.fill; ctx.fill(); }
+    if (it.type !== 'line' && (it.grad || it.fill) && !opSkip(it.opFill, it.grad ? [it.grad.c0, it.grad.c1] : [it.fill])) {
+      const op = it.opFill && env.opPreview && !Color.plate; if (op) { ctx.save(); ctx.globalCompositeOperation = 'multiply'; }
+      shapePath(ctx, it); ctx.fillStyle = it.grad ? gradStyle(ctx, it) : Color.css(it.fill); ctx.fill();
+      if (op) ctx.restore();
+    }
     if (it.type === 'image' && it.img) {
-      const im = env.images[it.img];
+      const im = env.images && env.images[it.img];
       if (im && im.el && im.el.complete && im.el.naturalWidth) {
         ctx.save(); shapePath(ctx, it); ctx.clip();
-        ctx.drawImage(im.el, it.cx, it.cy, im.w * it.cs, im.h * it.cs);
+        ctx.drawImage(Color.plate ? Color.plateImage(im, Color.plate) : im.el, it.cx, it.cy, im.w * it.cs, im.h * it.cs);
         ctx.restore();
       }
     }
     if (it.type === 'table') drawTable(ctx, it);
     if (it.type === 'text' && env.engine) {
       const L = env.engine.frameLayout(it, env.label);
-      if (L) { drawLines(ctx, L.lines); if (env.hidden) drawHidden(ctx, L.lines, L.story.text); }
+      if (L) { drawLines(ctx, L.lines, env); drawNotes(ctx, L.notes); if (env.hidden) drawHidden(ctx, L.lines, L.story.text); }
     }
-    if (it.stroke && it.sw > 0) {
-      shapePath(ctx, it); ctx.strokeStyle = it.stroke; ctx.lineWidth = it.sw; ctx.lineJoin = 'miter';
+    if (it.stroke && it.sw > 0 && !opSkip(it.opStroke, [it.stroke])) {
+      const op = it.opStroke && env.opPreview && !Color.plate; if (op) ctx.globalCompositeOperation = 'multiply';
+      shapePath(ctx, it); ctx.strokeStyle = Color.css(it.stroke); ctx.lineWidth = it.sw; ctx.lineJoin = 'miter';
       if (it.dash) ctx.setLineDash([it.sw * 3, it.sw * 2]);
       ctx.stroke(); ctx.setLineDash([]);
     }
@@ -129,11 +149,12 @@
   // Draw a full page (master items + page items). pageRef = {page, kind, index}
   function drawPage(ctx, env, page, i, opt = {}) {
     const E = env.engine;
+    Color.use(E.doc);
     const mp = page.master !== undefined && i != null ? E.masterPage(page, i) : null;
     const over = page.overrides || [];
     if (mp) for (const it of E.sortedItems(mp.items)) { if (over.includes(it.id)) continue; drawItem(ctx, it, env); }
     for (const it of E.sortedItems(page.items)) drawItem(ctx, it, env);
   }
 
-  window.Render = { gradPts, rgba, shapePath, applyTransform, drawItem, drawPage, drawLines, drawHidden, drawTable, tableCellLines, KAPPA };
+  window.Render = { gradPts, rgba, shapePath, applyTransform, drawItem, drawPage, drawLines, drawHidden, drawTable, drawTableRows, tableCellLines, drawNotes, KAPPA };
 })();

@@ -18,7 +18,7 @@
       proj.appendChild(d);
     });
     LM.assets.forEach(a => {
-      const d = el('div', 'aero-item proj', `<span class="pi">${W.typeIcon(a.type)}</span><span class="grow">${esc(a.name)}</span><span class="dim small">${a.w}×${a.h}${a.duration ? ' · ' + a.duration.toFixed(1) + 's' : ''}</span>`);
+      const d = el('div', 'aero-item proj', `<span class="pi">${W.typeIcon(a.type)}</span><span class="grow">${esc(a.name)}</span><span class="dim small">${a.type === 'audio' ? 'Audio' : a.w + '×' + a.h}${a.duration ? ' · ' + a.duration.toFixed(1) + 's' : ''}${a.type === 'video' && LM.media.get(a.id)?.audio ? ' · ♪' : ''}</span>`);
       d.title = 'Double-click to add to the active composition';
       d.onclick = () => { projSel = { asset: a.id }; [...proj.children].forEach(x => x.classList.remove('sel')); d.classList.add('sel'); };
       d.ondblclick = () => LM.addAssetLayer(a);
@@ -36,8 +36,8 @@
   LM.on('structure', renderProject); LM.on('compchange', renderProject);
   LM.renderProject = renderProject;
 
-  LM.addAssetLayer = a => { const c = LM.comp(); const L = a.type === 'video' ? F.video(c, a) : F.image(c, a); L.name = LM.uniqueName(c, a.name); LM.addLayer(L, 'Add ' + a.name); };
-  LM.compFromAsset = a => { const c = F.comp({ name: LM.uniqueCompName(a.name.replace(/\.[^.]+$/, '')), w: a.w, h: a.h, fps: 30, duration: a.duration ? Math.min(600, Math.max(1, a.duration)) : 5 }); LM.doc.comps.push(c); LM.doc.active = c.id; const L = a.type === 'video' ? F.video(c, a) : F.image(c, a); L.tr.scale.v = [100, 100]; c.layers.push(L); LM.commit('New Composition from Footage'); LM.setActiveComp(c.id); };
+  LM.addAssetLayer = a => { const c = LM.comp(); const L = a.type === 'audio' ? F.audio(c, a) : a.type === 'video' ? F.video(c, a) : F.image(c, a); L.name = LM.uniqueName(c, a.name); LM.addLayer(L, 'Add ' + a.name); };
+  LM.compFromAsset = a => { const c = F.comp({ name: LM.uniqueCompName(a.name.replace(/\.[^.]+$/, '')), w: a.w || 1920, h: a.h || 1080, fps: 30, duration: a.duration ? Math.min(600, Math.max(1, a.duration)) : 5 }); LM.doc.comps.push(c); LM.doc.active = c.id; const L = a.type === 'audio' ? F.audio(c, a) : a.type === 'video' ? F.video(c, a) : F.image(c, a); L.tr.scale.v = [100, 100]; c.layers.push(L); LM.commit('New Composition from Footage'); LM.setActiveComp(c.id); };
   LM.removeAsset = a => { const used = LM.doc.comps.some(c => c.layers.some(l => l.asset === a.id)); if (used) return Aero.alert('Remove Footage', `“${a.name}” is used by layers. Delete those layers first.`); LM.assets.delete(a.id); LM.media.delete(a.id); renderProject(); Aero.setDirty(true); };
   LM.duplicateComp = c => { const d = LM.clone(c); d.id = LM.uid(); d.name = LM.uniqueCompName(c.name + ' copy'); d.layers.forEach(l => l.id = LM.uid()); /* re-map parents */ const map = new Map(c.layers.map((l, i) => [l.id, d.layers[i].id])); d.layers.forEach(l => { if (l.parent) l.parent = map.get(l.parent) || null; }); LM.doc.comps.push(d); LM.commit('Duplicate Composition'); };
   LM.deleteComp = async c => {
@@ -169,7 +169,7 @@
       const tip = el('div', 'insp-tip', 'Select a layer to edit its properties here. Keyboard: <b>P</b> position, <b>S</b> scale, <b>R</b> rotation, <b>T</b> opacity, <b>U</b> animated properties.');
       insp.append(box, tip); return;
     }
-    $('#propname').textContent = ({ solid: 'Solid', shape: 'Shape Layer', text: 'Text Layer', image: 'Image', video: 'Video', null: 'Null Object', adjust: 'Adjustment Layer', precomp: 'Precomp', draw: 'Drawing Layer' })[L.type];
+    $('#propname').textContent = ({ solid: 'Solid', shape: 'Shape Layer', text: 'Text Layer', image: 'Image', video: 'Video', null: 'Null Object', adjust: 'Adjustment Layer', precomp: 'Precomp', draw: 'Drawing Layer', audio: 'Audio Layer', camera: 'Camera' })[L.type] + (L.threeD ? ' · 3D' : '');
     const head = el('div', 'insp-sec');
     head.innerHTML = `<div class="insp-title">${W.typeIcon(L.type)}<input type="text" class="lname" value="${esc(L.name)}"></div>`;
     const nm = head.querySelector('.lname'); nm.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') nm.blur(); }; nm.onchange = () => { if (nm.value.trim()) { L.name = nm.value.trim(); LM.commit('Rename Layer'); } };
@@ -184,7 +184,10 @@
     addB('+ Effect ▾', e => { const r = e.target.getBoundingClientRect(); W.menu(r.left, r.bottom, Object.entries(LM.FX).map(([k, d]) => [d.name, () => LM.addEffect(k)])); }, 'Add an effect');
     addB('+ Preset ▾', e => { const r = e.target.getBoundingClientRect(); W.menu(r.left, r.bottom, Object.entries(LM.PRESETS).filter(([, p]) => !p.only || p.only === L.type).map(([k, p]) => [p.name, () => LM.applyPreset(k)])); }, 'Apply an animation preset at the current time');
     if (L.type === 'text') addB('+ Animator', () => LM.addAnimator(L), 'Per-character animator with range selector');
-    if (L.type !== 'null') addB('+ Mask', () => LM.addMask(L, 'rect'), 'Add a rectangular mask (edit its vertices on the canvas)');
+    if (L.type === 'shape') addB('+ Shape ▾', e => { const r = e.target.getBoundingClientRect(); LM.shapeAddMenu(L, r.left, r.bottom); }, 'Add shape groups, a repeater, merge paths or gradients');
+    if (LM.canTimeRemap(L)) addB(L.tm.on ? 'Time Remap ✓' : 'Time Remap', () => LM.toggleTimeRemap([L]), 'Enable/disable time remapping (Ctrl+Alt+T)');
+    if (L.type !== 'audio' && L.type !== 'camera') addB(L.threeD ? '3D ✓' : '3D', () => LM.set3D([L]), 'Toggle 3D layer');
+    if (L.type !== 'null' && L.type !== 'audio' && L.type !== 'camera') addB('+ Mask', () => LM.addMask(L, 'rect'), 'Add a rectangular mask (edit its vertices on the canvas)');
     if (L.type === 'text') addB('Edit Text…', () => LM.editText(L));
     if (L.type === 'precomp') addB('Open Precomp', () => LM.setActiveComp(L.comp));
     head.appendChild(qb);
@@ -197,6 +200,8 @@
         const h = el('div', 'insp-gh' + (depth ? ' sub' : '') + (open ? ' open' : ''), `<span class="twirl${open ? ' open' : ''}">${W.icon.twirl}</span>${esc(n.label)}`);
         if (n.kind === 'effect') { const fx = n.ref, on = el('input'); on.type = 'checkbox'; on.checked = fx.on; on.title = 'Effect on/off'; on.onclick = e => e.stopPropagation(); on.onchange = () => { fx.on = on.checked; LM.commit(fx.on ? 'Effect On' : 'Effect Off'); }; h.insertBefore(on, h.childNodes[1]); const del = el('button', 'mini', '✕'); del.title = 'Delete effect'; del.onclick = e => { e.stopPropagation(); L.effects = L.effects.filter(f => f !== fx); LM.commit('Delete Effect'); }; h.appendChild(del); }
         if (n.kind === 'mask') { const del = el('button', 'mini', '✕'); del.title = 'Delete mask'; del.onclick = e => { e.stopPropagation(); L.masks = L.masks.filter(m => m !== n.ref); LM.commit('Delete Mask'); }; h.appendChild(del); }
+        if (n.kind === 'sgroup') { const g = n.ref, del = el('button', 'mini', '✕'); del.title = 'Delete group'; del.onclick = e => { e.stopPropagation(); L.shape.groups = L.shape.groups.filter(x => x !== g); LM.commit('Delete Group'); }; h.appendChild(del); }
+        if (n.kind === 'repeater') { const del = el('button', 'mini', '✕'); del.title = 'Remove repeater'; del.onclick = e => { e.stopPropagation(); LM.toggleRepeater(L, n.ref === L.shape ? null : n.ref); }; h.appendChild(del); }
         if (n.kind === 'animator') { const del = el('button', 'mini', '✕'); del.title = 'Delete animator'; del.onclick = e => { e.stopPropagation(); L.text.animators = L.text.animators.filter(a => a !== n.ref); LM.commit('Delete Animator'); }; h.appendChild(del); }
         const body = el('div', 'insp-gb'); body.hidden = !open;
         h.onclick = () => { body.hidden = !body.hidden; h.classList.toggle('open', !body.hidden); h.querySelector('.twirl').classList.toggle('open', !body.hidden); if (body.hidden) LM.ui.open.add(key + '|closed'); else LM.ui.open.delete(key + '|closed'); };
@@ -237,7 +242,7 @@
       if (t === 'pen') hint('Click to add points · drag to curve · click the first point to close · Enter to finish · Esc to cancel');
       else hint('Drag to draw · Shift = square/circle');
     }
-    if (t === 'text') { h += `<label>Font <select data-t="font">${LM.FONTS.map(f => `<option${f === st.textOpts.font ? ' selected' : ''}>${f}</option>`).join('')}</select></label><label>Size <input type="number" data-t="size" value="${st.textOpts.size}" min="4" max="1000" style="width:56px"></label><input type="color" data-t="color" value="${st.textOpts.color}">`; hint('Click in the viewer to place a new text layer · double-click text with the Selection tool to edit'); }
+    if (t === 'text') { h += `<label>Font <select data-t="font">${LM.FONTS.map(f => `<option${f === st.textOpts.font ? ' selected' : ''}>${f}</option>`).join('')}</select></label><label>Size <input type="number" data-t="size" value="${st.textOpts.size}" min="4" max="1000" style="width:56px"></label><input type="color" data-t="color" value="${st.textOpts.color}">`; hint('Click to type a new text layer · click a text layer to edit it in place · Esc finishes'); }
     if (t === 'brush' || t === 'eraser') {
       h += `<label>Size <input type="range" data-b="size" min="1" max="120" value="${B.size}"><span class="v">${B.size}px</span></label>`;
       if (t === 'brush') h += `<input type="color" data-b="color" value="${B.color}">`;

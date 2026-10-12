@@ -31,7 +31,7 @@ const single = path.join(ROOT, 'single.json'), appsDir = path.join(ROOT, 'apps')
         extraMetadata: { name: 'lumen-' + id, productName: name, description: `${name} - ${meta.desc}` },
         files: ['main.js', 'preload.js', 'apps.json', 'single.json', 'apps/**/*', 'build/icons/' + id + '.png', 'package.json'],
         directories: { output: path.join('dist-apps', id), buildResources: 'build' },
-        win: { icon: 'build/icons/' + id + '.png', target: [{ target: 'nsis', arch: ['x64'] }] },
+        win: { icon: 'build/icons/' + id + '.ico', target: [{ target: 'nsis', arch: ['x64'] }] },
         nsis: { ...pkg.build.nsis, shortcutName: name, artifactName: `${slug}-Setup-${pkg.version}.exe` },
         npmRebuild: false,       // no native modules; skips a memory-hungry child process
         compression: 'normal',   // maximum needs more RAM than small PCs have

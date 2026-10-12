@@ -15,8 +15,12 @@ const Dev = (() => {
   const ASPECTS = [['original', 'Original'], ['free', 'Free'], ['1:1', '1 : 1'], ['4:5', '4 : 5 (8 × 10)'], ['5:7', '5 : 7'], ['2:3', '2 : 3 (4 × 6)'], ['3:4', '3 : 4'], ['9:16', '9 : 16'], ['16:9', '16 : 9'], ['3:2', '3 : 2'], ['4:3', '4 : 3'], ['5:4', '5 : 4']];
 
   const capture = (el, e) => { try { el.setPointerCapture(e.pointerId); } catch (err) { } };
-  const getP = (o, path) => path.split('.').reduce((a, k) => a?.[k], o);
-  const setP = (o, path, v) => { const ks = path.split('.'); let a = o; for (let i = 0; i < ks.length - 1; i++) a = a[ks[i]]; a[ks[ks.length - 1]] = v; };
+  // '@mask.…' paths address the selected mask (Masking panel sliders)
+  const rpath = path => path.startsWith('@mask') ? (Local.selIndex() < 0 ? null : 'masks.' + Local.selIndex() + path.slice(5)) : path;
+  const getP = (o, path) => { path = rpath(path); return path == null ? undefined : path.split('.').reduce((a, k) => a?.[k], o); };
+  const setP = (o, path, v) => { path = rpath(path); if (path == null) return; const ks = path.split('.'); let a = o; for (let i = 0; i < ks.length - 1; i++) { a = a?.[ks[i]]; if (!a) return; } a[ks[ks.length - 1]] = v; };
+  const defaultOf = path => path.startsWith('@mask') ? path.slice(6).split('.').reduce((a, k) => a?.[k], Model.newMask('brush')) : getP(Model.defaults(), path);
+  let gridOn = false, gridTemp = 0;
   const photo = () => activePhoto();
   const viewerShown = () => !$('#viewer').hidden;
   const isDev = () => S.module === 'develop';
@@ -38,7 +42,7 @@ const Dev = (() => {
     if (!Engine.hasSource(smallKey(p))) { try { const s = await Cat.smallImage(p); if (tok !== loadTok) return; Engine.setSource(smallKey(p), s); requestRender(); } catch (e) { } }
     try {
       const img = await Cat.workImage(p); if (tok !== loadTok && photo() !== p) return;
-      Engine.setSource(workKey(p), img); refDims.set(p.fileId, { w: img.width, h: img.height });
+      Engine.setSource(workKey(p), img); refDims.set(p.fileId, { w: img.width, h: img.height }); Masks.setRef(p.fileId, img);
       // keep only the active work texture on the GPU
       Engine.sourceKeys?.().forEach(k => { if (k.startsWith('work:') && k !== workKey(p)) Engine.dropSource(k); });
       requestRender();
@@ -57,6 +61,7 @@ const Dev = (() => {
     if (!$('#glwrap').contains(Engine.canvas)) $('#glwrap').appendChild(Engine.canvas);
     ensureSource(p); requestRender();
     if (isDev()) { syncPanels(); renderHistory(); drawNav(); updateExifLine(); }
+    Local.photoChanged();
   }
   function settingsChanged() { if (!live) { syncPanels(); requestRender(); } renderHistory(); }
   function thumbChanged() { drawNav(); }
@@ -98,7 +103,7 @@ const Dev = (() => {
       Object.assign(bc.style, { width: cssW + 'px', height: cssH + 'px', left: g.margin + (g.areaW - cssW) / 2 + 'px', top: g.margin + (g.areaH - cssH) / 2 + 'px' });
       bc.hidden = false;
     } else bc.hidden = true;
-    Engine.render(g.key, st, { outW: g.outW, outH: g.outH, view: g.view, fullCrop: cropMode, split: isDev() && ba === 'split' && !cropMode ? splitPos : null, target: 'screen' });
+    Engine.render(g.key, st, { outW: g.outW, outH: g.outH, view: g.view, fullCrop: cropMode, split: isDev() && ba === 'split' && !cropMode ? splitPos : null, target: 'screen', overlay: isDev() ? Local.overlayId() : null, visSpots: isDev() && Local.visSpots() });
     const left = g.side ? g.margin * 2 + g.areaW + (g.areaW - cssW) / 2 : g.margin + (g.areaW - cssW) / 2;
     Object.assign(cv.style, { width: cssW + 'px', height: cssH + 'px', left: left + 'px', top: g.margin + (g.areaH - cssH) / 2 + 'px' });
     lastView = { ...g, st, left, top: g.margin + (g.areaH - cssH) / 2, cssW, cssH, pid: p.id };
@@ -152,6 +157,13 @@ const Dev = (() => {
       handles(c).forEach(([hx, hy]) => { const px = L.left + hx * L.cssW, py = L.top + hy * L.cssH; x.fillRect(px - 4, py - 4, 8, 8); x.strokeRect(px - 4, py - 4, 8, 8); });
       if (levelLine) { x.strokeStyle = '#ffd23f'; x.lineWidth = 2; x.setLineDash([6, 4]); x.beginPath(); x.moveTo(levelLine.x0, levelLine.y0); x.lineTo(levelLine.x1, levelLine.y1); x.stroke(); x.setLineDash([]); }
     }
+    if (isDev() && !cropMode && (gridOn || performance.now() < gridTemp)) {
+      const n = 8; x.save(); x.strokeStyle = 'rgba(255,255,255,.55)'; x.lineWidth = 1; x.shadowColor = 'rgba(0,0,0,.6)'; x.shadowBlur = 2;
+      const step = Math.max(L.cssW, L.cssH) / n;
+      x.beginPath(); for (let gx = L.left + step / 2 % step; gx < L.left + L.cssW; gx += step) { x.moveTo(Math.round(gx) + .5, L.top); x.lineTo(Math.round(gx) + .5, L.top + L.cssH); }
+      for (let gy = L.top + step / 2 % step; gy < L.top + L.cssH; gy += step) { x.moveTo(L.left, Math.round(gy) + .5); x.lineTo(L.left + L.cssW, Math.round(gy) + .5); } x.stroke(); x.restore();
+    }
+    if (isDev()) Local.drawOverlay(x);
     if (isDev() && ba === 'split' && !cropMode) {
       const sx = L.left + splitPos * L.cssW;
       x.strokeStyle = '#fff'; x.lineWidth = 2; x.shadowColor = 'rgba(0,0,0,.6)'; x.shadowBlur = 4;
@@ -168,7 +180,7 @@ const Dev = (() => {
   function drawNav() {
     if (!isDev()) return;
     const p = photo(), c = $('#navc'), box = $('#nav'); if (!p) return;
-    const u = Cat.thumbURL.get(p.id); if (!u) return;
+    const u = Cat.thumb(p.id); if (!u) return;
     const draw = () => {
       const bw = box.clientWidth - 8, bh = box.clientHeight - 8, s = Math.min(bw / navImg.naturalWidth, bh / navImg.naturalHeight);
       const w = Math.round(navImg.naturalWidth * s), h = Math.round(navImg.naturalHeight * s);
@@ -214,6 +226,7 @@ const Dev = (() => {
       if (wbPick) { if (at?.inside) pickWB(e); return; }
       capture(vw, e);
       const vr = vw.getBoundingClientRect(), mx = e.clientX - vr.left, my = e.clientY - vr.top, L = lastView;
+      if (isDev() && !cropMode && Local.pointerDown(e, mx, my)) return;
       if (cropMode) {
         if (e.ctrlKey || e.metaKey) { drag = { type: 'level' }; levelLine = { x0: mx, y0: my, x1: mx, y1: my }; return; }
         const c = cropDraft; let h = -1;
@@ -229,7 +242,7 @@ const Dev = (() => {
       if (drag.zoomed) vw.classList.add('panning');
     });
     vw.addEventListener('pointermove', e => {
-      if (!drag) { hoverCursor(e); return; }
+      if (!drag) { const vr = vw.getBoundingClientRect(); if (isDev() && Local.pointerMove(e, e.clientX - vr.left, e.clientY - vr.top)) return; hoverCursor(e); return; }
       const L = lastView; if (!L) return;
       const vr = vw.getBoundingClientRect(), mx = e.clientX - vr.left, my = e.clientY - vr.top;
       if (drag.type === 'pan') {
@@ -245,6 +258,7 @@ const Dev = (() => {
       else if (drag.type === 'crop') cropDrag((mx - L.left) / L.cssW, (my - L.top) / L.cssH, e.shiftKey);
     });
     const end = e => {
+      if (Local.pointerUp()) return;
       if (!drag) return; const d = drag; drag = null; vw.classList.remove('panning');
       if (d.type === 'pan' && !d.moved && !cropMode) {
         // click: toggle fit ↔ 100% at the clicked point
@@ -267,6 +281,7 @@ const Dev = (() => {
       const at = uvAt(e); zoomStep(e.deltaY < 0 ? 1 : -1, at?.inside ? { x: at.x, y: at.y } : null);
     }, { passive: false });
     vw.addEventListener('dblclick', e => { if (cropMode) closeCrop(true); });
+    vw.addEventListener('pointerleave', () => Local.leaveViewer());
   }
   function hoverCursor(e) {
     const vw = $('#viewer'); vw.className = '';
@@ -288,7 +303,8 @@ const Dev = (() => {
 
   /* ---------- white balance picker ---------- */
   function setWBPick(on) { wbPick = on; $('#wbhint').hidden = !on; $('#d-wb').classList.toggle('on', on); $('#viewer').classList.toggle('pick', on); $$('.wbpick').forEach(b => b.classList.toggle('on', on)); }
-  function toggleWBPick() { if (!isDev()) setModule('develop'); if (cropMode) closeCrop(true); setWBPick(!wbPick); }
+  function toggleWBPick() { if (!isDev()) setModule('develop'); if (cropMode) closeCrop(true); if (Local.tool) Local.setTool(null); setWBPick(!wbPick); }
+  function closeTools() { if (cropMode) closeCrop(true); if (wbPick) setWBPick(false); }
   function pickWB(e) {
     const p = photo(), L = lastView; if (!p || !L) return;
     if (L.pid !== p.id) { Aero.toast('The photo is still loading — try again in a moment'); return; }
@@ -324,7 +340,7 @@ const Dev = (() => {
   }
   function openCrop() {
     const p = photo(); if (!p) return; if (!isDev()) setModule('develop');
-    if (wbPick) setWBPick(false);
+    if (wbPick) setWBPick(false); if (Local.tool) Local.setTool(null);
     cropMode = true; cropDraft = { ...p.settings.crop }; zoom = 'fit';
     $('#croppill').hidden = false; $('#d-crop').classList.toggle('on', true);
     syncCropUI(); requestRender();
@@ -427,12 +443,13 @@ const Dev = (() => {
     if (grad) row.style.setProperty('--trk', grad);
     const [lab, rng, sv] = row.children;
     const S_ = { path, rng, sv, fmt, label, min, max };
-    rng.addEventListener('input', () => { if (!photo()) return; beginLive(); setP(live, path, +rng.value); sv.value = fmt(+rng.value); requestRender(); });
-    rng.addEventListener('change', () => commit(`${histName} ${fmt(+rng.value)}`));
+    const usable = () => photo() && rpath(path) != null;
+    rng.addEventListener('input', () => { if (!usable()) return; beginLive(); setP(live, path, +rng.value); sv.value = fmt(+rng.value); requestRender(); if (/^(upright|lens)\./.test(path)) { gridTemp = performance.now() + 1200; setTimeout(drawOverlay, 1250); } });
+    rng.addEventListener('change', () => { if (usable()) commit(`${histName} ${fmt(+rng.value)}`); });
     rng.addEventListener('dblclick', () => resetOne());
-    const resetOne = () => { if (!photo()) return; beginLive(); setP(live, path, getP(Model.defaults(), path)); commit(`Reset ${histName}`); };
+    const resetOne = () => { if (!usable()) return; beginLive(); setP(live, path, defaultOf(path)); commit(`Reset ${histName}`); };
     lab.addEventListener('dblclick', resetOne);
-    sv.addEventListener('change', () => { let v = parseFloat(sv.value); if (!Number.isFinite(v) || !photo()) { syncPanels(); return; } v = Math.max(min, Math.min(max, v)); beginLive(); setP(live, path, v); commit(`${histName} ${fmt(v)}`); });
+    sv.addEventListener('change', () => { let v = parseFloat(sv.value); if (!Number.isFinite(v) || !usable()) { syncPanels(); return; } v = Math.max(min, Math.min(max, v)); beginLive(); setP(live, path, v); commit(`${histName} ${fmt(v)}`); });
     sv.addEventListener('keydown', e => { if (e.key === 'Enter') sv.blur(); if (e.key === 'Escape') { syncPanels(); sv.blur(); } });
     parent.appendChild(row); sliders.push(S_); return row;
   }
@@ -468,6 +485,7 @@ const Dev = (() => {
       slider(b, 'Vibrance', 'vibrance', -100, 100, 1, fmtInt, 'linear-gradient(90deg,#9aa,#e44 30%,#fd3 50%,#3c4 70%,#36f)');
       slider(b, 'Saturation', 'saturation', -100, 100, 1, fmtInt, 'linear-gradient(90deg,#888,#e44 30%,#fd3 50%,#3c4 70%,#36f)');
     });
+    panel('masks', 'Masking', 'radial-gradient(circle at 35% 35%,#fff,#e05a4a 45%,#7a1a10)', ['masks'], b => Local.buildPanel(b, { slider, sub }), true);
     panel('curve', 'Tone Curve', 'linear-gradient(135deg,#fff,#555)', ['curve'], b => {
       const tabs = el('div', 'tabs-mini', ['rgb', 'r', 'g', 'b'].map(c => `<button data-c="${c}" class="${c === curveCh ? 'on' : ''}">${{ rgb: 'RGB', r: 'Red', g: 'Green', b: 'Blue' }[c]}</button>`).join(''));
       tabs.onclick = e => { const t = e.target.closest('[data-c]'); if (!t) return; curveCh = t.dataset.c; tabs.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === t)); drawCurve(); };
@@ -521,6 +539,30 @@ const Dev = (() => {
       sub(b, 'Grain');
       slider(b, 'Amount', 'grain.amount', 0, 100, 1, fmtPlain, null, 'Grain'); slider(b, 'Size', 'grain.size', 0, 100, 1, fmtPlain, null, 'Grain size'); slider(b, 'Roughness', 'grain.rough', 0, 100, 1, fmtPlain, null, 'Grain roughness');
     }, true);
+    panel('lens', 'Lens Corrections', 'radial-gradient(circle,#e8f4ff,#5a8ac8 60%,#1c3a6a)', ['lens'], b => {
+      sub(b, 'Distortion');
+      slider(b, 'Distortion', 'lens.dist', -100, 100, 1, fmtInt, null, 'Lens distortion');
+      b.appendChild(el('div', 'dim', 'Positive values correct barrel distortion, negative values pincushion.'));
+      sub(b, 'Vignetting');
+      slider(b, 'Amount', 'lens.vig', -100, 100, 1, fmtInt, 'linear-gradient(90deg,#111,#ccc 50%,#fff)', 'Lens vignetting'); slider(b, 'Midpoint', 'lens.vigMid', 0, 100, 1, fmtPlain, null, 'Lens vignetting midpoint');
+      sub(b, 'Chromatic aberration');
+      slider(b, 'Red / Cyan', 'lens.caR', -100, 100, 1, fmtInt, 'linear-gradient(90deg,#2cc,#ddd 50%,#e33)', 'CA red/cyan'); slider(b, 'Blue / Yellow', 'lens.caB', -100, 100, 1, fmtInt, 'linear-gradient(90deg,#dc2,#ddd 50%,#33e)', 'CA blue/yellow');
+      sub(b, 'Defringe');
+      slider(b, 'Purple', 'lens.fringeP', 0, 20, 1, fmtPlain, 'linear-gradient(90deg,#ddd,#a3c)', 'Defringe purple'); slider(b, 'Green', 'lens.fringeG', 0, 20, 1, fmtPlain, 'linear-gradient(90deg,#ddd,#3a4)', 'Defringe green');
+    }, true);
+    panel('transform', 'Transform', 'linear-gradient(135deg,#d8f0ff,#4a90d8)', ['transform'], b => {
+      const up = el('div', 'btnrow', '<span class="dim" style="align-self:center;width:52px">Upright</span><button class="aero-btn" data-tf="level" title="Rotate so the dominant lines are level">Level</button><button class="aero-btn" data-tf="vertical" title="Make converging verticals parallel (and level)">Vertical</button><button class="aero-btn" data-tf="auto" title="Balanced level, vertical and horizontal perspective correction">Auto</button><button class="aero-btn" data-tf="full" title="Full correction: verticals vertical and horizontals horizontal">Full</button>');
+      up.onclick = e => { const t = e.target.closest('[data-tf]'); if (!t) return; t.dataset.tf === 'level' ? autoLevel() : autoUpright(t.dataset.tf); };
+      b.appendChild(up);
+      const r = el('div', 'btnrow', '<label class="cbl" style="margin-left:0"><input type="checkbox" id="tf-constrain"> Constrain crop</label><label class="cbl"><input type="checkbox" id="tf-grid"> Grid</label>');
+      r.querySelector('#tf-constrain').onchange = e => setSettings(s => { s.upright.constrain = e.target.checked; }, e.target.checked ? 'Constrain crop' : 'Unconstrained transform');
+      r.querySelector('#tf-grid').onchange = e => { gridOn = e.target.checked; drawOverlay(); };
+      b.appendChild(r);
+      slider(b, 'Vertical', 'upright.vert', -100, 100, 1, fmtInt, null, 'Transform vertical'); slider(b, 'Horizontal', 'upright.horiz', -100, 100, 1, fmtInt, null, 'Transform horizontal');
+      slider(b, 'Rotate', 'upright.rotate', -10, 10, .1, v => (v > 0 ? '+' : '') + v.toFixed(1), null, 'Transform rotate'); slider(b, 'Aspect', 'upright.aspect', -100, 100, 1, fmtInt, null, 'Transform aspect');
+      slider(b, 'Scale', 'upright.scale', 50, 150, 1, fmtPlain, null, 'Transform scale');
+      slider(b, 'X offset', 'upright.x', -100, 100, .5, fmtInt, null, 'Transform X offset'); slider(b, 'Y offset', 'upright.y', -100, 100, .5, fmtInt, null, 'Transform Y offset');
+    }, true);
     panel('crop', 'Crop & Geometry', 'linear-gradient(#b8f28a,#2a7f14)', ['crop'], b => {
       const r1 = el('div', 'btnrow', '<button class="aero-btn" data-c="edit" title="Crop overlay (R)">✂ Edit crop…</button><button class="aero-btn" data-c="rl" title="Rotate left">⟲ Left</button><button class="aero-btn" data-c="rr" title="Rotate right">⟳ Right</button><button class="aero-btn" data-c="fh">⇋ Flip H</button><button class="aero-btn" data-c="fv">⥮ Flip V</button>');
       r1.onclick = e => { const t = e.target.closest('[data-c]'); if (!t) return; ({ edit: toggleCrop, rl: () => rotate(-1), rr: () => rotate(1), fh: () => flip('h'), fv: () => flip('v') })[t.dataset.c](); };
@@ -546,16 +588,18 @@ const Dev = (() => {
   }
   function syncPanels() {
     const p = photo(); if (!p) return; const s = live || p.settings;
-    sliders.forEach(x => { const v = getP(s, x.path); if (document.activeElement !== x.rng) x.rng.value = v; if (document.activeElement !== x.sv) x.sv.value = x.fmt(v); });
+    sliders.forEach(x => { const v = getP(s, x.path); if (v === undefined) return; if (document.activeElement !== x.rng) x.rng.value = v; if (document.activeElement !== x.sv) x.sv.value = x.fmt(v); });
+    const cb = $('#tf-constrain'); if (cb) cb.checked = s.upright.constrain; const gb = $('#tf-grid'); if (gb) gb.checked = gridOn;
     $$('#panels [data-t]').forEach(b => b.classList.toggle('on', (b.dataset.t === '1') === !!s.bw));
     syncCropUI(); drawCurve(); drawWheels();
     // mark panels that differ from defaults
     const d = Model.defaults();
     $$('#panels .dpanel').forEach(pn => {
-      const groups = { basic: ['wb', 'tone', 'presence', 'treatment'], curve: ['curve'], hsl: ['hsl'], grade: ['grade'], detail: ['detail'], effects: ['effects'], crop: ['crop'] }[pn.dataset.p];
+      const groups = { basic: ['wb', 'tone', 'presence', 'treatment'], masks: ['masks'], curve: ['curve'], hsl: ['hsl'], grade: ['grade'], detail: ['detail'], effects: ['effects'], lens: ['lens'], transform: ['transform'], crop: ['crop'] }[pn.dataset.p];
       const changed = groups.some(g => Model.GROUPS[g].keys.some(k => JSON.stringify(s[k]) !== JSON.stringify(d[k]) && !(k === 'crop' && Model.isCropDefault(s.crop))));
       pn.querySelector('.rst').style.visibility = changed ? 'visible' : 'hidden';
     });
+    Local.syncUI();
   }
 
   /* ---------- tone curve editor ---------- */
@@ -710,7 +754,7 @@ const Dev = (() => {
   /* ---------- copy / paste / sync ---------- */
   function copySettings() {
     const p = photo(); if (!p) return;
-    Aero.dialog({ title: 'Copy Settings', instruction: 'Choose the settings to copy:', fields: groupChecks(Object.keys(Model.GROUPS).filter(g => g !== 'crop')),
+    Aero.dialog({ title: 'Copy Settings', instruction: 'Choose the settings to copy:', fields: groupChecks(Object.keys(Model.GROUPS).filter(g => !['crop', 'spots', 'masks', 'transform'].includes(g))),
       onOK: v => { const groups = Object.keys(Model.GROUPS).filter(k => v[k]); clipboard = { groups, part: Model.pick(p.settings, groups) }; Aero.toast(`Copied ${groups.length} setting group${groups.length === 1 ? '' : 's'} from ${Cat.displayName(p)}`); } });
   }
   function pasteSettings() {
@@ -722,7 +766,7 @@ const Dev = (() => {
   function syncSettings() {
     const src = photo(); const ids = selectedIds().filter(id => id !== S.active);
     if (!src || !ids.length) return Aero.toast('Select several photos (Ctrl-click in the filmstrip or grid); the active photo is the source');
-    Aero.dialog({ title: 'Synchronize Settings', instruction: `Copy settings from “${Cat.displayName(src)}” to ${ids.length} other selected photo${ids.length > 1 ? 's' : ''}:`, fields: groupChecks(Object.keys(Model.GROUPS).filter(g => g !== 'crop')),
+    Aero.dialog({ title: 'Synchronize Settings', instruction: `Copy settings from “${Cat.displayName(src)}” to ${ids.length} other selected photo${ids.length > 1 ? 's' : ''}:`, fields: groupChecks(Object.keys(Model.GROUPS).filter(g => !['crop', 'spots', 'masks', 'transform'].includes(g))),
       ok: 'Synchronize', onOK: v => { const groups = Object.keys(Model.GROUPS).filter(k => v[k]); const part = Model.pick(src.settings, groups); Cat.applyToMany(ids, p => Model.applyPartial(p.settings, part), 'Sync settings'); Aero.toast(`Synchronized ${ids.length} photo${ids.length > 1 ? 's' : ''}`); } });
   }
   function resetAll() {
@@ -766,12 +810,56 @@ const Dev = (() => {
     }, 'Auto tone');
   }
 
+  /* ---------- transform: auto level ---------- */
+  async function autoLevel() {
+    const p = photo(); if (!p) return;
+    // render the photo with the current corrections but without rotation/crop, then find the dominant near-level edge direction
+    const st = Model.clone(p.settings); st.upright.rotate = 0; st.crop = { ...Model.defaults().crop, rot: st.crop.rot, flipH: st.crop.flipH, flipV: st.crop.flipV };
+    const c = await Cat.renderPreviewCanvas(p, st, 640), w = c.width, h = c.height, d = c.getContext('2d').getImageData(0, 0, w, h).data;
+    const Y = new Float32Array(w * h); for (let i = 0; i < w * h; i++) Y[i] = .2126 * d[i * 4] + .7152 * d[i * 4 + 1] + .0722 * d[i * 4 + 2];
+    // edge pixels of near-horizontal and near-vertical lines
+    const hx = [], hy = [], hw = [], vx = [], vy = [], vw = [];
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x, gx = Y[i + 1 - w] + 2 * Y[i + 1] + Y[i + 1 + w] - Y[i - 1 - w] - 2 * Y[i - 1] - Y[i - 1 + w], gy = Y[i + w - 1] + 2 * Y[i + w] + Y[i + w + 1] - Y[i - w - 1] - 2 * Y[i - w] - Y[i - w + 1];
+      const m = Math.hypot(gx, gy); if (m < 60) continue;
+      if (Math.abs(gx) < Math.abs(gy) * .22) { hx.push(x); hy.push(y); hw.push(m); } else if (Math.abs(gy) < Math.abs(gx) * .22) { vx.push(x); vy.push(y); vw.push(m); }
+    }
+    // deskew search: the rotation that makes the projection profiles sharpest
+    const D = Math.ceil(Math.hypot(w, h)) + 4, prof = new Float64Array(D * 2);
+    const score = t => {
+      const c = Math.cos(t), sn = Math.sin(t); let sc = 0;
+      prof.fill(0); for (let k = 0; k < hx.length; k++) { const pr = hy[k] * c - hx[k] * sn + D, i = Math.floor(pr), f = pr - i; prof[i] += hw[k] * (1 - f); prof[i + 1] += hw[k] * f; } for (let i = 0; i < prof.length; i++) sc += prof[i] * prof[i];
+      prof.fill(0); for (let k = 0; k < vx.length; k++) { const pr = vx[k] * c + vy[k] * sn + D, i = Math.floor(pr), f = pr - i; prof[i] += vw[k] * (1 - f); prof[i + 1] += vw[k] * f; } for (let i = 0; i < prof.length; i++) sc += prof[i] * prof[i];
+      return sc;
+    };
+    let best = 0, bv = -1;
+    for (let a = -10; a <= 10.001; a += .25) { const v = score(a * Math.PI / 180); if (v > bv) { bv = v; best = a; } }
+    for (let a = best - .3; a <= best + .3; a += .02) { const v = score(a * Math.PI / 180); if (v > bv) { bv = v; best = a; } }
+    const tilt = hx.length + vx.length > 50 ? best : 0;
+    if (bv <= 0 || Math.abs(tilt) < .05) { Aero.toast('The photo already looks level'); return; }
+    setSettings(s => { s.upright.rotate = Math.max(-10, Math.min(10, Math.round(-tilt * 10) / 10)); }, 'Auto level');
+    Aero.toast(`Auto level: rotated ${(-tilt).toFixed(1)}°`);
+  }
+  async function autoUpright(mode) {
+    const p = photo(); if (!p) return;
+    const st = Model.clone(p.settings); st.upright = { ...Model.defaults().upright, constrain: false }; st.crop = { ...Model.defaults().crop, rot: st.crop.rot, flipH: st.crop.flipH, flipV: st.crop.flipV }; st.masks = []; st.spots = [];
+    const c = await Cat.renderPreviewCanvas(p, st, 800), img = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+    const segs = Upright.segments(img), r = Upright.solve(segs, c.width, c.height, mode);
+    if (r.error) { Aero.toast('Upright: ' + r.error + ' — try Level, or the sliders'); return r; }
+    const name = { vertical: 'Vertical', auto: 'Auto', full: 'Full' }[mode];
+    setSettings(s => { s.upright = { ...s.upright, vert: r.vert, horiz: r.horiz, rotate: r.rotate, f: r.f, aspect: 0, x: 0, y: 0, constrain: true }; }, 'Upright: ' + name);
+    Aero.toast(`Upright ${name}: vertical ${r.vert > 0 ? '+' : ''}${r.vert}, horizontal ${r.horiz > 0 ? '+' : ''}${r.horiz}, rotate ${r.rotate.toFixed(1)}° (${r.v} vertical / ${r.h} horizontal lines)`);
+    gridTemp = performance.now() + 1500; setTimeout(drawOverlay, 1550);
+    return r;
+  }
+  function openPanel(id) { const pn = $(`#panels .dpanel[data-p="${id}"]`); if (pn && pn.classList.contains('closed')) { pn.classList.remove('closed'); } pn?.scrollIntoView({ block: 'nearest' }); }
+
   /* ---------- before/after ---------- */
   function setBA(m) { if (!isDev()) setModule('develop'); if (cropMode) closeCrop(true); ba = m; $('#d-ba').value = m; requestRender(); }
 
   /* ---------- module lifecycle ---------- */
   function enter() { renderPresets(); photoChanged(); setTimeout(() => { drawCurve(); drawWheels(); requestRender(); }, 0); }
-  function leave() { if (cropMode) closeCrop(true); if (wbPick) setWBPick(false); preview = null; }
+  function leave() { if (cropMode) closeCrop(true); if (wbPick) setWBPick(false); if (Local.tool) Local.setTool(null); preview = null; }
 
   function init() {
     buildPanels(); wireViewer(); wirePresets(); renderPresets();
@@ -794,7 +882,9 @@ const Dev = (() => {
   return {
     init, enter, leave, photoChanged, settingsChanged, thumbChanged, requestRender, renderHistory, renderPresets, syncPanels,
     setZoom, zoomStep, toggleCrop, toggleWBPick, toggleBW, autoTone, autoWB, copySettings, pasteSettings, syncSettings, resetAll, newPreset, applyPreset,
-    setBA, undo, redo, rotatedSettings, rotate, flip, setAspect, setCropAngle,
+    setBA, undo, redo, rotatedSettings, rotate, flip, setAspect, setCropAngle, autoLevel, autoUpright, drawOverlay, closeTools, openPanel,
+    cur, beginLive, commit, setSettings, cancelLive: () => { live = null; }, liveSettings: () => live,
+    get gridOn() { return gridOn; }, set gridOn(v) { gridOn = v; syncPanels(); drawOverlay(); },
     get ba() { return ba; }, get showInfo() { return showInfo; }, set showInfo(v) { showInfo = v; },
     get cropMode() { return cropMode; }, get lastView() { return lastView; }, get clipboard() { return clipboard; },
     get lastExport() { return lastExport; }, set lastExport(v) { lastExport = v; }, exportSettingsRemember,

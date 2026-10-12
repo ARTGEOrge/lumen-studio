@@ -284,7 +284,7 @@ class Renderer {
     const ov = typeof animOverrides === 'function' ? animOverrides() : null;
     const fast = !ov && i >= 0 && A.type === 'pixel' && !A.clip && list.length > 2 && !(list[i + 1] && list[i + 1].clip) && list.slice(i + 1).every(L => L.blend === 'normal' && !L.clip && !L.mask);
     if (!fast) {
-      const res = this.composeList(list, 0, null, ov);
+      const res = ov ? this.composeList(ov.list, 0, null, ov.map) : this.composeList(list, 0);
       this.draw(this.p.copy, this.final, u => { this.bindTex(0, res.tex, u.uS); gl.uniform1i(u.uKind, 1); });
       this.mipValid = false; return;
     }

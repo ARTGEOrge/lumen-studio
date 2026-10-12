@@ -49,11 +49,33 @@
           <div class="ltab" id="tab-markers" hidden><div class="aero-list" id="mklist"></div><div class="aero-iconbar"><button class="aero-iconbtn" id="mkadd" title="Add marker (M)"><svg viewBox="0 0 16 16"><path d="M3 2h10v8l-5 4-5-4z" fill="url(#gG)" stroke="#2a6a14"/></svg></button><span style="flex:1"></span><button class="aero-iconbtn" id="mkdel" title="Delete selected marker"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" fill="url(#gR)" stroke="#8a1a10"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg></button></div></div>
           <div class="ltab" id="tab-history" hidden><div class="aero-list" id="histlist"></div></div>
         </div>
+        <div id="srcmon">
+          <div class="aero-ph"><span class="phi" style="background:linear-gradient(#d0f0d0,#3aa04a)"></span><span id="srctitle" class="sttl">Source: (no clip)</span><span class="right"><span class="mono" id="sdur" title="Marked duration (In to Out)">00:00:00:00</span></span></div>
+          <div class="aero-stage" id="sview"><div id="sbox" hidden title="Drag onto the timeline to edit the marked range"><video id="svideo" playsinline preload="auto"></video><img id="simg" alt=""><canvas id="swave"></canvas></div><div id="sempty"><b>Source Monitor</b><span>Double-click a clip in the Project panel to load it here, mark In / Out, then Insert (,) or Overwrite (.) at the playhead.</span></div></div>
+          <div id="sscrub"><div id="sscrubbar"><div id="sscrubio" hidden></div><div id="sscenes"></div><div id="sscrubhead"></div></div></div>
+          <div id="stransport" class="mtrans">
+            <span class="tc" id="stc" title="Source time">00:00:00:00</span>
+            <span class="tbtns">
+              <button class="tb" id="sin" title="Mark In (I)"><svg viewBox="0 0 16 16"><path d="M5 2v12M5 2h5M5 14h5" stroke="#1d4f8a" stroke-width="2" fill="none"/></svg></button>
+              <button class="tb" id="sout" title="Mark Out (O)"><svg viewBox="0 0 16 16"><path d="M11 2v12M11 2H6M11 14H6" stroke="#1d4f8a" stroke-width="2" fill="none"/></svg></button>
+              <button class="tb" id="sclear" title="Clear In and Out"><svg viewBox="0 0 16 16"><path d="M4 2v12M12 2v12" stroke="#8a9aaa" stroke-width="1.6"/><path d="M6 6l4 4M10 6l-4 4" stroke="#c0392b" stroke-width="1.6"/></svg></button>
+              <i class="tsep"></i>
+              <button class="tb" id="sgoin" title="Go to In"><svg viewBox="0 0 16 16"><path d="M3 2v12" stroke="#1d4f8a" stroke-width="2"/><path d="M13 3v10L6 8z" fill="url(#gB)" stroke="#123f70" stroke-linejoin="round"/></svg></button>
+              <button class="tb" id="sback" title="Step back"><svg viewBox="0 0 16 16"><path d="M11 3v10L4 8z" fill="url(#gB)" stroke="#123f70" stroke-linejoin="round"/><path d="M3.5 3v10" stroke="#123f70" stroke-width="1.6"/></svg></button>
+              <button class="tb big" id="splay" title="Play / Pause source (Space when the Source monitor is active)"></button>
+              <button class="tb" id="sfwd" title="Step forward"><svg viewBox="0 0 16 16"><path d="M5 3v10l7-5z" fill="url(#gB)" stroke="#123f70" stroke-linejoin="round"/><path d="M12.5 3v10" stroke="#123f70" stroke-width="1.6"/></svg></button>
+              <button class="tb" id="sgoout" title="Go to Out"><svg viewBox="0 0 16 16"><path d="M13 2v12" stroke="#1d4f8a" stroke-width="2"/><path d="M3 3v10l7-5z" fill="url(#gB)" stroke="#123f70" stroke-linejoin="round"/></svg></button>
+              <i class="tsep"></i>
+              <button class="tb" id="sins" title="Insert at playhead / sequence In (,)"><svg viewBox="0 0 16 16"><path d="M1 5h5v6H1zM10 5h5v6h-5z" fill="url(#gB)" stroke="#174a85"/><path d="M8 2v12" stroke="#e3a21a" stroke-width="2"/></svg></button>
+              <button class="tb" id="sovr" title="Overwrite at playhead / sequence In (.)"><svg viewBox="0 0 16 16"><path d="M2 4h12v8H2z" fill="url(#gB)" stroke="#174a85"/><path d="M8 1v6M5.8 4.8 8 7l2.2-2.2" stroke="#fff" stroke-width="1.5" fill="none"/></svg></button>
+            </span>
+          </div>
+        </div>
         <div id="monitor">
-          <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffd0d0,#e0402c)"></span><span id="montitle">Program</span><span class="right"><span id="moninfo"></span> · <span class="mono" id="mdur" title="Sequence duration">00:00:00:00</span></span></div>
+          <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffd0d0,#e0402c)"></span><span id="montitle" class="sttl">Program</span><span class="right"><span id="moninfo"></span> · <span class="mono" id="mdur" title="Sequence duration">00:00:00:00</span></span></div>
           <div class="aero-stage" id="mview"><div id="mbox"><canvas id="mcanvas"></canvas><canvas id="mover"></canvas></div></div>
           <div id="mscrub"><div id="mscrubbar"><div id="mscrubio" hidden></div><div id="mscrubhead"></div></div></div>
-          <div id="mtransport">
+          <div id="mtransport" class="mtrans">
             <span class="tc" id="mtc" title="Playhead">00:00:00:00</span>
             <span class="tbtns">
               <button class="tb" id="bin_" title="Mark In (I)"><svg viewBox="0 0 16 16"><path d="M5 2v12M5 2h5M5 14h5" stroke="#1d4f8a" stroke-width="2" fill="none"/></svg></button>
@@ -73,12 +95,13 @@
           </div>
         </div>
         <div class="aero-side" id="rightpane">
-          <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#e3a21a)"></span><span id="propsTitle">Effect Controls</span></div>
-          <div id="props"></div>
+          <div class="aero-tabs" id="rtabs"><span class="aero-tab on" data-tab="props" id="propsTitle">Effect Controls</span><span class="aero-tab" data-tab="mixer">Audio Mixer</span></div>
+          <div class="rtab" id="rtab-props"><div id="props"></div></div>
+          <div class="rtab" id="rtab-mixer" hidden><div id="mixer"></div><div class="mixhint dim">Faders set track volume (or keyframes when automation is on). Meters show live levels during playback.</div></div>
         </div>
         <div id="hsplit" title="Drag to resize the timeline"></div>
         <div id="tlpanel">
-          <div class="aero-ph"><span class="phi" style="background:linear-gradient(#bfe3ff,#4a90d9)"></span><span id="tltitle">Timeline</span><span class="right" id="tlinfo"></span></div>
+          <div class="aero-ph"><span class="phi" style="background:linear-gradient(#bfe3ff,#4a90d9)"></span><span id="tltitle" class="sttl">Timeline</span><span id="seqtabs"></span><span class="right" id="tlinfo"></span></div>
           <div id="tlgrid">
             <div id="tlcorner"><span class="tc" id="tltc" title="Playhead — click to type a timecode">00:00:00:00</span><span class="tcbtns"><button class="tbtn txt" id="addv" title="Add video track">+V</button><button class="tbtn txt" id="adda" title="Add audio track">+A</button></span></div>
             <canvas id="ruler"></canvas>
@@ -98,12 +121,17 @@
 <script src="vendor/webm-muxer.js"></script>
 <script src="js/model.js"></script>
 <script src="js/demux.js"></script>
+<script src="js/color.js"></script>
 <script src="js/gl.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/media.js"></script>
 <script src="js/timeline.js"></script>
 <script src="js/monitor.js"></script>
 <script src="js/props.js"></script>
+<script src="js/mixer.js"></script>
+<script src="js/source.js"></script>
+<script src="js/extras.js"></script>
+<script src="js/seq.js"></script>
 <script src="js/export.js"></script>
 <script src="js/sample.js"></script>
 <script src="js/app.js"></script>

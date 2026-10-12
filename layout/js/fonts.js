@@ -38,6 +38,7 @@
 
   async function load() {
     const jobs = [];
+    shapeCache.clear();
     for (const [fam, d] of Object.entries(FAMILIES)) {
       for (const w of Object.keys(d.w).map(Number)) {
         for (const it of [false, true]) {
@@ -80,6 +81,53 @@
     return out;
   }
 
+  /* ---------- OpenType shaping (fontkit): kerning, ligatures and features ---------- */
+  const fkFonts = {};
+  function fkFont(key) {
+    const k = faceKey(key);
+    if (fkFonts[k] === undefined) { try { fkFonts[k] = bytes[k] && window.fontkit ? window.fontkit.create(new Uint8Array(bytes[k])) : null; } catch (e) { console.warn('fontkit', e); fkFonts[k] = null; } }
+    return fkFonts[k];
+  }
+  const shapeCache = new Map();
+  // Shape a display string. Returns clusters [{s, n, adv, kern, subst, g:[{id,x,y}]}] in units of font size 100,
+  // or null when shaping is unavailable / clusters cannot be mapped back to the string.
+  function shape(key, str, feats, fx) {
+    const ck = faceKey(key) + '|' + fx + '|' + str;
+    let r = shapeCache.get(ck); if (r !== undefined) return r;
+    r = null;
+    const font = fkFont(key);
+    if (font) {
+      try {
+        const run = font.layout(str, feats), sc = 100 / font.unitsPerEm, cl = [];
+        let pos = 0, pen = 0;
+        for (let gi = 0; gi < run.glyphs.length; gi++) {
+          const g = run.glyphs[gi], p = run.positions[gi], cps = g.codePoints || [];
+          let n = 0; for (const cp of cps) n += cp > 0xffff ? 2 : 1;
+          if (!n && cl.length) { const c = cl[cl.length - 1]; c.g.push({ id: g.id, x: (pen + p.xOffset) * sc - c.x0, y: p.yOffset * sc }); c.adv += g.advanceWidth * sc; c.kern += (p.xAdvance - g.advanceWidth) * sc; c.subst = true; pen += p.xAdvance; continue; }
+          const def = cps.length === 1 ? font.glyphForCodePoint(cps[0]).id : -1;
+          cl.push({ s: pos, n, x0: pen * sc, adv: g.advanceWidth * sc, kern: (p.xAdvance - g.advanceWidth) * sc, subst: n !== 1 || g.id !== def, g: [{ id: g.id, x: p.xOffset * sc, y: p.yOffset * sc }] });
+          pos += n; pen += p.xAdvance;
+        }
+        if (pos === str.length && cl.length) r = cl;
+      } catch (e) { r = null; }
+    }
+    if (shapeCache.size > 60000) shapeCache.clear();
+    shapeCache.set(ck, r); return r;
+  }
+  const pathCache = new Map();
+  function glyphPath(key, gid) {
+    const ck = faceKey(key) + '|' + gid;
+    let p = pathCache.get(ck); if (p !== undefined) return p;
+    p = null; const font = fkFont(key);
+    if (font) { try { p = { path: new Path2D(font.getGlyph(gid).path.toSVG()), upem: font.unitsPerEm }; } catch (e) { p = null; } }
+    pathCache.set(ck, p); return p;
+  }
+  // OpenType features the UI offers, with the families that support each
+  const OT_FEATURES = [['dlig', 'Discretionary ligatures'], ['smcp', 'OpenType small caps'], ['c2sc', 'Caps to small caps'], ['onum', 'Oldstyle figures'], ['lnum', 'Lining figures'], ['tnum', 'Tabular figures'],
+    ['pnum', 'Proportional figures'], ['frac', 'Fractions'], ['ordn', 'Ordinals'], ['sups', 'Superscript figures'], ['zero', 'Slashed zero'], ['ss01', 'Stylistic set 1'], ['ss02', 'Stylistic set 2']];
+  function featuresOf(family, weight = 400, italic = false) { const f = fkFont(resolve(family, weight, italic)); return f ? new Set(f.availableFeatures) : new Set(); }
+  function hasGlyph(key, ch) { const f = fkFont(key); return !f || f.hasGlyphForCodePoint(ch.codePointAt(0)); }
+
   window.Fonts = { FAMILIES, families: Object.keys(FAMILIES), load, resolve, parse, css, width100, metrics, styleOptions, faceKey,
-    bytesFor: key => bytes[faceKey(key)], WNAMES };
+    bytesFor: key => bytes[faceKey(key)], WNAMES, fkFont, shape, glyphPath, OT_FEATURES, featuresOf, hasGlyph };
 })();

@@ -82,15 +82,56 @@
 
     const fade = F.solid(main, '#000000', 'Fade to Black'); fade.label = 7; K(fade.tr.opacity, [[7.2, 0], [8, 100]]); fade.in = 7;
 
-    main.layers = [fade, sub, line, matteT, sweep, title, logoL, master, ...bokeh, bg];
+    // light burst behind the logo: one rounded bar + a 24-copy repeater, radial gradient, scaling in
+    const burst = F.shape(main, 'rect', { name: 'Light Burst', size: [10, 120], roundness: 5, fill: '#bfe6ff' });
+    burst.parent = master.id; burst.tr.position.v = [50, -150]; burst.blend = 'add'; burst.label = 4;
+    const S = burst.shape; S.fill.gtype = 'linear'; S.fill.gs.v = [0, -60]; S.fill.ge.v = [0, 60]; S.fill.c2.v = '#1d3f86';
+    S.size.v = [10, 120]; burst.tr.anchor.v = [0, 0];
+    const rp = S.rep; rp.on = true; rp.copies.v = 24; rp.position.v = [0, 0]; rp.anchor.v = [0, 330]; rp.rotation.v = 15; rp.so.v = 100; rp.eo.v = 100;
+    // place the bar so the repeater anchor sits on the logo centre
+    burst.tr.anchor.v = [0, 330]; burst.tr.position.v = [50, -150];
+    K(burst.tr.scale, [[1.0, [0, 0], { o: 'bezier', eo: [.2, .5], i: 'linear' }], [1.7, [100, 100], OUT]]);
+    K(burst.tr.opacity, [[1.0, 0], [1.5, 55], [3.2, 22], [7, 14]]);
+    X(burst.tr.rotation, 'time * 6');
+    burst.out = 8;
+
+    main.layers = [fade, sub, line, matteT, sweep, title, logoL, burst, master, ...bokeh, bg];
     return { comps: [main, logo], active: main.id };
   };
+
+  // a synthesized 8 s soundtrack: warm pad, a whoosh into the logo hit, a chime, and a soft tail
+  function soundtrack() {
+    const sr = 22050, n = sr * 8, out = new Float32Array(n);
+    let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 * 2 - 1; };
+    const notes = [110, 164.81, 220, 261.63, 329.63];
+    let lp = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i / sr, env = Math.min(1, t / 1.4) * Math.min(1, Math.max(0, (8 - t) / 1.2));
+      let v = 0; notes.forEach((f, k) => { v += Math.sin(2 * Math.PI * f * t + k) * (k ? .6 : 1) + .25 * Math.sin(2 * Math.PI * f * 2.003 * t); });
+      v *= .14 * env * (1 + .15 * Math.sin(t * 2.1));
+      const w = Math.exp(-Math.pow((t - 1.45) / .32, 2)); lp += (rnd() - lp) * (.05 + .25 * w); v += lp * w * .45;   // whoosh
+      if (t > 1.62) { const d = t - 1.62; v += (Math.sin(2 * Math.PI * 880 * d) + .4 * Math.sin(2 * Math.PI * 1320 * d)) * Math.exp(-d * 2.4) * .3; }   // chime
+      if (t > 3.45) { const d = t - 3.45; v += Math.sin(2 * Math.PI * 1760 * d) * Math.exp(-d * 5) * .07; }   // sweep sparkle
+      out[i] = Math.max(-1, Math.min(1, v));
+    }
+    const b = new ArrayBuffer(44 + n * 2), dv = new DataView(b), s = (o, x) => { for (let i = 0; i < x.length; i++) dv.setUint8(o + i, x.charCodeAt(i)); };
+    s(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); s(8, 'WAVE'); s(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); s(36, 'data'); dv.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) dv.setInt16(44 + i * 2, Math.round(out[i] * 32767), true);
+    const u = new Uint8Array(b); let str = ''; for (let i = 0; i < u.length; i += 0x8000) str += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+    return 'data:audio/wav;base64,' + btoa(str);
+  }
 
   LM.openSample = async () => {
     if (Aero.dirty && !(await Aero.confirm('Open Sample', 'Discard unsaved changes to the current project?', 'Discard'))) return;
     LM.stop?.();
     const s = LM.buildSample();
     LM.media.clear(); LM.assets.clear();
+    try {
+      const a = { id: LM.uid(), name: 'Soundtrack.wav', type: 'audio', mime: 'audio/wav', data: soundtrack() };
+      await LM.loadMedia(a); LM.assets.set(a.id, a);
+      const main = s.comps.find(c => c.id === s.active), L = F.audio(main, a); L.name = 'Soundtrack'; L.au.level.v = -3;
+      main.layers.unshift(L);
+    } catch (e) { console.warn('sample audio', e); }
     LM.doc.comps = s.comps; LM.doc.active = s.active; LM.doc.name = 'Sample – Title Reveal'; LM.doc.path = null;
     const c = LM.comp(); LM.st.sel = []; LM.st.selKeys.clear(); LM.st.selProps.clear(); LM.ui.open.clear(); LM.tl.openTabs.clear();
     LM.resetHistory('Open Sample'); LM.setActiveComp(c.id);

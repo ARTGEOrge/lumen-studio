@@ -262,6 +262,7 @@
     const v = scene.view(n);
     if (scene.isVis ? !scene.isVis(n) : v.visible === false) return;
     if (o.hide && o.hide.has(n.id)) return;
+    if (o.stopAt) { if (o.stopAt.done) return; if (n === o.stopAt.node) { o.stopAt.done = true; return; } }
     const op = (v.opacity ?? 1) * (o.alpha ? o.alpha(n) : 1);
     if (op <= 0.001) return;
     ctx.save();
@@ -328,25 +329,58 @@
     }
   }
 
-  // draw a list of sibling nodes; a sibling with .mask clips every sibling above it (until the end of the list)
+  // mask kind: 'alpha' (default: mask layer's alpha incl. opacity, soft edges, text glyphs), 'luminance', or 'vector' (outline clip)
+  LP.maskKind = (scene, k) => { const v = scene.view(k), t = v.mainType || k.type, mt = k.maskType || 'alpha'; return mt === 'vector' && t === 'text' ? 'alpha' : mt; };
+  // draw a list of sibling nodes; a sibling with .mask masks every sibling above it (until the end of the list)
   LP.drawKids = function (ctx, scene, kids, o = {}) {
-    let masks = 0;
-    for (const k of kids) {
-      if (k.mask) {
-        if (!(scene.isVis ? scene.isVis(k) : k.visible !== false)) continue;
-        const t = ctx.getTransform();
-        if (!masks) ctx.save();
-        masks++;
-        const m = o.matrix ? o.matrix(k) : LP.localMatrix(k);
+    for (let i = 0; i < kids.length; i++) {
+      const k = kids[i];
+      if (!k.mask) { LP.drawNode(ctx, scene, k, o); continue; }
+      if (!(scene.isVis ? scene.isVis(k) : k.visible !== false)) continue;
+      const rest = kids.slice(i + 1), kind = LP.maskKind(scene, k);
+      const t = ctx.getTransform();
+      const m = o.matrix ? o.matrix(k) : LP.localMatrix(k);
+      if (kind === 'vector') {
+        ctx.save();
         ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
-        const mp = LP.maskPath(scene, k);
-        ctx.clip(mp, mp._rule || 'nonzero');
+        const mp = LP.maskPath(scene, k); ctx.clip(mp, mp._rule || 'nonzero');
         ctx.setTransform(t);
-        continue;
+        LP.drawKids(ctx, scene, rest, o);
+        ctx.restore(); return;
       }
-      LP.drawNode(ctx, scene, k, o);
+      // alpha / luminance: render the masked layers and the mask into offscreen layers, keep content where the mask is opaque
+      const v = scene.view(k), sc = Math.hypot(t.a, t.b);
+      let marg = v.blur && v.blur.on !== false && v.blur.r > 0 ? v.blur.r * 3 * sc : 0;
+      (v.shadows || []).forEach(s => { if (s.on !== false && !s.inner) marg = Math.max(marg, (Math.abs(s.x) + Math.abs(s.y) + s.blur * 1.5 + Math.abs(s.spread || 0)) * sc); });
+      ctx.save(); ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]); const box = devBox(ctx, k.w, k.h, marg + 2); ctx.restore();
+      if (!box) return;
+      const W = ctx.canvas.width, H = ctx.canvas.height;
+      const L = acquire(W, H), Mk = acquire(W, H);
+      [L, Mk].forEach(X => { X.ctx.setTransform(1, 0, 0, 1, 0, 0); X.ctx.globalAlpha = 1; X.ctx.globalCompositeOperation = 'source-over'; X.ctx.filter = 'none'; X.ctx.clearRect(box.x, box.y, box.w, box.h); X.ctx.save(); X.ctx.beginPath(); X.ctx.rect(box.x, box.y, box.w, box.h); X.ctx.clip(); X.ctx.setTransform(t); });
+      LP.drawKids(L.ctx, scene, rest, Object.assign({}, o, { base: o.base || ctx.canvas }));
+      LP.drawNode(Mk.ctx, scene, k, Object.assign({}, o, { base: o.base || ctx.canvas }));
+      L.ctx.restore(); Mk.ctx.restore();
+      if (kind === 'luminance') {
+        const id = Mk.ctx.getImageData(box.x, box.y, box.w, box.h), d = id.data;
+        for (let j = 0; j < d.length; j += 4) { const a = d[j + 3]; d[j + 3] = a ? Math.round((0.2126 * d[j] + 0.7152 * d[j + 1] + 0.0722 * d[j + 2]) * a / 255) : 0; }
+        Mk.ctx.putImageData(id, box.x, box.y);
+      }
+      L.ctx.save(); L.ctx.setTransform(1, 0, 0, 1, 0, 0); L.ctx.globalCompositeOperation = 'destination-in';
+      L.ctx.drawImage(Mk.c, box.x, box.y, box.w, box.h, box.x, box.y, box.w, box.h); L.ctx.restore();
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(L.c, box.x, box.y, box.w, box.h, box.x, box.y, box.w, box.h); ctx.restore();
+      release(L); release(Mk);
+      return;
     }
-    if (masks) ctx.restore();
+  };
+  // alpha (0..1) of a mask layer at point (x,y) given in the mask's parent space — exact for glyphs, gradients, opacity
+  const mpx = document.createElement('canvas'); mpx.width = mpx.height = 1; const mpc = mpx.getContext('2d', { willReadFrequently: true });
+  LP.maskAlphaAt = (scene, k, x, y, matrix) => {
+    const kind = LP.maskKind(scene, k);
+    mpc.setTransform(1, 0, 0, 1, 0, 0); mpc.clearRect(0, 0, 1, 1); mpc.globalAlpha = 1;
+    mpc.setTransform(1, 0, 0, 1, -x + .5, -y + .5);
+    LP.drawNode(mpc, scene, k, matrix ? { matrix } : {});
+    const d = mpc.getImageData(0, 0, 1, 1).data;
+    return kind === 'luminance' ? (0.2126 * d[0] + 0.7152 * d[1] + 0.0722 * d[2]) / 255 * d[3] / 255 : d[3] / 255;
   };
   // clip outline of a mask layer (local coords)
   LP.maskPath = (scene, k) => {
@@ -357,7 +391,7 @@
   LP.maskOf = (kids, i) => { for (let j = i - 1; j >= 0; j--) if (kids[j].mask && kids[j].visible !== false) return kids[j]; return null; };
 
   // color mode (light / dark) a node renders in: its artboard's mode
-  LP.modeOf = (scene, n) => { let t = n; try { t = scene.top(n) || n; } catch (e) { } return (t && t.cmode === 'dark') ? 'dark' : 'light'; };
+  LP.modeOf = (scene, n) => { let t = n; try { t = scene.top(n) || n; } catch (e) { } return LP.nodeMode(scene.doc, t); };
   // render one node (in its own box) to a new canvas at scale
   LP.renderNodeCanvas = function (scene, n, scale = 1, opts = {}) {
     const pad = opts.pad || 0;
@@ -368,7 +402,7 @@
     if (opts.bg) { ctx.fillStyle = opts.bg; ctx.fillRect(0, 0, c.width, c.height); }
     scene.doc._mode = opts.mode || LP.modeOf(scene, n);
     ctx.scale(scale, scale); ctx.translate(pad - b.x, pad - b.y);
-    LP.drawNode(ctx, scene, n, { base: c });
+    LP.drawNode(ctx, scene, n, { base: c, stopAt: opts.stopAt });
     return c;
   };
 })();

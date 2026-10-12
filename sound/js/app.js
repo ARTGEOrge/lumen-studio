@@ -27,7 +27,7 @@
   function restore(s) {
     if (!s) return; const d = App.doc;
     d.chs = s.chs; d.sr = s.sr; d.markers = s.markers.map(m => ({ ...m })); App.sel = { ...s.sel };
-    App.rack = Rack.clone(s.rack); App.specSel = null; Rack.refresh();
+    App.rack = Rack.clone(s.rack); Rack.refresh();
     if (App.chOn.length !== d.chs.length) App.chOn = d.chs.map(() => true);
     afterDocChange();
   }
@@ -170,7 +170,23 @@
     Wave.zoomFit();
   }
   function selectAll() { if (!ensureDoc()) return; setSel(0, len(), true); }
-  function deselect() { if (!App.doc) return; setSel(App.sel.a, App.sel.a, true); }
+  function deselect() { if (!App.doc) return; App.specSel = null; setSel(App.sel.a, App.sel.a, true); }
+  /* ---- spectral editing ---- */
+  async function spectralOp(op, p = {}) {
+    if (!ensureDoc()) return; const S = App.specSel;
+    if (!S) return Aero.toast('Make a spectral selection first: Spectral rectangle (E) or lasso (D) on the spectrogram');
+    const d = App.doc, bb = Spectral.bounds(S);
+    if ((bb.b - bb.a) / d.sr > 120) return Aero.alert('Spectral editing', 'Spectral selections can be at most 2 minutes long.');
+    if (op === 'attenuateDialog') return Aero.dialog({ title: 'Attenuate Spectral Selection', fields: [{ key: 'db', label: 'Gain', type: 'range', min: -60, max: 12, step: 0.5, value: -12, fmt: v => (v > 0 ? '+' : '') + v + ' dB' }], onOK: v => spectralOp('attenuate', { db: v.db }) });
+    if (op === 'repairDialog') return Aero.dialog({ title: 'Spectral Repair (Heal)', instruction: 'Rebuilds the selected time × frequency region from the surrounding audio — removes coughs, clicks, whistles, phone rings…', fields: [
+      { key: 'mode', label: 'Interpolate from', type: 'select', value: 'auto', options: [['auto', 'Automatic'], ['time', 'Surrounding time (short events: coughs, clicks)'], ['freq', 'Neighbouring frequencies (long tones: whistles, hum)']] },
+      { key: 'strength', label: 'Strength', type: 'range', min: 10, max: 100, step: 1, value: 100, fmt: v => v + ' %' }, { key: 'boost', label: 'Allow boosting (fill drop-outs)', type: 'checkbox', value: false }],
+      onOK: v => spectralOp('heal', { mode: v.mode, strength: v.strength, reduceOnly: !v.boost }) });
+    const [a0, b0] = Spectral.workRange(S, len(), op);
+    const label = op === 'heal' ? 'Spectral Heal' : op === 'delete' ? 'Spectral Delete' : `Spectral Attenuate (${p.db > 0 ? '+' : ''}${p.db} dB)`;
+    await applyProc(label, segs => segs.map(x => Spectral.processChannel(x, a0, d.sr, S, op, p)), { range: [a0, b0] });
+  }
+  App.spectralOp = spectralOp;
   async function insertSilence() {
     if (!ensureDoc()) return;
     Aero.dialog({ title: 'Insert Silence', instruction: 'Insert silence at the cursor.', fields: [{ key: 'd', label: 'Duration (seconds)', type: 'number', value: 1, min: 0.001, max: 3600, step: 0.1 }], onOK: v => {
@@ -617,11 +633,7 @@
         if (!v.sel && selection && false) void 0;
         Aero.busy('Encoding…'); await tick();
         try {
-          let bytes, ext;
-          if (v.fmt.startsWith('wav')) { bytes = Codecs.encodeWav(data, sr, { wav16: 'pcm16', wav24: 'pcm24', wav32: 'float32' }[v.fmt], v.mk ? mk : []); ext = 'wav'; }
-          else if (v.fmt.startsWith('flac')) { bytes = Codecs.encodeFlac(data.map(c => c.map(x => clamp(x, -1, 1))), sr, v.fmt === 'flac16' ? 16 : 24); ext = 'flac'; }
-          else if (v.fmt === 'mp3') { bytes = Codecs.encodeMp3(data, sr, +v.kbps); ext = 'mp3'; }
-          else { const r = await Codecs.encodeOpusWebm(data, sr, Math.min(256, +v.kbps)); bytes = r.bytes; ext = 'webm'; }
+          const { bytes, ext } = await encodeAudio(data, sr, v.fmt, +v.kbps, v.mk ? mk : []);
           Aero.busy();
           const fname = (name || 'export') + (v.sel && selection ? ' (selection)' : '') + '.' + ext;
           const p = await Aero.saveFile({ name: fname, data: bytes, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
@@ -631,6 +643,15 @@
       } });
   }
   App.exportAudio = exportAudio;
+  /* encode channels to a file format: fmt = wav16|wav24|wav32|flac16|flac24|mp3|webm */
+  async function encodeAudio(data, sr, fmt, kbps = 192, markers = []) {
+    if (fmt.startsWith('wav')) return { bytes: Codecs.encodeWav(data, sr, { wav16: 'pcm16', wav24: 'pcm24', wav32: 'float32' }[fmt] || 'pcm24', markers), ext: 'wav' };
+    if (fmt.startsWith('flac')) return { bytes: Codecs.encodeFlac(data.map(c => c.map(x => clamp(x, -1, 1))), sr, fmt === 'flac16' ? 16 : 24), ext: 'flac' };
+    if (fmt === 'mp3') return { bytes: Codecs.encodeMp3(data, sr, kbps), ext: 'mp3' };
+    const r = await Codecs.encodeOpusWebm(data, sr, Math.min(256, kbps)); return { bytes: r.bytes, ext: 'webm' };
+  }
+  App.encodeAudio = encodeAudio;
+  App.FORMATS = [['wav16', 'WAV — 16-bit PCM'], ['wav24', 'WAV — 24-bit PCM'], ['wav32', 'WAV — 32-bit float'], ['flac16', 'FLAC — 16-bit (lossless)'], ['flac24', 'FLAC — 24-bit (lossless)'], ['mp3', 'MP3 (LAME)'], ['webm', 'WebM / Opus']];
 
   /* ================= mode switching ================= */
   function setMode(m) {
@@ -639,9 +660,9 @@
     $('#wave').hidden = m !== 'wave'; $('#multi').hidden = m !== 'multi';
     applySide();
     document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
-    document.querySelectorAll('.aero-tool').forEach(b => { const t = b.dataset.tool; b.hidden = m === 'wave' ? (t === 'move' || t === 'razor') : t === 'zoom'; });
-    if (m === 'wave' && (tools.get() === 'move' || tools.get() === 'razor')) tools.set('select');
-    if (m === 'multi' && (tools.get() === 'zoom' || tools.get() === 'select')) tools.set('move');
+    document.querySelectorAll('.aero-tool').forEach(b => { b.hidden = HIDE_TOOLS[m].includes(b.dataset.tool); });
+    if (m === 'wave' && HIDE_TOOLS.wave.includes(tools.get())) tools.set('select');
+    if (m === 'multi' && (HIDE_TOOLS.multi.includes(tools.get()) || tools.get() === 'select')) tools.set('move');
     if (m === 'multi' && !Multi.session) Multi.newSession(false);
     Engine.stop(); paused = null;
     updateWelcome();
@@ -692,6 +713,15 @@
   function savePrefs() { try { localStorage.setItem('lumen-sound-prefs', JSON.stringify(App.settings)); } catch (e) { /* */ } }
   function loadPrefs() { try { const p = JSON.parse(localStorage.getItem('lumen-sound-prefs') || 'null'); if (p) for (const k of ['logFreq', 'cmap', 'fft', 'follow', 'snapZero', 'xfadeMs', 'specFloor', 'viewMode']) if (k in p) App.settings[k] = p[k]; } catch (e) { /* */ } }
   App.savePrefs = savePrefs;
+  function podcastDialog() {
+    Aero.dialog({ title: 'New Podcast Session', instruction: 'Creates Host and Guest tracks with a voice cleanup rack (low cut, gate, compressor, limiter) and a Music track that ducks automatically under the voices.',
+      fields: [{ key: 'demo', label: 'Include demo recordings', type: 'checkbox', value: true }],
+      onOK: async v => {
+        const go = () => { if (App.mode !== 'multi') setMode('multi'); Multi.podcastSession(v.demo); };
+        if (Multi.session && Multi.session.tracks.some(t => t.clips.length)) { if (await Aero.confirm('New Podcast Session', 'Replace the current multitrack session?', 'Replace')) go(); } else go();
+      } });
+  }
+  App.podcastDialog = podcastDialog;
   function setView(m) { App.settings.viewMode = m; $('#viewMode').value = m; Wave.invalidate(true); savePrefs(); }
 
   /* ================= help ================= */
@@ -699,7 +729,9 @@
     const rows = [['Space', 'Play / stop'], ['Ctrl+Space', 'Pause / resume'], ['Home / End', 'Cursor to start / end'], ['← / →', 'Nudge cursor (Shift extends selection)'], ['L', 'Toggle loop playback'],
       ['Ctrl+R', 'Record…'], ['M', 'Add marker'], ['Ctrl+← / Ctrl+→', 'Previous / next marker'], ['Ctrl+A / Esc', 'Select all / deselect'], ['Ctrl+X / C / V', 'Cut / copy / paste'], ['Ctrl+Shift+V', 'Mix paste'], ['Delete', 'Delete selection (or clip)'], ['Ctrl+T', 'Crop to selection'],
       ['Ctrl+Z / Ctrl+Y', 'Undo / redo'], ['= / −', 'Zoom in / out'], ['\\', 'Zoom full'], ['Ctrl+=', 'Zoom to selection'], ['Wheel', 'Zoom at pointer (Shift: scroll, Alt: amplitude)'], ['1 / 2 / 3', 'Waveform / spectral / split view'],
-      ['T, H, Z', 'Time selection, hand, zoom tools'], ['V, R', 'Move / razor tools (multitrack)'], ['S or Ctrl+K', 'Split clip at playhead (multitrack)'], ['8 / 9', 'Waveform editor / multitrack'], ['Shift+P', 'Capture noise profile'], ['Ctrl+Shift+P', 'Noise reduction'], ['Ctrl+S', 'Save project'], ['Ctrl+E', 'Export audio / mixdown']];
+      ['T, H, Z', 'Time selection, hand, zoom tools'], ['V, R', 'Move / razor tools (multitrack)'], ['S or Ctrl+K', 'Split clip at playhead (multitrack)'], ['8 / 9', 'Waveform editor / multitrack'], ['Shift+P', 'Capture noise profile'], ['Ctrl+Shift+P', 'Noise reduction'], ['Ctrl+S', 'Save project'], ['Ctrl+E', 'Export audio / mixdown'],
+      ['Alt+R', 'Effects rack panel'], ['E / D', 'Spectral rectangle / lasso selection (waveform)'], ['Ctrl+Shift+H', 'Heal spectral selection'], ['Shift+Delete', 'Delete spectral selection'],
+      ['A', 'Envelope tool (multitrack automation)'], ['Alt+drag clip edge', 'Time-stretch clip, pitch preserved (multitrack)'], ['Alt+click point', 'Delete envelope point'], ['Ctrl+B', 'Batch process']];
     Aero.dialog({ title: 'Keyboard Shortcuts', noCancel: true, width: 560, html: `<table class="keys">${rows.map(r => `<tr><td><kbd>${esc(r[0])}</kbd></td><td>${esc(r[1])}</td></tr>`).join('')}</table>` });
   }
   function about() {
@@ -714,8 +746,12 @@
     move: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>',
     razor: '<path d="M5 19 19 5"/><path d="M14 4l6 6-4 1-3-3z"/><path d="M4 20l3-1-2-2z"/>',
     hand: '<path d="M8 12V6a1.5 1.5 0 0 1 3 0v5M11 11V4.5a1.5 1.5 0 0 1 3 0V11M14 11V6a1.5 1.5 0 0 1 3 0v7c0 4-2.5 7-6 7-2.5 0-4-1.2-5.5-3.5L4 13.5a1.5 1.5 0 0 1 2.6-1.4L8 14"/>',
-    zoom: '<circle cx="10" cy="10" r="6"/><path d="M14.5 14.5 20 20M7.5 10h5M10 7.5v5"/>'
+    zoom: '<circle cx="10" cy="10" r="6"/><path d="M14.5 14.5 20 20M7.5 10h5M10 7.5v5"/>',
+    envelope: '<path d="M3 17 8 9l5 4 8-8"/><rect x="6.5" y="7.5" width="3" height="3" fill="#fff"/><rect x="11.5" y="11.5" width="3" height="3" fill="#fff"/><path d="M3 21h18" opacity=".5"/>',
+    marquee: '<path d="M4 6h3M10 6h4M17 6h3v3M20 12v3M20 18v0M17 18h3M10 18h4M4 18h3M4 9v0M4 15v-3"/><path d="M7 12h2l1.5-3 3 6 1.5-3h2"/>',
+    lasso: '<path d="M7 17c-3-1-4-4-3-7 1.5-4 7-6 11-5s6 4 4 7-6 4-9 3"/><path d="M10 15c-1 2-1 4 1 5"/><circle cx="10" cy="15" r="1.4" fill="#fff"/>'
   };
+  const HIDE_TOOLS = { wave: ['move', 'razor', 'envelope'], multi: ['zoom', 'marquee', 'lasso'] };
   let tools;
   const T = {
     start: '<path d="M5 5v14M19 5 9 12l10 7z"/>', stop: '<rect x="6" y="6" width="12" height="12" rx="1"/>', play: '<path d="M7 4.5v15L19.5 12z"/>', pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
@@ -752,22 +788,28 @@
     const multiOnly = fn => () => { if (App.mode !== 'multi') setMode('multi'); fn(); };
     return {
       File: [['New Audio File…', 'Ctrl+N', newFile], ['New Multitrack Session', 'Ctrl+Shift+N', multiOnly(() => Multi.newSession(true))], ['Open…', 'Ctrl+O', openDialog], '-',
-        ['Open Sample', '', openSample], ['Open Sample Session', '', multiOnly(() => Multi.openSample())], '-',
+        ['Open Sample', '', openSample], ['Open Sample Session', '', multiOnly(() => Multi.openSample())], ['New Podcast Session…', '', podcastDialog], '-',
         ['Save', 'Ctrl+S', () => save(false)], ['Save As…', 'Ctrl+Shift+S', () => save(true)], '-',
-        ['Import to Session…', 'Ctrl+I', multiOnly(() => Multi.importDialog())], { label: 'Export Audio… / Mixdown', key: 'Ctrl+E', fn: exportDialog }, '-', ['Record…', 'Ctrl+R', () => Recorder.open()]],
+        ['Import to Session…', 'Ctrl+I', multiOnly(() => Multi.importDialog())], { label: 'Export Audio… / Mixdown', key: 'Ctrl+E', fn: exportDialog }, { label: 'Export CD Tracks (CUE + WAV)…', fn: () => { if (App.mode !== 'wave') setMode('wave'); Extras.exportCdDialog(); } }, '-',
+        ['Batch Process…', 'Ctrl+B', () => Batch.open()], '-', ['Record…', 'Ctrl+R', () => Recorder.open()]],
       Edit: [['Undo', 'Ctrl+Z', undo], ['Redo', 'Ctrl+Y/Ctrl+Shift+Z', redo], '-',
         { label: 'Cut', key: 'Ctrl+X', fn: () => M() ? Multi.cutClip() : cut() }, { label: 'Copy', key: 'Ctrl+C', fn: () => M() ? Multi.copyClip() : copy() }, { label: 'Paste', key: 'Ctrl+V', fn: () => M() ? Multi.pasteClip() : paste() },
         { label: 'Mix Paste', key: 'Ctrl+Shift+V', fn: mixPaste, disabled: M }, { label: 'Delete', key: 'Delete', fn: () => M() ? Multi.deleteClip() : deleteSel() }, { label: 'Crop to Selection', key: 'Ctrl+T', fn: crop, disabled: M }, '-',
         { label: 'Select All', key: 'Ctrl+A', fn: () => M() ? Multi.selectAll() : selectAll() }, { label: 'Deselect', key: 'Escape', fn: () => M() ? Multi.deselect() : deselect() }, { label: 'Select Between Markers', fn: selectBetweenMarkers, disabled: M }, '-',
-        { label: 'Insert Silence…', fn: insertSilence, disabled: M }, { label: 'Silence Selection', fn: silence, disabled: M }, { label: 'Trim Silence…', fn: trimSilence, disabled: M }, '-',
+        { label: 'Insert Silence…', fn: insertSilence, disabled: M }, { label: 'Silence Selection', fn: silence, disabled: M }, { label: 'Trim Silence…', fn: trimSilence, disabled: M }, { label: 'Remove Dead Air…', fn: () => Extras.deadAirDialog(), disabled: M }, '-',
         { label: 'Split Clip at Playhead', key: 'Ctrl+K', fn: () => M() ? Multi.splitAtPlayhead() : Aero.toast('Splitting clips works in Multitrack view'), disabled: W }, '-',
         { label: 'Add Marker', key: 'M', fn: () => M() ? Multi.addMarker() : addMarker() }, { label: 'Snap to Zero Crossings', fn: () => { App.settings.snapZero = !App.settings.snapZero; $('#snapZero').checked = App.settings.snapZero; savePrefs(); }, checked: () => App.settings.snapZero }, ['Preferences…', '', prefs]],
       Effects: ['#Real-time', { label: 'Effects Rack Panel', key: 'Alt+R', fn: () => setSideTab(App.sideTab === 'rack' ? 'props' : 'rack'), checked: () => App.sideTab === 'rack' },
         { label: 'Apply Effects Rack', fn: () => { if (App.mode !== 'wave') setMode('wave'); applyRack(); }, disabled: () => App.mode !== 'wave' || !Rack.active(App.rack) }, '#Amplitude',['Amplify…', '', fx('amplify')], ['Normalize…', '', fx('normalize')], ['Loudness Normalize (LUFS)…', '', fx('loudness')], ['Fade In…', '', fx('fadein')], ['Fade Out…', '', fx('fadeout')],
         ['Invert', '', fx('invert')], ['Reverse', '', fx('reverse')], ['DC Offset Removal', '', fx('dc')], '#Dynamics', ['Compressor…', '', fx('compressor')], ['Limiter…', '', fx('limiter')], ['Noise Gate…', '', fx('gate')],
         '#Filter & EQ', ['Parametric EQ…', '', fx('peq')], ['Graphic EQ (10-band)…', '', fx('geq')], '#Delay & Reverb', ['Reverb…', '', fx('reverb')], ['Delay / Echo…', '', fx('delay')],
-        '#Modulation & Distortion', ['Chorus / Flanger…', '', fx('chorus')], ['Distortion…', '', fx('distortion')], '#Time & Pitch', ['Pitch Shift…', '', fx('pitch')], ['Time Stretch…', '', fx('stretch')]],
-      Restoration: [['Capture Noise Profile', 'Shift+P', fx('capture')], ['Noise Reduction…', 'Ctrl+Shift+P', fx('denoise')], ['De-click…', '', fx('declick')], '-', ['Convert Channels…', '', fx('channels')], ['Change Sample Rate…', '', fx('samplerate')]],
+        '#Modulation & Distortion', ['Chorus / Flanger…', '', fx('chorus')], ['Distortion…', '', fx('distortion')], '#Time & Pitch', ['Pitch Shift…', '', fx('pitch')], ['Time Stretch…', '', fx('stretch')],
+        '#Generate', ['Tone / Sweep…', '', () => { if (App.mode !== 'wave') setMode('wave'); Extras.generateDialog('tone'); }], ['Noise…', '', () => { if (App.mode !== 'wave') setMode('wave'); Extras.generateDialog('noise'); }], ['DTMF Tones…', '', () => { if (App.mode !== 'wave') setMode('wave'); Extras.generateDialog('dtmf'); }]],
+      Restoration: [['Capture Noise Profile', 'Shift+P', fx('capture')], ['Learn Noise Profile Automatically', '', () => { if (App.mode !== 'wave') setMode('wave'); Extras.learnNoise(); }], ['Noise Reduction…', 'Ctrl+Shift+P', fx('denoise')], ['De-click…', '', fx('declick')], '-',
+        '#Spectral editing (tools E / D)', { label: 'Heal Spectral Selection', key: 'Ctrl+Shift+H', fn: () => spectralOp('heal'), disabled: () => !App.specSel }, { label: 'Spectral Repair Options…', fn: () => spectralOp('repairDialog'), disabled: () => !App.specSel },
+        { label: 'Attenuate Spectral Selection…', fn: () => spectralOp('attenuateDialog'), disabled: () => !App.specSel }, { label: 'Delete Spectral Selection', key: 'Shift+Delete', fn: () => spectralOp('delete'), disabled: () => !App.specSel },
+        { label: 'Clear Spectral Selection', fn: () => { App.specSel = null; Wave.invalidate(false); }, disabled: () => !App.specSel }, '-',
+        ['Convert Channels…', '', fx('channels')], ['Change Sample Rate…', '', fx('samplerate')]],
       View: [{ label: 'Waveform Editor', key: '8', fn: () => setMode('wave'), checked: W }, { label: 'Multitrack', key: '9', fn: () => setMode('multi'), checked: M }, '-',
         { label: 'Waveform', key: '1', fn: () => setView('wave'), checked: () => App.settings.viewMode === 'wave' }, { label: 'Spectral', key: '2', fn: () => setView('spec'), checked: () => App.settings.viewMode === 'spec' }, { label: 'Split (waveform + spectral)', key: '3', fn: () => setView('both'), checked: () => App.settings.viewMode === 'both' },
         { label: 'Logarithmic Frequency', fn: () => { App.settings.logFreq = !App.settings.logFreq; Wave.invalidate(true); savePrefs(); }, checked: () => App.settings.logFreq },
@@ -778,8 +820,10 @@
       Transport: [['Play / Stop', 'Space', playStop], ['Pause / Resume', 'Ctrl+Space', pause], ['Stop', '', stop], { label: 'Loop Playback', key: 'L', fn: toggleLoop, checked: () => App.settings.loop }, '-',
         ['Go to Start', 'Home', goStart], ['Go to End', 'End', goEnd], ['Previous Marker', 'Ctrl+ArrowLeft', () => jumpMarker(-1)], ['Next Marker', 'Ctrl+ArrowRight', () => jumpMarker(1)],
         ['Nudge Left', 'ArrowLeft', () => nudge(-1)], ['Nudge Right', 'ArrowRight', () => nudge(1)], ['Extend Selection Left', 'Shift+ArrowLeft', () => nudge(-1, true)], ['Extend Selection Right', 'Shift+ArrowRight', () => nudge(1, true)], '-', ['Record…', '', () => Recorder.open()]],
-      Multitrack: [['Add Track', '', multiOnly(() => Multi.addTrack())], ['Delete Selected Track', '', multiOnly(() => Multi.deleteTrack())], '-', ['Insert Current File into Session', '', () => Multi.insertCurrentFile()], ['Import File to Track…', '', multiOnly(() => Multi.importDialog())], '-',
-        { label: 'Split Clip at Playhead', key: 'S', fn: () => M() && Multi.splitAtPlayhead(), disabled: W }, { label: 'Duplicate Clip', key: 'Ctrl+D', fn: () => M() && Multi.duplicateClip(), disabled: W }, ['Open Clip in Waveform Editor', '', multiOnly(() => Multi.editClipSource())], '-',
+      Multitrack: [['Add Track', '', multiOnly(() => Multi.addTrack())], ['Delete Selected Track / Bus', '', multiOnly(() => Multi.deleteTrack())], ['Add Send Bus (Reverb)', '', multiOnly(() => Multi.addBus())], '-', ['Insert Current File into Session', '', () => Multi.insertCurrentFile()], ['Import File to Track…', '', multiOnly(() => Multi.importDialog())], '-',
+        { label: 'Split Clip at Playhead', key: 'S', fn: () => M() && Multi.splitAtPlayhead(), disabled: W }, { label: 'Duplicate Clip', key: 'Ctrl+D', fn: () => M() && Multi.duplicateClip(), disabled: W }, ['Open Clip in Waveform Editor', '', multiOnly(() => Multi.editClipSource())],
+        { label: 'Auto-Crossfade Overlapping Clips', fn: multiOnly(() => Multi.toggleAutoXfade()), checked: () => Multi.session?.autoXfade !== false }, '-',
+        '#Mixing', ['Track Effects Rack', '', multiOnly(() => setSideTab('rack'))], ['Track Sends…', '', multiOnly(() => Multi.sendsDialog())], ['Auto-Ducking…', '', multiOnly(() => Multi.duckDialog())], ['Clear Envelope on Selected Track', '', multiOnly(() => Multi.clearEnvelope())], '-',
         ['Mixdown Session to New File', '', multiOnly(() => Multi.mixdownToEditor())], ['Export Mixdown…', '', multiOnly(() => Multi.exportMixdown())]],
       Analyze: [['Loudness & Statistics…', '', () => { if (App.mode !== 'wave') setMode('wave'); loudnessStats(); }], ['Refresh Frequency Analysis', '', () => { if (App.mode !== 'wave') setMode('wave'); runAnalysis(); }]],
       Help: [['Keyboard Shortcuts', 'F1', shortcutsDialog], ['About Lumen Sound', '', about]]
@@ -790,9 +834,17 @@
   function init() {
     loadPrefs();
     Aero.init({ name: 'Lumen Sound', icon: '../kit/icons/sound.png', menus: menus(), onDropFiles: files => openFiles(files), dropTarget: $('#stage'), dropText: 'Drop audio files or a .lsnd project to open (in Multitrack: import to new tracks)', onSave: () => save(false) });
+    const TOOL_NAMES = { move: 'Move (Alt-drag a clip edge to time-stretch)', select: 'Time Selection', razor: 'Razor', envelope: 'Envelope — click to add points, drag to move, Alt-click / double-click to delete', marquee: 'Spectral Rectangle — drag a time × frequency box on the spectrogram', lasso: 'Spectral Lasso — draw a free-form region on the spectrogram', hand: 'Hand', zoom: 'Zoom' };
     tools = Aero.toolbox($('#tools'), [
-      { id: 'move', title: 'Move clips', key: 'V', icon: I.move }, { id: 'select', title: 'Time selection', key: 'T', icon: I.select }, { id: 'razor', title: 'Razor (split clips)', key: 'R', icon: I.razor },
-      null, { id: 'hand', title: 'Hand (scroll)', key: 'H', icon: I.hand }, { id: 'zoom', title: 'Zoom (Alt-click to zoom out)', key: 'Z', icon: I.zoom }], id => { st('st-tool', { move: 'Move', select: 'Time Selection', razor: 'Razor', hand: 'Hand', zoom: 'Zoom' }[id]); Multi.toolChanged?.(id); });
+      { id: 'move', title: 'Move clips (Alt-drag edge: time-stretch)', key: 'V', icon: I.move }, { id: 'select', title: 'Time selection', key: 'T', icon: I.select }, { id: 'razor', title: 'Razor (split clips)', key: 'R', icon: I.razor },
+      { id: 'envelope', title: 'Envelope (automation points)', key: 'A', icon: I.envelope }, { id: 'marquee', title: 'Spectral rectangle selection', key: 'E', icon: I.marquee }, { id: 'lasso', title: 'Spectral lasso selection', key: 'D', icon: I.lasso },
+      null, { id: 'hand', title: 'Hand (scroll)', key: 'H', icon: I.hand }, { id: 'zoom', title: 'Zoom (Alt-click to zoom out)', key: 'Z', icon: I.zoom }], id => {
+      if (HIDE_TOOLS[App.mode]?.includes(id)) { Aero.toast(`That tool works in the ${App.mode === 'wave' ? 'Multitrack' : 'Waveform'} view`); tools.set(App.mode === 'wave' ? 'select' : 'move'); return; }
+      st('st-tool', TOOL_NAMES[id]); Multi.toolChanged?.(id);
+      if ((id === 'marquee' || id === 'lasso') && App.doc && App.settings.viewMode === 'wave') { setView('both'); Aero.toast('Spectral view turned on for spectral selection'); }
+      Wave.invalidate(false);
+    });
+    App.setTool = id => tools.set(id);
     tools.set('select');
     Aero.shortcut('Shift+Space', () => Recorder.open());
     buildCmdbar();

@@ -16,6 +16,9 @@
     fx: '<svg viewBox="0 0 16 16"><text x="1.5" y="12" font-size="10.5" font-style="italic" font-weight="700" font-family="Georgia" fill="#6b3fb0">fx</text></svg>',
     mb: '<svg viewBox="0 0 16 16"><circle cx="10.5" cy="8" r="3.5" fill="url(#gBlue)" stroke="#174a85" stroke-width=".8"/><path d="M1.5 6h4M1 8h4.5M1.5 10h4" stroke="#6a8aa8" stroke-width="1.2" stroke-linecap="round"/></svg>',
     trash: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" fill="url(#gRed)" stroke="#8a1a10"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    audio: '<svg viewBox="0 0 16 16"><path d="M2.5 6h2.5l3.5-3v10l-3.5-3H2.5z" fill="url(#gBlue)" stroke="#174a85" stroke-width=".8" stroke-linejoin="round"/><path d="M10.5 5.5c1 .8 1 4.2 0 5M12.3 4c1.9 1.6 1.9 6.4 0 8" fill="none" stroke="#3a5a7a" stroke-width="1.1" stroke-linecap="round"/></svg>',
+    cube: '<svg viewBox="0 0 16 16"><path d="M8 1.8l5.5 3v6.4L8 14.2l-5.5-3V4.8z" fill="#e9f1fb" stroke="#24486e" stroke-linejoin="round"/><path d="M2.5 4.8 8 7.8l5.5-3M8 7.8v6.4" fill="none" stroke="#24486e"/><path d="M8 7.8l5.5-3v6.4L8 14.2z" fill="url(#gBlue)" opacity=".75"/></svg>',
+    fb: '<svg viewBox="0 0 16 16"><rect x="1.5" y="3.5" width="8" height="7" rx="1" fill="#cfe2f6" stroke="#5a7a9a"/><rect x="6.5" y="5.5" width="8" height="7" rx="1" fill="url(#gBlue)" stroke="#174a85" opacity=".85"/></svg>',
     plus: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" fill="url(#gGreen)" stroke="#2a6a14"/><path d="M8 4.8v6.4M4.8 8h6.4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>',
   };
   W.typeIcon = type => ({
@@ -29,11 +32,15 @@
     precomp: '<svg viewBox="0 0 16 16"><rect x="1.5" y="3" width="13" height="10" rx="1.5" fill="url(#gPurple)" stroke="#4a2080"/><rect x="4.5" y="5.5" width="7" height="5" fill="#fff" opacity=".85"/></svg>',
     draw: '<svg viewBox="0 0 16 16"><path d="M2.5 13.5l1-3.5 7.5-7.5 2.5 2.5L6 12.5z" fill="url(#gGold)" stroke="#8a5a0a" stroke-linejoin="round"/><path d="M2.5 13.5l1-3.5 2.5 2.5z" fill="#333"/></svg>',
     comp: '<svg viewBox="0 0 16 16"><rect x="1.5" y="3" width="13" height="10" rx="1.5" fill="url(#gPurple)" stroke="#4a2080"/><path d="M4 6h8M4 8.5h5" stroke="#fff" stroke-width="1.3"/></svg>',
+    audio: '<svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="#fff" stroke="#5a7a9a"/><path d="M3.5 8h1M5.5 6v4M7.5 4.5v7M9.5 6.5v3M11.5 5v6M13 7.5v1" stroke="#2f6fd8" stroke-width="1.2" stroke-linecap="round"/></svg>',
+    camera: '<svg viewBox="0 0 16 16"><rect x="1.5" y="5" width="9" height="7" rx="1.2" fill="url(#gGold)" stroke="#8a5a0a"/><path d="M10.5 7.2l4-2v6.6l-4-2z" fill="#e8eef6" stroke="#5a6a7a" stroke-linejoin="round"/><circle cx="4.3" cy="3.6" r="1.6" fill="#fff" stroke="#8a5a0a"/><circle cx="8" cy="3.6" r="1.6" fill="#fff" stroke="#8a5a0a"/></svg>',
   })[type] || '';
 
   /* ---------- formatting ---------- */
   const f1 = v => (Math.round(v * 10) / 10).toFixed(Math.abs(v) >= 1000 ? 0 : 1);
-  W.fmt = (type, v) => {
+  W.fmt = (type, v, node) => {
+    if (node && node.fmt === 'sec') { const fps = LM.fps(); return LM.fmtTC(Math.round(v * fps) / fps, fps) + (Math.abs(v * fps - Math.round(v * fps)) > .01 ? '~' : ''); }
+    if (node && node.unit) return (node.unit === ' dB' && v > 0 ? '+' : '') + f1(v) + node.unit;
     if (type === 'angle') { const r = v < 0 ? -Math.floor(-v / 360) : Math.floor(v / 360), d = v - r * 360; return Math.abs(v) >= 360 ? `${r}x${d >= 0 ? '+' : ''}${f1(d)}°` : f1(v) + '°'; }
     if (type === 'pct') return f1(v) + '%';
     return f1(v);
@@ -84,8 +91,14 @@
     const ups = [];
     const blocked = () => LM.hasExpr(p);
     if (node.type === 'num' || node.type === 'pct' || node.type === 'angle') {
-      const s = W.scrub({ get: () => LM.val(p, t()), set: (v, f) => apply(v, f), step: node.step || (node.type === 'pct' ? .5 : node.max != null && node.max - (node.min || 0) <= 10 ? .01 : 1), min: node.min, max: node.max, int: node.step === 1, fmt: v => W.fmt(node.type, v) });
+      const s = W.scrub({ get: () => LM.val(p, t()), set: (v, f) => apply(v, f), step: node.step || (node.type === 'pct' ? .5 : node.max != null && node.max - (node.min || 0) <= 10 ? .01 : 1), min: node.min, max: node.max, int: node.step === 1, fmt: v => W.fmt(node.type, v, node) });
       box.appendChild(s); ups.push(s._update);
+    } else if (node.type === 'vec3') {
+      [0, 1, 2].forEach(i => {
+        const s = W.scrub({ get: () => LM.val(p, t())[i], step: node.step || 1, set: (v, f) => { const cur = LM.val(p, t()).slice(); cur[i] = v; apply(cur, f); }, fmt: v => f1(v) });
+        if (i) box.appendChild(el('span', 'comma', ','));
+        box.appendChild(s); ups.push(s._update);
+      });
     } else if (node.type === 'vec2' || node.type === 'vec2pct') {
       const pct = node.type === 'vec2pct';
       if (pct) { const lk = el('span', 'link' + (unlinked.has(p) ? '' : ' on'), '⛓'); lk.title = 'Constrain proportions'; lk.onclick = e => { e.stopPropagation(); unlinked.has(p) ? unlinked.delete(p) : unlinked.add(p); lk.classList.toggle('on'); }; box.appendChild(lk); }
@@ -121,6 +134,9 @@
       c.onchange = () => { S.set(c.checked); LM.commit(node.label); };
       c.onclick = e => e.stopPropagation();
       box.appendChild(c); box._update = () => c.checked = !!S.get();
+    } else if (S.options === 'curves') {
+      const b = el('button', 'aero-btn small', 'Edit Curves…'); b.onclick = e => { e.stopPropagation(); const fx = L.effects.find(f => node.id === 'fx.' + f.id + '.curves'); if (fx) LM.curvesDialog(fx, L); };
+      b.onpointerdown = e => e.stopPropagation(); box.appendChild(b); box._update = () => { };
     } else if (S.options === 'text') {
       const b = el('button', 'aero-btn small', 'Edit Text…'); b.onclick = e => { e.stopPropagation(); LM.editText(L); };
       box.appendChild(b); box._update = () => { };

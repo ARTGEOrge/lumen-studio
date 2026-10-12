@@ -92,7 +92,7 @@ function brushTool(kind) {
       if (S.mode !== 'erase' && S.mode !== 'smudge') pushRecent(FG);
     },
     cancel() { const S = this.S; this.S = null; if (S) cancelStroke(S); },
-    cursor(c, sp) { brushCursor(c, sp, brushFor(kind).size); },
+    cursor(c, sp) { brushCursor(c, sp, brushFor(kind).size, brushFor(kind)); },
     options: bar => brushOptions(bar, kind)
   };
 }
@@ -117,9 +117,13 @@ function onWetDried(sim) {
   }
   freezeAll(); layerThumbDirty(L); tlCapture(); pendingDryUI = true;
 }
-function brushCursor(c, sp, size) {
+function brushCursor(c, sp, size, b) {
   const r = Math.max(1.5, size * view.zoom / 2);
   c.lineWidth = 1;
+  if (b && b.tip && b.tip !== 'round' && r > 4 && !toolPointer) { // hover preview of the actual stamp shape
+    const fb = fullBrush(b), tc = tipCursorCanvas(b.tip, rgbHex(paintColor(paintTarget(), FG)));
+    if (tc) { c.save(); c.translate(sp[0], sp[1]); c.rotate((fb.angle || 0) * Math.PI / 180 + (view.flip ? -1 : 1) * view.angle); c.scale(1, fb.roundness || 1); c.globalAlpha = 0.4; c.drawImage(tc, -r, -r, r * 2, r * 2); c.restore(); }
+  }
   c.strokeStyle = 'rgba(255,255,255,.9)'; c.beginPath(); c.arc(sp[0], sp[1], r + 1, 0, 7); c.stroke();
   c.strokeStyle = 'rgba(0,0,0,.75)'; c.beginPath(); c.arc(sp[0], sp[1], r, 0, 7); c.stroke();
   if (r < 6) { c.beginPath(); c.moveTo(sp[0] - 8, sp[1]); c.lineTo(sp[0] - 3, sp[1]); c.moveTo(sp[0] + 3, sp[1]); c.lineTo(sp[0] + 8, sp[1]); c.moveTo(sp[0], sp[1] - 8); c.lineTo(sp[0], sp[1] - 3); c.moveTo(sp[0], sp[1] + 3); c.lineTo(sp[0], sp[1] + 8); c.stroke(); }
@@ -630,7 +634,7 @@ const TOOL_DEFS = [
 ];
 function setTool(id) {
   if (id === activeToolId && activeTool) return;
-  activeTool?.cancel?.(); if (activeToolId === 'transform' && id !== 'transform') commitTransform();
+  activeTool?.cancel?.(); if (id !== activeToolId) activeTool?.deactivate?.();
   activeToolId = id; activeTool = TOOLS[id];
   $('#stage').style.cursor = id === 'hand' ? 'grab' : '';
   activeTool.activate?.();

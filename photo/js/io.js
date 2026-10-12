@@ -38,12 +38,12 @@ async function handleBuffer(name, buf, mode, path) {
 function projectJSON() {
   const withHist = saveHistoryPref && !!hist.cur;  // with history, pixels live in the history blobs
   const j = {
-    app: 'lumen', version: 3, w: doc.w, h: doc.h, active: doc.active,
+    app: 'lumen', version: 4, w: doc.w, h: doc.h, active: doc.active, guides: doc.guides || [],
     layers: doc.layers.map(L => ({
-      name: L.name, type: L.type, x: L.x, y: L.y, visible: L.visible, opacity: L.opacity, blend: L.blend,
+      id: L.id, parent: L.parent || 0, name: L.name, type: L.type, x: L.x, y: L.y, visible: L.visible, opacity: L.opacity, blend: L.blend,
       data: !withHist && L.canvas && L.type !== 'text' ? L.canvas.toDataURL('image/png') : null,
       mask: !withHist && L.mask ? L.mask.canvas.toDataURL('image/png') : null, maskEnabled: L.mask?.enabled ?? true,
-      text: L.text, adjust: L.adjust
+      text: L.text, adjust: L.adjust, style: L.style || null, collapsed: !!L.collapsed
     }))
   };
   if (withHist) {
@@ -62,6 +62,7 @@ async function loadProject(text, name, path) {
     startDoc(j.w, j.h, [{ name: 'Background', canvas: mk(j.w, j.h) }], 'Open Project', name, path);
     const cur = await deserializeHistory(j.history, canv);
     restoreNode(cur); busy();
+    doc.guides = sanitizeGuides(j.guides);
     window.__lumenDirty = false; updateTitle(); fit(); checkFormulaTrust();
     toast(`Opened with ${hist.nodes.size} history states — you can still undo`);
     return;
@@ -70,8 +71,9 @@ async function loadProject(text, name, path) {
     ...o, canvas: o.data ? await toCanvas(o.data, j.version < 2 ? j.w : 0, j.version < 2 ? j.h : 0) : (o.type === 'adjust' ? null : undefined),
     mask: o.mask ? await toCanvas(o.mask) : null
   })));
-  specs.forEach(s => { if (s.canvas === undefined && s.type !== 'text') s.canvas = mk(j.w, j.h); });
-  specs.activeIndex = j.active; startDoc(j.w, j.h, specs, 'Open Project', name, path); checkFormulaTrust();
+  specs.forEach(s => { if (s.type === 'group') s.canvas = null; else if (s.canvas === undefined && s.type !== 'text') s.canvas = mk(j.w, j.h); });
+  specs.activeIndex = j.active; startDoc(j.w, j.h, specs, 'Open Project', name, path);
+  doc.guides = sanitizeGuides(j.guides); checkFormulaTrust();
 }
 async function saveProject(as) {
   if (!doc) return false;
@@ -102,28 +104,48 @@ async function loadPSD(buf, name, place) {
   if (!window.agPsd) throw new Error('PSD support not loaded');
   busy('Reading PSD…'); await new Promise(r => setTimeout(r, 30));
   const psd = agPsd.readPsd(buf, { skipThumbnail: true });
-  const specs = []; let skipped = 0;
-  const walk = (list, hidden) => (list || []).forEach(ch => {
-    if (ch.children) return walk(ch.children, hidden || ch.hidden);
+  const specs = []; let skipped = 0, gid = 0;
+  const walk = (list, parent) => (list || []).forEach(ch => {
+    if (ch.children) {   // group (folder): children first, then the group entry above them
+      const id = 'g' + (++gid);
+      walk(ch.children, id);
+      const g = { id, parent, type: 'group', name: ch.name || 'Group', canvas: null, visible: !ch.hidden, opacity: ch.opacity ?? 1, blend: ch.blendMode === 'pass through' || !ch.blendMode ? 'pass-through' : (PSD_BLEND[ch.blendMode] || 'pass-through'), collapsed: ch.opened === false };
+      if (ch.mask?.canvas && !ch.mask.disabled) { const m = mk(psd.width, psd.height), c = cx(m); c.fillStyle = '#fff'; c.fillRect(0, 0, m.width, m.height); c.drawImage(psdMaskCanvas({ canvas: ch.mask.canvas, left: ch.mask.left, top: ch.mask.top }, ch.mask), ch.mask.left || 0, ch.mask.top || 0); g.mask = m; }
+      specs.push(g); return;
+    }
     if (!ch.canvas || !ch.canvas.width) { if (ch.adjustment) skipped++; return; }
-    const s = { name: ch.name || 'Layer', canvas: ch.canvas, x: ch.left || 0, y: ch.top || 0, visible: !(hidden || ch.hidden), opacity: ch.opacity ?? 1, blend: PSD_BLEND[ch.blendMode] || 'source-over' };
+    const s = { parent, name: ch.name || 'Layer', canvas: ch.canvas, x: ch.left || 0, y: ch.top || 0, visible: !ch.hidden, opacity: ch.opacity ?? 1, blend: PSD_BLEND[ch.blendMode] || 'source-over' };
     if (ch.mask?.canvas && !ch.mask.disabled) s.mask = psdMaskCanvas(ch, ch.mask);
+    try { const st = styleFromPsdEffects(ch.effects); if (st) s.style = st; } catch (e) { }
     specs.push(s);
   });
-  walk(psd.children, false);
+  walk(psd.children, null);
   if (!specs.length && psd.canvas) specs.push({ name: 'Background', canvas: psd.canvas });
   busy();
-  if (place) { specs.forEach(s => insertLayer(layerFromSpec(s))); pushHistory('Place PSD', 'all'); }
+  if (place) { insertBlock(layersFromSpecs(specs)); pushHistory('Place PSD', 'all'); }
   else startDoc(psd.width, psd.height, specs, 'Open PSD', name);
   if (skipped) toast(`${skipped} Photoshop adjustment layer${skipped > 1 ? 's' : ''} skipped (not supported)`);
 }
+// PSD export keeps groups (folders); layer styles are baked into the layer pixels so every app shows them
 function exportPSD() {
   composite();
-  const children = doc.layers.filter(L => L.canvas).map(L => {
+  const toPsd = n => {
+    const L = n.L;
+    if (L.type === 'group') {
+      const g = { name: L.name, opened: !L.collapsed, opacity: L.opacity, blendMode: L.blend === 'pass-through' ? 'pass through' : (TO_PSD_BLEND[L.blend] || 'normal'), hidden: !L.visible, children: n.kids.map(toPsd).filter(Boolean) };
+      if (L.mask) g.mask = { left: L.x, top: L.y, canvas: L.mask.canvas, defaultColor: 255, disabled: !L.mask.enabled };
+      return g;
+    }
+    if (!L.canvas) return null;
+    if (L.style && styleHasEffects(L.style)) {
+      const b = bakeStyled(L);
+      return { name: L.name, left: b.x, top: b.y, canvas: b.canvas, opacity: L.opacity, blendMode: TO_PSD_BLEND[L.blend] || 'normal', hidden: !L.visible };
+    }
     const o = { name: L.name, left: L.x, top: L.y, canvas: L.canvas, opacity: L.opacity, blendMode: TO_PSD_BLEND[L.blend] || 'normal', hidden: !L.visible };
     if (L.mask) o.mask = { left: L.x, top: L.y, canvas: L.mask.canvas, defaultColor: 255, disabled: !L.mask.enabled };
     return o;
-  });
+  };
+  const children = buildTree(doc.layers).map(toPsd).filter(Boolean);
   const skipped = doc.layers.filter(L => L.type === 'adjust').length;
   if (skipped) toast('Adjustment layers are baked into the PSD preview only');
   return new Uint8Array(agPsd.writePsd({ width: doc.w, height: doc.h, children, canvas: clone(comp) }));
@@ -199,22 +221,28 @@ function exportDialog() {
       { key: 's', label: 'Scale % (PNG/JPEG/WebP)', type: 'number', min: 1, max: 400, value: 100 }],
     onOK: async v => {
       const ext = v.fmt === 'jpeg' ? 'jpg' : v.fmt, fname = (v.name || 'image') + '.' + ext;
-      let bytes;
-      if (v.fmt === 'psd') bytes = exportPSD();
-      else {
-        composite(); const w = Math.round(doc.w * v.s / 100), h = Math.round(doc.h * v.s / 100), o = mk(w, h), c = cx(o);
-        if (v.fmt === 'jpeg') { c.fillStyle = '#fff'; c.fillRect(0, 0, w, h); }
-        c.imageSmoothingQuality = 'high'; c.drawImage(comp, 0, 0, w, h);
-        const blob = await new Promise(r => o.toBlob(r, 'image/' + v.fmt, v.q / 100));
-        bytes = new Uint8Array(await blob.arrayBuffer());
-      }
-      if (nativeApi) {
-        const p = await nativeApi.saveDialog({ defaultPath: fname, filters: [{ name: v.fmt.toUpperCase(), extensions: [ext] }] });
-        if (!p) return; await nativeApi.writeFile(p, bytes);
-      } else download(new Blob([bytes]), fname);
-      toast('Exported ' + fname);
+      const bytes = v.fmt === 'psd' ? exportPSD() : await exportBytes(v.fmt, v.q, v.s);
+      if (v.fmt !== 'psd') recordStep({ type: 'export', fmt: v.fmt, q: v.q, s: v.s });
+      if (await saveBytes(fname, ext, bytes)) toast('Exported ' + fname);
     }
   });
+}
+async function exportBytes(fmt, q = 92, s = 100) {
+  composite(); const w = Math.max(1, Math.round(doc.w * s / 100)), h = Math.max(1, Math.round(doc.h * s / 100)), o = mk(w, h), c = cx(o);
+  if (fmt === 'jpeg') { c.fillStyle = '#fff'; c.fillRect(0, 0, w, h); }
+  c.imageSmoothingQuality = 'high'; c.drawImage(comp, 0, 0, w, h);
+  const blob = await new Promise(r => o.toBlob(r, 'image/' + fmt, q / 100));
+  return new Uint8Array(await blob.arrayBuffer());
+}
+let lastSaved = null;   // {name, bytes} — last file handed to the user (used by tests)
+async function saveBytes(fname, ext, bytes) {
+  lastSaved = { name: fname, bytes };
+  if (window.__lumenNoDownload) return true;
+  if (nativeApi) {
+    const p = await nativeApi.saveDialog({ defaultPath: fname, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+    if (!p) return false; await nativeApi.writeFile(p, bytes);
+  } else download(new Blob([bytes]), fname);
+  return true;
 }
 function newDialog() {
   showDialog({

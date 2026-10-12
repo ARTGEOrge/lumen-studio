@@ -44,7 +44,7 @@ class Stroke {
     const b = this.b; pt = { ...pt };
     let p = pt.p == null ? 1 : pt.p;
     if (this.isMouse) { p = prefs.mouseTaper && (b.pSize > 0 || b.pOpacity > 0 || b.pFlow > 0) ? Math.min(1, 0.3 + this.travel / (b.size * 2.5 + 30)) : 1; }
-    pt.p = Math.pow(clamp(p, 0, 1), prefs.pressureGamma);
+    pt.p = pressureMap(p);
     const prev = this.raw[this.raw.length - 1];
     if (prev) {
       const d = Math.hypot(pt.x - prev.x, pt.y - prev.y), dt = Math.max(1, pt.t - prev.t);

@@ -275,7 +275,7 @@
     solid(comp, color = '#3a7bd5', name = 'Solid', w = comp.w, h = comp.h) { const L = baseLayer(comp, 'solid', name, { solid: { color: P(color), w, h } }); L.tr.anchor.v = [w / 2, h / 2]; return L; },
     shape(comp, kind = 'rect', o = {}) {
       const L = baseLayer(comp, 'shape', o.name || ({ rect: 'Rectangle', ellipse: 'Ellipse', polygon: 'Polygon', star: 'Star', path: 'Shape' })[kind], {
-        shape: Object.assign(shapeDef(kind, o), { groups: [], rep: repeater(), merge: 'off' })
+        shape: Object.assign(shapeDef(kind, o), { groups: [], rep: repeater(), merge: 'off', order: 0 })
       });
       if (o.pos) L.tr.position.v = o.pos.slice();
       return L;
@@ -307,7 +307,7 @@
     precomp(comp, sub) { const L = baseLayer(comp, 'precomp', sub.name, { comp: sub.id }); L.tr.anchor.v = [sub.w / 2, sub.h / 2]; L.out = Math.min(comp.duration, sub.duration); return L; },
     draw(comp) { const L = baseLayer(comp, 'draw', 'Drawing', { draw: { cels: P([]), onion: true } }); L.tr.anchor.v = [comp.w / 2, comp.h / 2]; L.draw.cels.k = [{ t: 0, v: [], i: 'hold', o: 'hold' }]; return L; },
     mask(kind, pts, name) { return { id: uid(), name: name || 'Mask', mode: 'add', inv: false, path: P({ c: true, pts }), feather: P(0), opacity: P(100), expansion: P(0) }; },
-    effect(type) { const d = LM.FX[type]; const fx = { id: uid(), type, on: true, p: {} }; d.params.forEach(q => fx.p[q.k] = q.static ? { v: q.v, s: 1 } : P(clone(q.v))); return fx; },
+    effect(type) { const d = LM.FX[type]; const fx = { id: uid(), type, on: true, p: {} }; d.params.forEach(q => fx.p[q.k] = q.static ? { v: clone(q.v), s: 1 } : P(clone(q.v))); return fx; },
   };
 
   /* ---------- effects registry ---------- */
@@ -395,6 +395,7 @@
         items.push({ group: true, id: 'grp.' + g.id, label: g.name, kind: 'sgroup', ref: g, items: gi });
       });
       if (all || S.rep.on) items.push(repGroup(S.rep, 'shape', S));
+      if (S.groups.length) items.push(set('shape.order', 'Own Shape Order', () => String(Math.max(0, Math.min(S.groups.length, S.order | 0))), v => S.order = Math.max(0, Math.min(S.groups.length, parseInt(v) || 0)), [['0', 'Top (above all groups)'], ...S.groups.map((g, i) => [String(i + 1), i === S.groups.length - 1 ? 'Bottom (below all groups)' : `Below “${g.name}”`])]));
       if (S.merge !== 'off' || S.groups.length || S.rep.on) items.push(set('shape.merge', 'Merge Paths', () => S.merge, v => S.merge = v, LM.MERGE_MODES));
       out.push({ group: true, id: 'contents', label: 'Contents', items });
     }
@@ -439,6 +440,8 @@
     return out;
   }
   LM.propTree = propTree;
+  // contents top → bottom: groups with the layer's own shape inserted at shape.order
+  LM.shapeOrder = S => { const out = S.groups.map(g => ({ g })); out.splice(Math.max(0, Math.min(S.groups.length, S.order | 0)), 0, { root: true }); return out; };
   LM.canTimeRemap = L => L.type === 'precomp' || L.type === 'video' || L.type === 'audio';
   LM.FONTS = ['Segoe UI', 'Arial', 'Arial Black', 'Bahnschrift', 'Calibri', 'Cambria', 'Candara', 'Consolas', 'Constantia', 'Corbel', 'Courier New', 'Franklin Gothic Medium', 'Georgia', 'Impact', 'Palatino Linotype', 'Segoe Print', 'Segoe Script', 'Tahoma', 'Times New Roman', 'Trebuchet MS', 'Verdana'];
   // flat list of property leaf nodes of a layer (with keyframes etc.)

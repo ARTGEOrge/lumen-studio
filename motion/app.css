@@ -108,7 +108,7 @@ button.mini:hover{border-color:#3c7fb1;background:linear-gradient(#eaf6fd,#bee6f
 .tl-colhead{position:sticky;top:0;z-index:3;display:flex;height:35px;background:#eef3f9;border-bottom:1px solid #a7bcd6}
 .tl-colhead .tl-left{display:flex;align-items:flex-end;padding-bottom:3px;font-size:10.5px;color:#4a5d74;gap:0;background:linear-gradient(#fbfdff,#dde8f4)}
 .tl-colhead .tl-left span{display:inline-block}
-.ch-sw{width:62px;padding-left:4px;letter-spacing:1px;font-size:10px}.ch-num{width:34px;text-align:right;padding-right:6px}.ch-name{flex:1;padding-left:22px}.ch-sws{width:46px}.ch-mode{width:88px}.ch-matte{width:86px}.ch-par{width:112px}
+.ch-sw{width:82px;padding-left:4px;letter-spacing:2px;font-size:10px}.ch-num{width:34px;text-align:right;padding-right:6px}.ch-name{flex:1;padding-left:22px}.ch-sws{width:86px;word-spacing:1px}.ch-mode{width:88px}.ch-matte{width:86px}.ch-par{width:112px}
 .tl-ruler{flex:1;min-width:0;position:relative}
 .tl-ruler canvas{display:block;cursor:pointer}
 .tl-left{flex:0 0 var(--lw);width:var(--lw);display:flex;align-items:center;min-width:0;overflow:hidden;border-right:1px solid #b9c9dc;position:relative}
@@ -200,3 +200,16 @@ table.kbd td{padding:3px 8px;border-bottom:1px solid #eef1f5;vertical-align:top}
 table.kbd td:first-child{color:#2c3e55}
 .about{display:flex;gap:14px;align-items:flex-start;line-height:1.5;max-width:460px}
 .about img{width:56px;height:56px}
+
+/* ---------- v1.1: audio, shape groups, 3D, text editing, curves ---------- */
+.tl-head button.aud svg{width:15px;height:15px;vertical-align:-3px}
+.tl-head button.aud:not(.on) svg{opacity:.35;filter:grayscale(1)}
+.tl-row .aud,.tl-row .fbsw,.tl-row .d3sw{border-left:1px solid #e3eaf2}
+.tl-track canvas.wave{position:absolute;top:3px;pointer-events:none;z-index:1}
+.tl-row.group input[type=checkbox]{margin:0 2px 0 4px;width:12px;height:12px}
+.curves{display:flex;flex-direction:column;gap:6px;align-items:center}
+.curves canvas{width:256px;height:256px;border:1px solid #9fb4cc;border-radius:2px;cursor:crosshair;touch-action:none;background:#fff}
+.curves .cvtabs{display:flex;gap:4px}
+.curves .cvtabs .aero-btn.on{border-color:#2c628b;background:linear-gradient(#e5f4fc,#c4e5f6 50%,#98d1ef 50%,#68b3db)}
+#textinput{position:fixed;left:-1000px;top:0;width:200px;height:40px;opacity:0;pointer-events:none;resize:none}
+.lwarn{margin:6px 0 2px 18px;padding:0;max-height:260px;overflow:auto;line-height:1.45;color:#2c3e55}

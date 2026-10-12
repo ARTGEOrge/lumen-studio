@@ -46,9 +46,32 @@
   function syncVideos(c, t) {
     videoPending = false;
     const want = new Set();
-    LM.videosAt(c, t).forEach(({ L, lt }) => {
+    const seek = (v, target) => {
+      if (!v.paused) v.pause();
+      if (Math.abs(v.currentTime - target) > .5 / c.fps || v.readyState < 2) {
+        videoPending = true;
+        if (!v._lmSeek) { v._lmSeek = true; v.addEventListener('seeked', () => { v._lmSeek = false; LM.requestRender(); }, { once: true }); }
+        if (!v.seeking || Math.abs(v.currentTime - target) > .5 / c.fps) v.currentTime = target;
+        return false;
+      }
+      return true;
+    };
+    LM.videosAt(c, t).forEach(({ L, lt, fps }) => {
       const m = LM.media.get(L.asset); if (!m?.video) return; const v = m.video; want.add(v);
-      const target = Math.max(0, Math.min(lt, (v.duration || 1e9) - .001));
+      if (m.fb) { m.fb.a?.close?.(); m.fb = null; }
+      const dur = (v.duration || 1e9) - .001, target = Math.max(0, Math.min(lt, dur));
+      // frame blending: hold two paused elements on the neighbouring source frames and mix them (also while playing)
+      if (L.fb) {
+        const sfps = LM.assets.get(L.asset)?.fps || fps, f = lt * sfps, f0 = Math.floor(f + 1e-6), w = f - f0;
+        if (w > 0.001 && (f0 + 1) / sfps < dur) {
+          if (!m.video2) { const v2 = document.createElement('video'); v2.muted = true; v2.playsInline = true; v2.preload = 'auto'; v2.src = m.url; m.video2 = v2; }
+          const v2 = m.video2; want.add(v2);
+          const okA = seek(v, Math.min(dur, (f0 + .25) / sfps)), okB = seek(v2, Math.min(dur, (f0 + 1.25) / sfps));
+          if (okA && okB) m.fb = { a: v, b: v2, w, L };
+          return;
+        }
+        seek(v, target); return;
+      }
       if (st.playing && !st.ramPlaying) {
         if (v.paused) { v.currentTime = target; v.play().catch(() => { }); }
         else if (Math.abs(v.currentTime - target) > .3) v.currentTime = target;
@@ -64,6 +87,7 @@
     LM.media.forEach(m => { if (m.video && !want.has(m.video) && !m.video.paused) m.video.pause(); });
   }
   LM.pauseVideos = () => LM.media.forEach(m => m.video && !m.video.paused && m.video.pause());
+  V.videoPending = () => videoPending;
 
   /* ---------- draw ---------- */
   let frameC = null, lastFrameImg = null, fpsCount = 0, fpsT = performance.now();
@@ -103,35 +127,61 @@
 
   /* ---------- overlays ---------- */
   const SEL = '#3a9cff';
-  function layerQuad(L, t, c) { const b = LM.layerBounds(L, t), m = LM.layerMatrix(L, t, c); return [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]].map(([u, v]) => toScreen(...M.apply(m, u, v))); }
+  // layer-space point → comp space (3D layers through the camera); null when behind the camera
+  function projector(L, t, c) { if (LM.is3D(L) && LM.space) return LM.space.projector(L, t, c); const m = LM.layerMatrix(L, t, c); return (u, v) => M.apply(m, u, v); }
+  // two-way mapping between layer space and comp space (perspective-correct for 3D layers); gm: extra item matrix (shape groups)
+  function mapper(L, t, c, gm) {
+    let fwd, inv, persp = false;
+    if (LM.is3D(L) && LM.space) { const pj = LM.space.projector(L, t, c), up = LM.space.unprojector(L, t, c); fwd = (u, v) => pj(u, v); inv = up; persp = true; }
+    else { const m = LM.layerMatrix(L, t, c), mi = M.inv(m); fwd = (u, v) => M.apply(m, u, v); inv = (x, y) => M.apply(mi, x, y); }
+    if (gm) { const f0 = fwd, i0 = inv, gi = M.inv(gm); fwd = (u, v) => f0(...M.apply(gm, u, v)); inv = (x, y) => { const p = i0(x, y); return p && M.apply(gi, p[0], p[1]); }; }
+    return { fwd, inv, persp };
+  }
+  V.mapper = mapper;
+  V.projector = projector;
+  function layerQuad(L, t, c) {
+    const b = LM.layerBounds(L, t), pj = projector(L, t, c);
+    const q = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]].map(([u, v]) => pj(u, v));
+    return q.some(p => !p) ? null : q.map(p => toScreen(p[0], p[1]));
+  }
+  V.layerQuad = layerQuad;
   function parentMatrix(L, t, c) { const par = L.parent && c.layers.find(l => l.id === L.parent); return par ? LM.layerMatrix(par, t, c) : M.id(); }
   V.parentMatrix = parentMatrix;
   function drawOverlays(x, c) {
     const t = st.time;
     // null objects
-    c.layers.forEach(L => { if (L.type !== 'null' || !st.sel.includes(L.id) || !L.visible || t < L.in || t >= L.out) return; const q = layerQuad(L, t, c); x.strokeStyle = '#d04040'; x.lineWidth = 1.2; x.beginPath(); q.forEach((p, i) => i ? x.lineTo(...p) : x.moveTo(...p)); x.closePath(); x.stroke(); });
+    c.layers.forEach(L => { if (L.type !== 'null' || !st.sel.includes(L.id) || !L.visible || t < L.in || t >= L.out) return; const q = layerQuad(L, t, c); if (!q) return; x.strokeStyle = '#d04040'; x.lineWidth = 1.2; x.beginPath(); q.forEach((p, i) => i ? x.lineTo(...p) : x.moveTo(...p)); x.closePath(); x.stroke(); });
+    // camera: point of interest marker
+    c.layers.forEach(L => { if (L.type !== 'camera' || !st.sel.includes(L.id) || !LM.space) return; const cam = LM.space.camera(c, t), poi = LM.val(L.cam.poi, t), p = LM.space.project(cam, poi); if (!p) return; const [sx, sy] = toScreen(p[0], p[1]); x.strokeStyle = '#c07040'; x.lineWidth = 1.5; x.beginPath(); x.arc(sx, sy, 7, 0, 7); x.moveTo(sx - 12, sy); x.lineTo(sx + 12, sy); x.moveTo(sx, sy - 12); x.lineTo(sx, sy + 12); x.stroke(); });
     // onion skin
     const sl = LM.selLayer();
     if (sl && sl.type === 'draw' && sl.draw.onion && !st.playing) drawOnion(x, c, sl, t);
     LM.selLayers().forEach(L => {
-      if (!L.visible) return;
-      const inTime = t >= L.in && t < L.out;
+      if (!L.visible || L.type === 'audio' || L.type === 'camera') return;
+      const inTime = t >= L.in && t < L.out, d3 = LM.is3D(L);
       // motion path
-      if (V.showPaths && LM.animated(L.tr.position) && L.tr.position.k.length > 1) drawMotionPath(x, c, L);
+      if (V.showPaths && !d3 && LM.animated(L.tr.position) && L.tr.position.k.length > 1) drawMotionPath(x, c, L);
       if (!inTime) return;
       if (L.type !== 'null' && L.type !== 'adjust') {
         const q = layerQuad(L, t, c);
-        x.strokeStyle = SEL; x.lineWidth = 1; x.beginPath(); q.forEach((p, i) => i ? x.lineTo(...p) : x.moveTo(...p)); x.closePath(); x.stroke();
-        if (st.tool === 'select' && LM.selLayers().length === 1 && !L.locked) handlesOf(q).forEach(h => { x.fillStyle = '#fff'; x.strokeStyle = SEL; x.fillRect(h.x - 3.5, h.y - 3.5, 7, 7); x.strokeRect(h.x - 3.5, h.y - 3.5, 7, 7); });
+        if (q) {
+          x.strokeStyle = SEL; x.lineWidth = 1; x.beginPath(); q.forEach((p, i) => i ? x.lineTo(...p) : x.moveTo(...p)); x.closePath(); x.stroke();
+          if (st.tool === 'select' && LM.selLayers().length === 1 && !L.locked) handlesOf(q).forEach(h => { x.fillStyle = '#fff'; x.strokeStyle = SEL; x.fillRect(h.x - 3.5, h.y - 3.5, 7, 7); x.strokeRect(h.x - 3.5, h.y - 3.5, 7, 7); });
+        }
       }
       // anchor point
-      const m = LM.layerMatrix(L, t, c), a = val(L.tr.anchor, t), [ax, ay] = toScreen(...M.apply(m, a[0], a[1]));
-      x.strokeStyle = '#fff'; x.lineWidth = 3; x.beginPath(); x.arc(ax, ay, 5, 0, 7); x.moveTo(ax - 9, ay); x.lineTo(ax + 9, ay); x.moveTo(ax, ay - 9); x.lineTo(ax, ay + 9); x.stroke();
-      x.strokeStyle = '#1a3a6a'; x.lineWidth = 1.2; x.stroke();
+      const a = val(L.tr.anchor, t), ap = projector(L, t, c)(a[0], a[1]);
+      if (ap) {
+        const [ax, ay] = toScreen(ap[0], ap[1]);
+        x.strokeStyle = '#fff'; x.lineWidth = 3; x.beginPath(); x.arc(ax, ay, 5, 0, 7); x.moveTo(ax - 9, ay); x.lineTo(ax + 9, ay); x.moveTo(ax, ay - 9); x.lineTo(ax, ay + 9); x.stroke();
+        x.strokeStyle = '#1a3a6a'; x.lineWidth = 1.2; x.stroke();
+      }
+      const mp = mapper(L, t, c);
       // masks
-      L.masks.forEach(mk => drawEditPath(x, val(mk.path, t), m, '#f0c020', mk));
-      if (L.type === 'shape' && L.shape.kind === 'path') drawEditPath(x, val(L.shape.path, t), m, '#3a9cff', L.shape);
+      L.masks.forEach(mk => drawEditPath(x, val(mk.path, t), mp, '#f0c020', mk));
+      if (L.type === 'shape') pathOwners(L, t, c).forEach(o => drawEditPath(x, val(o.prop, t), o.mp, '#3a9cff', o.owner));
     });
+    if (st.textEdit) LM.textEdit?.drawOverlay(x, c);
     // pen tool preview
     if (pen.pts.length) {
       x.strokeStyle = '#ff7a00'; x.lineWidth = 1.5; x.beginPath();
@@ -158,16 +208,28 @@
     }
     if (st.tool === 'brush' || st.tool === 'eraser') if (V.hover) { const sl2 = LM.selLayer(), sc = sl2 ? M.scaleOf(LM.layerMatrix(sl2, t, c)) : 1; x.strokeStyle = 'rgba(0,0,0,.6)'; x.lineWidth = 1; x.beginPath(); x.arc(V.hover[0], V.hover[1], Math.max(1.5, st.brush.size * sc * V.z / 2), 0, 7); x.stroke(); }
   }
+  // editable bezier paths of a shape layer: its own path and path groups (with their group transform)
+  function pathOwners(L, t, c) {
+    const out = []; if (L.shape.kind === 'path') out.push({ prop: L.shape.path, owner: L.shape, mp: mapper(L, t, c) });
+    (L.shape.groups || []).forEach(g => { if (g.on !== false && g.kind === 'path') out.push({ prop: g.path, owner: g, mp: mapper(L, t, c, LM.groupMatrix(g, t)) }); });
+    return out;
+  }
   function handlesOf(q) {
     const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
     return [{ k: 'tl', p: q[0], o: q[2] }, { k: 'tr', p: q[1], o: q[3] }, { k: 'br', p: q[2], o: q[0] }, { k: 'bl', p: q[3], o: q[1] }, { k: 't', p: mid(q[0], q[1]), o: mid(q[3], q[2]), ax: 'y' }, { k: 'r', p: mid(q[1], q[2]), o: mid(q[0], q[3]), ax: 'x' }, { k: 'b', p: mid(q[2], q[3]), o: mid(q[0], q[1]), ax: 'y' }, { k: 'l', p: mid(q[3], q[0]), o: mid(q[1], q[2]), ax: 'x' }].map(h => ({ ...h, x: h.p[0], y: h.p[1] }));
   }
-  function drawEditPath(x, path, m, color, owner) {
+  function drawEditPath(x, path, mp, color, owner) {
     if (!path?.pts?.length) return;
-    const P = path.pts.map(p => ({ v: toScreen(...M.apply(m, p[0], p[1])), i: toScreen(...M.apply(m, p[0] + p[2], p[1] + p[3])), o: toScreen(...M.apply(m, p[0] + p[4], p[1] + p[5])) }));
+    const S = (u, v) => { const p = mp.fwd(u, v); return p ? toScreen(p[0], p[1]) : null; };
+    const P = path.pts.map(p => ({ v: S(p[0], p[1]), i: S(p[0] + p[2], p[1] + p[3]), o: S(p[0] + p[4], p[1] + p[5]) }));
+    if (P.some(p => !p.v || !p.i || !p.o)) return;
     x.strokeStyle = color; x.lineWidth = 1.3; x.beginPath();
-    P.forEach((p, i) => { if (!i) x.moveTo(...p.v); else x.bezierCurveTo(...P[i - 1].o, ...p.i, ...p.v); });
-    if (path.c) { const l = P[P.length - 1]; x.bezierCurveTo(...l.o, ...P[0].i, ...P[0].v); }
+    if (mp.persp) { // perspective: draw the projected outline as a polyline (bezier control points don't survive projection)
+      let first = true; LM.flatten(path, 16).forEach(q => { const s = S(q[0], q[1]); if (!s) return; if (first) { x.moveTo(...s); first = false; } else x.lineTo(...s); });
+    } else {
+      P.forEach((p, i) => { if (!i) x.moveTo(...p.v); else x.bezierCurveTo(...P[i - 1].o, ...p.i, ...p.v); });
+      if (path.c) { const l = P[P.length - 1]; x.bezierCurveTo(...l.o, ...P[0].i, ...P[0].v); }
+    }
     x.stroke();
     if (st.tool !== 'select' && st.tool !== 'pen') return;
     P.forEach((p, i) => {
@@ -209,17 +271,13 @@
   }
 
   /* ---------- hit testing ---------- */
-  const hitCtx = new OffscreenCanvas(2, 2).getContext('2d');
   function hitLayer(cx, cy, c) {
     const t = st.time, solo = c.layers.some(l => l.solo);
     for (const L of c.layers) {
-      if (!L.visible || L.locked || t < L.in || t >= L.out || (solo && !L.solo) || L.type === 'adjust') continue;
+      if (!L.visible || L.locked || t < L.in || t >= L.out || (solo && !L.solo) || L.type === 'adjust' || (!LM.hasPixels(L) && L.type !== 'null')) continue;
+      if (LM.is3D(L)) { const q = layerQuad(L, t, c), [sx, sy] = toScreen(cx, cy); if (q && pointInQuad(sx, sy, q)) return L; continue; }
       const m = LM.layerMatrix(L, t, c), [u, v] = M.apply(M.inv(m), cx, cy);
-      if (L.type === 'shape') {
-        const p2 = LM.toPath2D(LM.shapePath(L, t)); hitCtx.lineWidth = Math.max(L.shape.stroke.on ? val(L.shape.stroke.width, t) : 0, 8 / (V.z * M.scaleOf(m)));
-        if ((L.shape.fill.on && hitCtx.isPointInPath(p2, u, v)) || hitCtx.isPointInStroke(p2, u, v)) return L;
-        continue;
-      }
+      if (L.type === 'shape') { if (LM.shapeHit(L, t, u, v, 8 / (V.z * M.scaleOf(m)))) return L; continue; }
       if (L.type === 'draw') { const ss = val(L.draw.cels, t) || []; if (ss.some(s => { for (let i = 0; i < s.pts.length; i += 3) if (Math.hypot(s.pts[i] - u, s.pts[i + 1] - v) < s.w + 6 / V.z) return true; return false; })) return L; continue; }
       const b = LM.layerBounds(L, t);
       if (u >= b[0] && u <= b[2] && v >= b[1] && v <= b[3]) return L;
@@ -236,6 +294,7 @@
   addEventListener('keydown', e => { if (e.code === 'Space' && !e.repeat && !e.target.matches('input,textarea,select')) spaceDown = true; });
   addEventListener('keyup', e => { if (e.code === 'Space') spaceDown = false; });
   function moveDelta(L, dx, dy, t, c) { // comp-space delta → parent-space delta
+    if (LM.is3D(L) && LM.space && !L.parent) { const f = LM.space.depthScale(L, t, c); return [dx * f, dy * f]; }
     const pm = parentMatrix(L, t, c), inv = M.inv([pm[0], pm[1], pm[2], pm[3], 0, 0]); return M.apply(inv, dx, dy);
   }
   view.addEventListener('pointerdown', e => {
@@ -246,15 +305,16 @@
     if (e.button === 2) return;
     if (st.tool === 'zoom') { V.setZoom(V.z * (e.altKey ? 1 / 1.5 : 1.5), sx, sy); return; }
     if (st.playing) LM.stop();
+    if (st.textEdit && LM.textEdit.pointerDown(cx, cy, e)) return;
     if (st.tool === 'select' || st.tool === 'rotate' || st.tool === 'anchor') {
       // 1) path vertices / motion path handles on selected layers
       const hp = hitPathHandles(sx, sy, c); if (hp) { drag = hp; drag.sx = sx; drag.sy = sy; drag.alt = e.altKey && hp.kind === 'mkey'; return; }
       // 2) transform handles
       const sl = LM.selLayers();
-      if (st.tool === 'select' && sl.length === 1 && !sl[0].locked && t >= sl[0].in && t < sl[0].out && sl[0].type !== 'null' && sl[0].type !== 'adjust') {
+      if (st.tool === 'select' && sl.length === 1 && !sl[0].locked && t >= sl[0].in && t < sl[0].out && sl[0].type !== 'null' && sl[0].type !== 'adjust' && LM.hasPixels(sl[0]) && layerQuad(sl[0], t, c)) {
         const L = sl[0], q = layerQuad(L, t, c), hs = handlesOf(q);
         const h = hs.find(h => Math.hypot(h.x - sx, h.y - sy) < 7);
-        if (h) { drag = { kind: 'scale', L, h, s0: val(L.tr.scale, t).slice(), m: LM.layerMatrix(L, t, c), a: val(L.tr.anchor, t) }; return; }
+        if (h) { drag = { kind: 'scale', L, h, s0: val(L.tr.scale, t).slice(), mp: mapper(L, t, c), a: val(L.tr.anchor, t) }; return; }
         // near-corner rotation
         const nearCorner = q.some(p => { const d = Math.hypot(p[0] - sx, p[1] - sy); return d > 7 && d < 22; }) && !pointInQuad(sx, sy, q);
         if (nearCorner) { startRotate(L, cx, cy, t, c); return; }
@@ -264,7 +324,7 @@
         if (e.shiftKey || e.ctrlKey) { if (st.sel.includes(L.id)) LM.select(st.sel.filter(i => i !== L.id)); else LM.select([L.id], true); }
         else if (!st.sel.includes(L.id)) LM.select([L.id]);
         if (st.tool === 'rotate') { startRotate(L, cx, cy, t, c); return; }
-        if (st.tool === 'anchor') { drag = { kind: 'anchor', L, c0: [cx, cy], a0: val(L.tr.anchor, t).slice(), p0: val(L.tr.position, t).slice(), m: LM.layerMatrix(L, t, c) }; return; }
+        if (st.tool === 'anchor') { drag = { kind: 'anchor', L, c0: [cx, cy], a0: val(L.tr.anchor, t).slice(), p0: val(L.tr.position, t).slice(), mp: mapper(L, t, c) }; return; }
         drag = { kind: 'move', c0: [cx, cy], items: LM.selLayers().filter(l => !l.locked).map(l => ({ L: l, p0: val(l.tr.position, t).slice() })) };
         if (e.altKey) drag.dup = true;
         return;
@@ -274,7 +334,7 @@
     }
     if (['rect', 'ellipse', 'polygon', 'star'].includes(st.tool)) { drag = { kind: 'create', p0: [cx, cy], p1: [cx, cy] }; return; }
     if (st.tool === 'pen') { penDown(cx, cy, sx, sy, e); return; }
-    if (st.tool === 'text') { LM.createTextAt(cx, cy); return; }
+    if (st.tool === 'text') { LM.textEdit.toolClick(cx, cy); return; }
     if (st.tool === 'brush' || st.tool === 'eraser') { brushDown(cx, cy, e); return; }
   });
   function pointInQuad(x, y, q) { let s = 0; for (let i = 0; i < 4; i++) { const a = q[i], b = q[(i + 1) % 4], cr = (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]); if (cr !== 0) { if (s === 0) s = Math.sign(cr); else if (Math.sign(cr) !== s) return false; } } return true; }
@@ -295,15 +355,16 @@
         }
       }
       if (t < L.in || t >= L.out) continue;
-      const m = LM.layerMatrix(L, t, c);
-      const owners = L.masks.map(mk => ({ prop: mk.path, owner: mk })); if (L.type === 'shape' && L.shape.kind === 'path') owners.push({ prop: L.shape.path, owner: L.shape });
-      for (const { prop, owner } of owners) {
+      const lmp = mapper(L, t, c), S = (u, v) => { const p = lmp.fwd(u, v); return p ? toScreen(p[0], p[1]) : [1e9, 1e9]; };
+      const owners = L.masks.map(mk => ({ prop: mk.path, owner: mk, mp: lmp })); if (L.type === 'shape') owners.push(...pathOwners(L, t, c));
+      for (const { prop, owner, mp } of owners) {
+        const P2 = (u, v) => { const p = mp.fwd(u, v); return p ? toScreen(p[0], p[1]) : [1e9, 1e9]; }; void S;
         const path = val(prop, t); if (!path?.pts) continue;
         for (let i = 0; i < path.pts.length; i++) {
           const p = path.pts[i];
-          if (near(toScreen(...M.apply(m, p[0] + p[4], p[1] + p[5]))) && (p[4] || p[5])) return { kind: 'ptan', L, prop, owner, i, which: 'o', m };
-          if (near(toScreen(...M.apply(m, p[0] + p[2], p[1] + p[3]))) && (p[2] || p[3])) return { kind: 'ptan', L, prop, owner, i, which: 'i', m };
-          if (near(toScreen(...M.apply(m, p[0], p[1])))) { V.selVertex = { owner, i }; return { kind: 'pvert', L, prop, owner, i, m, alt: false }; }
+          if (near(P2(p[0] + p[4], p[1] + p[5])) && (p[4] || p[5])) return { kind: 'ptan', L, prop, owner, i, which: 'o', mp };
+          if (near(P2(p[0] + p[2], p[1] + p[3])) && (p[2] || p[3])) return { kind: 'ptan', L, prop, owner, i, which: 'i', mp };
+          if (near(P2(p[0], p[1]))) { V.selVertex = { owner, i }; return { kind: 'pvert', L, prop, owner, i, mp, alt: false }; }
         }
       }
     }
@@ -324,9 +385,9 @@
         drag.moved = true; LM.touch(); return;
       }
       case 'scale': {
-        const { L, h, s0, m, a } = drag, inv = M.inv(m), [u, v] = M.apply(inv, cx, cy), [ou, ov] = M.apply(inv, ...toComp(...h.o));
-        // local coords relative to anchor; scale factor = new distance / old distance along axis
-        const [hu, hv] = M.apply(inv, ...toComp(h.x, h.y));
+        const { L, h, s0, mp, a } = drag, uv = mp.inv(cx, cy), huv = mp.inv(...toComp(h.x, h.y)); if (!uv || !huv) return;
+        // layer coords (in the layer's plane at drag start) relative to the anchor; scale = new distance / old distance
+        const [u, v] = uv, [hu, hv] = huv, ou = 0, ov = 0;
         let fx = Math.abs(hu - a[0]) > 1e-3 ? (u - a[0]) / (hu - a[0]) : 1, fy = Math.abs(hv - a[1]) > 1e-3 ? (v - a[1]) / (hv - a[1]) : 1;
         if (h.ax === 'x') fy = e.shiftKey ? fx : 1; if (h.ax === 'y') fx = e.shiftKey ? fy : 1;
         if (!h.ax && e.shiftKey) { const f = Math.abs(fx) > Math.abs(fy) ? fx : fy; fx = fy = f; }
@@ -339,7 +400,7 @@
         LM.setVal(drag.L.tr.rotation, t, r); drag.moved = true; LM.touch(); return;
       }
       case 'anchor': {
-        const { L, m } = drag, inv = M.inv(m), p0 = M.apply(inv, ...drag.c0), p1 = M.apply(inv, cx, cy);
+        const { L, mp } = drag, p0 = mp.inv(...drag.c0), p1 = mp.inv(cx, cy); if (!p0 || !p1) return;
         const na = [drag.a0[0] + p1[0] - p0[0], drag.a0[1] + p1[1] - p0[1]];
         const d = moveDelta(L, cx - drag.c0[0], cy - drag.c0[1], t, c);
         LM.setVal(L.tr.anchor, t, na); LM.setVal(L.tr.position, t, [drag.p0[0] + d[0], drag.p0[1] + d[1]]); drag.moved = true; LM.touch(); return;
@@ -351,7 +412,7 @@
         drag.moved = true; LM.touch(); return;
       }
       case 'pvert': case 'ptan': {
-        const { prop, i, m } = drag, [u, v] = M.apply(M.inv(m), cx, cy);
+        const { prop, i } = drag, uv = drag.mp.inv(cx, cy); if (!uv) return; const [u, v] = uv;
         const path = LM.clone(val(prop, t)), p = path.pts[i];
         if (drag.kind === 'pvert') {
           if (e.altKey || drag.alt) { // Alt-drag a vertex: pull out symmetric tangents
@@ -392,7 +453,7 @@
     const hp = hitPathHandles(sx, sy, c);
     if (hp && hp.kind === 'pvert') { const path = LM.clone(val(hp.prop, st.time)), p = path.pts[hp.i]; if (p[2] || p[3] || p[4] || p[5]) { p[2] = p[3] = p[4] = p[5] = 0; } else { const n = path.pts.length, a = path.pts[(hp.i - 1 + n) % n], b = path.pts[(hp.i + 1) % n]; const tx = (b[0] - a[0]) / 6, ty = (b[1] - a[1]) / 6; p[2] = -tx; p[3] = -ty; p[4] = tx; p[5] = ty; } LM.setVal(hp.prop, st.time, path); LM.commit('Convert Vertex', LM.animated(hp.prop)); return; }
     const L = hitLayer(cx, cy, c); if (!L) return;
-    if (L.type === 'text') LM.editText(L);
+    if (L.type === 'text') LM.textEdit.begin(L, cx, cy);
     else if (L.type === 'precomp') LM.setActiveComp(L.comp);
   });
   view.addEventListener('wheel', e => {
@@ -416,7 +477,7 @@
     else if (st.tool === 'rotate') cur = 'alias';
     else if (st.tool === 'select') {
       const sl = LM.selLayers();
-      if (sl.length === 1 && st.time >= sl[0].in && st.time < sl[0].out && sl[0].type !== 'null') {
+      if (sl.length === 1 && st.time >= sl[0].in && st.time < sl[0].out && sl[0].type !== 'null' && LM.hasPixels(sl[0]) && layerQuad(sl[0], st.time, c)) {
         const q = layerQuad(sl[0], st.time, c), h = handlesOf(q).find(h => Math.hypot(h.x - sx, h.y - sy) < 7);
         if (h) cur = { tl: 'nwse-resize', br: 'nwse-resize', tr: 'nesw-resize', bl: 'nesw-resize', t: 'ns-resize', b: 'ns-resize', l: 'ew-resize', r: 'ew-resize' }[h.k];
         else if (q.some(p => { const d = Math.hypot(p[0] - sx, p[1] - sy); return d > 7 && d < 22; }) && !pointInQuad(sx, sy, q)) cur = 'alias';
@@ -427,6 +488,12 @@
     view.style.cursor = cur;
   }
 
+  // comp-space bezier vertices → layer-space vertices (tangent ends mapped too, so perspective is respected)
+  function toLayerPts(mp, pts) {
+    const out = [];
+    for (const p of pts) { const v = mp.inv(p[0], p[1]), i = mp.inv(p[0] + p[2], p[1] + p[3]), o = mp.inv(p[0] + p[4], p[1] + p[5]); if (!v || !i || !o) return null; out.push([v[0], v[1], i[0] - v[0], i[1] - v[1], o[0] - v[0], o[1] - v[1]]); }
+    return out;
+  }
   /* ---------- shape creation ---------- */
   function finishCreate(d, c, e) {
     const [x0, y0] = d.p0, [x1, y1] = d.p1, w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
@@ -435,9 +502,9 @@
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, O = st.shapeOpts, kind = st.tool;
     const target = LM.selLayer();
     if (st.mode === 'mask' && target && (kind === 'rect' || kind === 'ellipse')) {
-      const m = M.inv(LM.layerMatrix(target, st.time, c)), tmp = { shape: { kind, size: LM.P([w, h]), roundness: LM.P(0) } };
+      const mp = mapper(target, st.time, c), tmp = { shape: { kind, size: LM.P([w, h]), roundness: LM.P(0) } };
       const path = LM.shapePath(tmp, 0);
-      const pts = path.pts.map(p => { const v = M.apply(m, p[0] + cx, p[1] + cy), i = M.apply([m[0], m[1], m[2], m[3], 0, 0], p[2], p[3]), o = M.apply([m[0], m[1], m[2], m[3], 0, 0], p[4], p[5]); return [v[0], v[1], i[0], i[1], o[0], o[1]]; });
+      const pts = toLayerPts(mp, path.pts.map(p => [p[0] + cx, p[1] + cy, p[2], p[3], p[4], p[5]])); if (!pts) return Aero.toast('The mask lies outside the layer plane');
       target.masks.push(LM.factory.mask(kind, pts, 'Mask ' + (target.masks.length + 1)));
       target.expanded = true; LM.ui.open.add(target.id + '|masks');
       LM.commit('New Mask'); return;
@@ -459,8 +526,7 @@
     if (pts.length < 2) { LM.draw(); return; }
     const target = LM.selLayer();
     if (st.mode === 'mask' && target) {
-      const m = M.inv(LM.layerMatrix(target, st.time, c)), lin = [m[0], m[1], m[2], m[3], 0, 0];
-      const lp = pts.map(p => { const v = M.apply(m, p[0], p[1]), i = M.apply(lin, p[2], p[3]), o = M.apply(lin, p[4], p[5]); return [v[0], v[1], i[0], i[1], o[0], o[1]]; });
+      const lp = toLayerPts(mapper(target, st.time, c), pts); if (!lp) { LM.draw(); return Aero.toast('The mask lies outside the layer plane'); }
       const mk = LM.factory.mask('path', lp, 'Mask ' + (target.masks.length + 1));
       target.masks.push(mk); target.expanded = true; LM.ui.open.add(target.id + '|masks'); LM.commit('New Mask'); return;
     }
@@ -522,11 +588,14 @@
       if (!st.playing) return;
       const c2 = LM.comp(), wi2 = c2.workIn, wo2 = Math.min(c2.workOut, c2.duration);
       let t = playT0 + (performance.now() - playStart) / 1000;
+      // audio is the master clock: continuously pull the picture clock onto the sound's playback position
+      const ac = LM.audio.clock();
+      if (ac != null && ac >= wi2 - .01 && ac <= wo2 + .01) { const drift = ac - t; if (Math.abs(drift) > .015) { playStart -= drift * 1000; t = ac; LM.audio.resyncs++; } const dl = LM.audio.driftLog; dl.push(drift); if (dl.length > 200) dl.shift(); }
       if (st.ramPlaying) { // play every cached frame in order at real-time pace, never skipping uncached frames
         t = playT0 + (performance.now() - playStart) / 1000;
       }
       if (t >= wo2) {
-        if (st.loop) { t = wi2 + ((t - wi2) % Math.max(1 / c2.fps, wo2 - wi2)); playStart = performance.now() - (t - wi2) * 1000; playT0 = wi2; LM.pauseVideos(); }
+        if (st.loop) { t = wi2 + ((t - wi2) % Math.max(1 / c2.fps, wo2 - wi2)); playStart = performance.now() - (t - wi2) * 1000; playT0 = wi2; LM.pauseVideos(); LM.emit('loop'); }
         else { LM.stop(); LM.setTime(wo2 - 1 / c2.fps); return; }
       }
       const f = Math.floor(t * c2.fps + 1e-6);
@@ -537,6 +606,7 @@
   };
   LM.stop = () => { if (!st.playing) return; st.playing = false; st.ramPlaying = false; cancelAnimationFrame(playRAF); LM.pauseVideos(); LM.emit('play'); LM.emit('time'); LM.requestRender(); };
   LM.togglePlay = () => st.playing ? LM.stop() : LM.play();
+  V._nudgeClock = ms => { playStart += ms; };   // test hook: simulate a stalled picture clock
   // RAM preview: render every frame of the work area into the cache first, then play in real time
   let ramAbort = false;
   LM.ramPreview = async () => {

@@ -31,6 +31,12 @@ const DB = (() => {
   async function putMany(store, vals) { await open(); const t = tx([store], 'readwrite'); const s = t.objectStore(store); vals.forEach(v => s.put(v)); return done(t); }
   async function clearAll() { await open(); pending.clear(); const t = tx(STORES, 'readwrite'); STORES.forEach(s => t.objectStore(s).clear()); return done(t); }
   const getBlob = async key => (await get('blobs', key))?.blob || null;
+  // many blobs in one read transaction → Map(key → Blob|null)
+  async function getBlobs(keys) {
+    await open(); const t = tx(['blobs']), st = t.objectStore('blobs'), out = new Map();
+    await Promise.all(keys.map(k => req(st.get(k)).then(v => out.set(k, v?.blob || null))));
+    return out;
+  }
   const putBlob = (key, blob) => put('blobs', { key, blob });
   const delBlob = key => del('blobs', key);
 
@@ -45,5 +51,5 @@ const DB = (() => {
   const isPending = () => pending.size > 0;
   function setStateListener(fn) { onState = fn; }
 
-  return { open, getAll, get, put, del, putMany, clearAll, getBlob, putBlob, delBlob, savePhoto, flush, isPending, setStateListener };
+  return { open, getAll, get, put, del, putMany, clearAll, getBlob, getBlobs, putBlob, delBlob, savePhoto, flush, isPending, setStateListener };
 })();

@@ -15,14 +15,15 @@
   ];
 
   // Text attribute defaults (char + paragraph)
-  const CHAR_KEYS = ['font', 'weight', 'italic', 'size', 'lead', 'track', 'color', 'shift', 'caps', 'under', 'strike'];
-  const PARA_KEYS = ['align', 'indL', 'indR', 'indF', 'spB', 'spA', 'dropL', 'dropC', 'hyph', 'grid'];
-  const DEF = { font: 'Source Serif 4', weight: 400, italic: false, size: 11, lead: 0, track: 0, color: '#1a1a1a', shift: 0, caps: 'none', under: false, strike: false,
-    align: 'left', indL: 0, indR: 0, indF: 0, spB: 0, spA: 0, dropL: 0, dropC: 1, hyph: true, grid: false };
+  const CHAR_KEYS = ['font', 'weight', 'italic', 'size', 'lead', 'track', 'color', 'shift', 'caps', 'under', 'strike', 'kern', 'liga', 'otf'];
+  const PARA_KEYS = ['align', 'indL', 'indR', 'indF', 'spB', 'spA', 'dropL', 'dropC', 'hyph', 'grid', 'composer', 'tabs', 'list', 'lchar', 'lfmt', 'lstart'];
+  const DEF = { font: 'Source Serif 4', weight: 400, italic: false, size: 11, lead: 0, track: 0, color: '#1a1a1a', shift: 0, caps: 'none', under: false, strike: false, kern: true, liga: true, otf: '',
+    align: 'left', indL: 0, indR: 0, indF: 0, spB: 0, spA: 0, dropL: 0, dropC: 1, hyph: true, grid: false, composer: 'single', tabs: [], list: '', lchar: '•', lfmt: '1.', lstart: 0 };
+  const FORMAT_VERSION = 2;
 
   function newDoc(o = {}) {
     const d = {
-      format: 'lumen-layout', v: 1,
+      format: 'lumen-layout', v: FORMAT_VERSION, cmyk: o.cmyk !== false,
       units: o.units || 'mm', w: o.w || 595.28, h: o.h || 841.89, facing: !!o.facing,
       margins: o.margins || { t: 36, b: 36, i: 36, o: 36 }, cols: o.cols || 1, gutter: o.gutter ?? 12,
       bleed: o.bleed ?? 9, slug: o.slug ?? 0,
@@ -31,7 +32,7 @@
       masters: [], pages: [], stories: {},
       paraStyles: { basic: { name: 'Basic Paragraph' } },
       charStyles: {},
-      swatches: ['#000000', '#ffffff', '#1a1a1a', '#5b6b7c', '#c8102e', '#e8862a', '#f2c12e', '#2a9d5c', '#1f6fb5', '#5a3fa0', '#0e3a5b', '#efe6d8'],
+      swatches: Color.DEFAULT_SWATCHES(), sections: {},
     };
     const m = { id: 'A', prefix: 'A', name: 'Master', pages: d.facing ? [newPage(), newPage()] : [newPage()] };
     d.masters.push(m);
@@ -40,7 +41,20 @@
     return d;
   }
   function newPage(master = null) { return { id: 'P' + uid(), master, items: [], guides: [] }; }
-  function newStory(d, ps = 'basic') { const s = { id: 'S' + uid(), text: '', ca: [], attrs: [{}], paras: [{ ps }], frames: [] }; d.stories[s.id] = s; return s; }
+  function newStory(d, ps = 'basic') { const s = { id: 'S' + uid(), text: '', ca: [], attrs: [{}], paras: [{ ps }], frames: [], objs: {}, notes: {} }; d.stories[s.id] = s; return s; }
+  // attribute index without inline-object / footnote bindings (for text typed next to them)
+  function plainAttr(story, ai) { const a = story.attrs[ai]; if (!a || (a.obj === undefined && a.fn === undefined)) return ai; const o = { ...a }; delete o.obj; delete o.fn; return attrIdx(story, o); }
+  // page labels honouring sections (style: arabic | roman | ROMAN | alpha | ALPHA, start, prefix)
+  function pageLabels(d) {
+    const out = []; let n = 0, style = 'arabic', prefix = '';
+    d.pages.forEach((p, i) => {
+      const sec = d.sections && d.sections[p.id];
+      if (sec) { style = sec.style || 'arabic'; prefix = sec.prefix || ''; if (sec.start > 0) n = sec.start - 1; }
+      n++;
+      out.push(prefix + Layout.fmtNumber(n, style));
+    });
+    return out;
+  }
 
   /* ---------- story editing ---------- */
   const amaps = new WeakMap();
@@ -63,7 +77,7 @@
   function insertText(story, pos, str, ai) {
     str = String(str).replace(/\r\n?/g, '\n');
     if (!str) return pos;
-    if (ai == null) ai = story.ca[pos - 1] ?? story.ca[pos] ?? 0;
+    if (ai == null) ai = plainAttr(story, story.ca[pos - 1] ?? story.ca[pos] ?? 0);
     const pi = paraIndexAt(story, pos);
     story.text = story.text.slice(0, pos) + str + story.text.slice(pos);
     story.ca = story.ca.slice(0, pos).concat(new Array(str.length).fill(ai), story.ca.slice(pos));
@@ -84,11 +98,20 @@
   function sliceRich(story, a, b) {
     const text = story.text.slice(a, b), ca = story.ca.slice(a, b), used = [...new Set(ca)];
     const p0 = paraIndexAt(story, a), nl = (text.match(/\n/g) || []).length;
-    return { text, attrs: used.map(i => story.attrs[i]), ca: ca.map(i => used.indexOf(i)), paras: story.paras.slice(p0, p0 + nl + 1).map(p => ({ ...p })) };
+    const attrs = used.map(i => story.attrs[i]), objs = {}, notes = {};
+    for (const at of attrs) { if (at.obj && story.objs?.[at.obj]) objs[at.obj] = structuredClone(story.objs[at.obj]); if (at.fn && story.notes?.[at.fn]) notes[at.fn] = structuredClone(story.notes[at.fn]); }
+    return { text, attrs, ca: ca.map(i => used.indexOf(i)), paras: story.paras.slice(p0, p0 + nl + 1).map(p => ({ ...p })), objs, notes };
   }
   function insertRich(story, pos, frag) {
     const pi = paraIndexAt(story, pos);
-    const map = frag.attrs.map(a => attrIdx(story, a));
+    story.objs = story.objs || {}; story.notes = story.notes || {};
+    // inline objects and footnotes are copied under fresh ids so each pasted copy is independent
+    const map = frag.attrs.map(a => {
+      const o = { ...a };
+      if (o.obj) { const src = frag.objs?.[o.obj]; if (src && typeof src === 'object') { const id = 'O' + uid(); story.objs[id] = structuredClone(src); story.objs[id].id = id; o.obj = id; } else delete o.obj; }
+      if (o.fn) { const src = frag.notes?.[o.fn]; if (src && typeof src === 'object') { const id = 'N' + uid(); story.notes[id] = { text: String(src.text || '') }; o.fn = id; } else delete o.fn; }
+      return attrIdx(story, o);
+    });
     const t = frag.text.replace(/\r\n?/g, '\n');
     story.text = story.text.slice(0, pos) + t + story.text.slice(pos);
     story.ca = story.ca.slice(0, pos).concat(frag.ca.map(i => map[i] ?? 0), story.ca.slice(pos));
@@ -139,10 +162,17 @@
   function unrle(r) { const out = []; for (const [v, n] of r || []) for (let k = 0; k < n; k++) out.push(v); return out; }
   function serialize(doc, images) {
     const d = JSON.parse(JSON.stringify(doc));
-    for (const s of Object.values(d.stories)) { s.runs = rle(s.ca); delete s.ca; }
+    for (const s of Object.values(d.stories)) {
+      const live = new Set(); s.ca.forEach((ai, k) => { const at = s.attrs[ai]; if (at && (s.text[k] === '\uFFFC' || s.text[k] === '\uE001')) { if (at.obj) live.add(at.obj); if (at.fn) live.add(at.fn); } });
+      for (const k of Object.keys(s.objs || {})) if (!live.has(k)) delete s.objs[k];
+      for (const k of Object.keys(s.notes || {})) if (!live.has(k)) delete s.notes[k];
+      s.runs = rle(s.ca); delete s.ca;
+    }
     // only images referenced by items
     const used = new Set(); walkAll(d, it => { if (it.type === 'image' && it.img) used.add(it.img); });
-    d.images = {}; for (const id of used) if (images[id]) d.images[id] = images[id];
+    for (const s of Object.values(d.stories)) for (const o of Object.values(s.objs || {})) if (o.kind === 'graphic' && o.item?.img) used.add(o.item.img);
+    for (const [id, im] of Object.entries(images)) if (im && im.keep) used.add(id);   // images loaded for data merge
+    d.images = {}; for (const id of used) if (images[id]) { const im = images[id]; d.images[id] = { name: im.name, mime: im.mime, data: im.data, w: im.w, h: im.h, ...(im.keep ? { keep: true } : {}) }; }
     return JSON.stringify(d);
   }
   const SAFE_IMG = /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/=\s]+$/;
@@ -152,7 +182,7 @@
     if (!d || d.format !== 'lumen-layout' || !Array.isArray(d.pages)) throw new Error('Not a Lumen Layout document');
     const images = {};
     for (const [id, im] of Object.entries(d.images || {})) {
-      if (im && typeof im.data === 'string' && SAFE_IMG.test(im.data.slice(0, 64) + 'A') && SAFE_IMG.test(im.data)) images[id] = { name: String(im.name || 'image'), mime: String(im.mime || ''), data: im.data, w: +im.w || 1, h: +im.h || 1 };
+      if (im && typeof im.data === 'string' && SAFE_IMG.test(im.data.slice(0, 64) + 'A') && SAFE_IMG.test(im.data)) images[id] = { name: String(im.name || 'image').slice(0, 260), mime: String(im.mime || ''), data: im.data, w: +im.w || 1, h: +im.h || 1, ...(im.keep === true ? { keep: true } : {}) };
     }
     delete d.images;
     const num = (v, def) => Number.isFinite(+v) ? +v : def;
@@ -162,7 +192,14 @@
     d.layers = Array.isArray(d.layers) && d.layers.length ? d.layers : [{ id: 'L1', name: 'Layer 1', color: '#4f7fd9', visible: true, locked: false }];
     d.masters = Array.isArray(d.masters) ? d.masters : [];
     d.paraStyles = d.paraStyles || { basic: { name: 'Basic Paragraph' } }; if (!d.paraStyles.basic) d.paraStyles.basic = { name: 'Basic Paragraph' };
-    d.charStyles = d.charStyles || {}; d.swatches = Array.isArray(d.swatches) ? d.swatches : [];
+    d.charStyles = d.charStyles || {};
+    d.swatches = Color.migrateSwatches(d.swatches);
+    d.cmyk = d.cmyk === true; d.v = FORMAT_VERSION;
+    d.sections = sanitizeSections(d.sections);
+    d.toc = sanitizeToc(d.toc);
+    d.merge = sanitizeMerge(d.merge);
+    d.footnotes = d.footnotes && typeof d.footnotes === 'object' ? { continuous: d.footnotes.continuous === true, start: fin(d.footnotes.start, 1, 1, 100000) | 0 } : { continuous: false, start: 1 };
+    for (const st of [...Object.values(d.paraStyles), ...Object.values(d.charStyles)]) sanitizeAttrs(st);
     d.stories = d.stories || {};
     for (const s of Object.values(d.stories)) {
       s.text = String(s.text || ''); s.ca = s.runs ? unrle(s.runs) : new Array(s.text.length).fill(0); delete s.runs;
@@ -171,13 +208,91 @@
       const np = (s.text.match(/\n/g) || []).length + 1;
       s.paras = Array.isArray(s.paras) ? s.paras : []; while (s.paras.length < np) s.paras.push({ ps: 'basic' }); s.paras.length = np;
       s.frames = Array.isArray(s.frames) ? s.frames : [];
+      s.attrs = s.attrs.map(a => sanitizeAttrs(a && typeof a === 'object' ? a : {}));
+      s.paras = s.paras.map(p => sanitizeAttrs(p && typeof p === 'object' ? p : { ps: 'basic' }));
+      s.objs = sanitizeObjs(s.objs, images); s.notes = sanitizeNotes(s.notes);
     }
+    walkAll(d, it => sanitizeItem(it));
     for (const p of [...d.pages, ...d.masters.flatMap(m => m.pages || [])]) { p.items = Array.isArray(p.items) ? p.items : []; p.guides = Array.isArray(p.guides) ? p.guides : []; if (!p.id) p.id = 'P' + uid(); }
     return { doc: d, images };
+  }
+
+  /* ---------- validation of untrusted document data (format v2 additions) ---------- */
+  const fin = (v, def, lo = -1e6, hi = 1e6) => Number.isFinite(+v) ? Math.max(lo, Math.min(hi, +v)) : def;
+  const str = (v, max = 200) => typeof v === 'string' ? v.slice(0, max) : '';
+  const col = (v, def = null) => Color.validRef(v) ? v : def;
+  const ID = /^[\w-]{1,40}$/;
+  function sanitizeTabs(t) { return Array.isArray(t) ? t.slice(0, 40).filter(x => x && Number.isFinite(+x.x)).map(x => ({ x: fin(x.x, 0, 0, 5000), t: ['l', 'c', 'r', 'd'].includes(x.t) ? x.t : 'l', ...(x.ld ? { ld: str(x.ld, 2) } : {}), ...(x.ac ? { ac: str(x.ac, 1) } : {}) })).sort((a, b) => a.x - b.x) : []; }
+  function sanitizeAttrs(a) {
+    if ('color' in a) { const c = col(a.color); if (c) a.color = c; else delete a.color; }
+    if ('tabs' in a) a.tabs = sanitizeTabs(a.tabs);
+    if ('list' in a && !['', 'bullet', 'number'].includes(a.list)) delete a.list;
+    if ('lchar' in a) a.lchar = str(a.lchar, 2) || '•';
+    if ('lfmt' in a && !/^(1|a|A|i|I)[.)]?$/.test(a.lfmt)) delete a.lfmt;
+    if ('lstart' in a) a.lstart = fin(a.lstart, 0, 0, 100000) | 0;
+    if ('composer' in a && a.composer !== 'paragraph' && a.composer !== 'single') delete a.composer;
+    if ('otf' in a) a.otf = String(a.otf || '').split(/[\s,]+/).filter(t => /^[a-z0-9]{4}$/.test(t)).join(' ');
+    if ('kadj' in a) a.kadj = fin(a.kadj, 0, -1000, 1000);
+    for (const k of ['kern', 'liga']) if (k in a) a[k] = a[k] !== false;
+    if ('obj' in a && (typeof a.obj !== 'string' || !ID.test(a.obj))) delete a.obj;
+    if ('fn' in a && (typeof a.fn !== 'string' || !ID.test(a.fn))) delete a.fn;
+    return a;
+  }
+  function sanitizeTable(t, inline) {
+    const nc = Math.max(1, Math.min(60, Array.isArray(t.colW) ? t.colW.length : 1)), nr = Math.max(1, Math.min(500, Array.isArray(t.rowH) ? t.rowH.length : 1));
+    const o = inline ? { kind: 'table' } : t;
+    const cw = Array.from({ length: nc }, (_, k) => fin(t.colW?.[k], 50, 2, 5000)), rh = Array.from({ length: nr }, (_, k) => fin(t.rowH?.[k], 18, 2, 5000));
+    const cells = Array.from({ length: nr }, (_, r) => Array.from({ length: nc }, (_, c) => { const x = t.cells?.[r]?.[c] || {}; const y = { t: str(x.t, 5000) };
+      if (x.fill) y.fill = col(x.fill); if (x.color) y.color = col(x.color); if (['left', 'center', 'right'].includes(x.align)) y.align = x.align; if (x.bold) y.bold = true;
+      if (x.cs > 1) y.cs = fin(x.cs, 1, 1, nc) | 0; if (x.rs > 1) y.rs = fin(x.rs, 1, 1, nr) | 0; for (const k in y) if (y[k] == null) delete y[k]; return y; }));
+    o.colW = cw; o.rowH = rh; o.cells = cells;
+    o.header = fin(t.header, 0, 0, nr) | 0; o.tfont = Fonts.FAMILIES[t.tfont] ? t.tfont : 'Montserrat'; o.tsize = fin(t.tsize, 8, 2, 200);
+    for (const k of ['tcolor', 'hfill', 'hcolor', 'bcolor', 'zebra']) o[k] = col(t[k], k === 'tcolor' ? '#1a1a1a' : null);
+    o.bw = fin(t.bw, 0.5, 0, 20); o.pad = fin(t.pad, 4, 0, 100);
+    return Tables.normalize(o);
+  }
+  function sanitizeItem(it) {
+    for (const k of ['fill', 'stroke']) if (k in it) it[k] = col(it[k]);
+    if (it.grad) { if (typeof it.grad !== 'object') delete it.grad; else { it.grad = { angle: fin(it.grad.angle, 0), c0: col(it.grad.c0, '#ffffff'), o0: fin(it.grad.o0, 1, 0, 1), c1: col(it.grad.c1, '#000000'), o1: fin(it.grad.o1, 1, 0, 1) }; } }
+    if (it.wrap && !['none', 'box', 'shape', 'contour', 'jump'].includes(it.wrap)) it.wrap = 'none';
+    for (const k of ['opFill', 'opStroke']) if (k in it) it[k] = it[k] === true;
+    if ('mergeField' in it) { if (typeof it.mergeField === 'string' && it.mergeField.length < 80) it.mergeField = it.mergeField; else delete it.mergeField; }
+    if (it.type === 'table') sanitizeTable(it, false);
+  }
+  function sanitizeObjs(objs, images) {
+    const out = {};
+    if (!objs || typeof objs !== 'object') return out;
+    for (const [id, o] of Object.entries(objs)) {
+      if (!ID.test(id) || !o || typeof o !== 'object') continue;
+      if (o.kind === 'table') { const t = sanitizeTable(o, true); t.id = id; out[id] = t; continue; }
+      if (o.kind === 'graphic' && o.item && typeof o.item === 'object') {
+        const s = o.item, type = ['image', 'rect', 'ellipse'].includes(s.type) ? s.type : 'rect';
+        const item = { type, w: fin(s.w, 36, 1, 5000), h: fin(s.h, 36, 1, 5000), fill: col(s.fill), stroke: col(s.stroke), sw: fin(s.sw, 1, 0, 100), radius: fin(s.radius, 0, 0, 1000) };
+        if (type === 'image') { item.img = typeof s.img === 'string' && images[s.img] ? s.img : null; item.cs = fin(s.cs, 1, 1e-4, 1e4); item.cx = fin(s.cx, 0); item.cy = fin(s.cy, 0); }
+        out[id] = { kind: 'graphic', id, item, pos: o.pos === 'above' ? 'above' : 'inline', align: ['left', 'center', 'right'].includes(o.align) ? o.align : 'left', shift: fin(o.shift, 0, -1000, 1000) };
+      }
+    }
+    return out;
+  }
+  function sanitizeNotes(n) { const out = {}; if (n && typeof n === 'object') for (const [id, x] of Object.entries(n)) if (ID.test(id) && x && typeof x === 'object') out[id] = { text: str(x.text, 20000) }; return out; }
+  function sanitizeSections(sec) {
+    const out = {}; if (!sec || typeof sec !== 'object') return out;
+    for (const [id, x] of Object.entries(sec)) if (typeof id === 'string' && id.length < 60 && x && typeof x === 'object') out[id] = { style: ['arabic', 'roman', 'ROMAN', 'alpha', 'ALPHA'].includes(x.style) ? x.style : 'arabic', start: x.start > 0 ? fin(x.start, 1, 1, 1e6) | 0 : null, prefix: str(x.prefix, 12) };
+    return out;
+  }
+  function sanitizeToc(t) {
+    if (!t || typeof t !== 'object') return null;
+    return { sid: str(t.sid, 40), title: str(t.title, 200), styles: Array.isArray(t.styles) ? t.styles.slice(0, 20).filter(x => x && typeof x.ps === 'string').map(x => ({ ps: str(x.ps, 60), level: fin(x.level, 1, 1, 4) | 0 })) : [] };
+  }
+  function sanitizeMerge(m) {
+    if (!m || typeof m !== 'object' || !Array.isArray(m.fields)) return null;
+    const fields = m.fields.slice(0, 100).map(f => str(f, 80));
+    return { name: str(m.name, 200), fields, rows: Array.isArray(m.rows) ? m.rows.slice(0, 10000).map(r => fields.map((_, k) => str(Array.isArray(r) ? r[k] : '', 5000))) : [] };
   }
   function walkItems(items, fn, parent = null) { for (const it of items) { fn(it, parent); if (it.type === 'group') walkItems(it.children, fn, it); } }
   function walkAll(d, fn) { for (const p of d.pages) walkItems(p.items, fn); for (const m of d.masters) for (const p of m.pages) walkItems(p.items, fn); }
 
   window.M = { uid, UNITS, UNIT_NAMES, toU, fromU, fmtU, PRESETS, DEF, CHAR_KEYS, PARA_KEYS, newDoc, newPage, newStory, attrIdx, paraIndexAt, paraStart, paraEnd,
-    insertText, deleteRange, sliceRich, insertRich, paraStyleChain, paraEff, charEff, stripMeta, newItem, newTable, serialize, deserialize, walkItems, walkAll, rle, unrle };
+    insertText, deleteRange, sliceRich, insertRich, paraStyleChain, paraEff, charEff, stripMeta, newItem, newTable, serialize, deserialize, walkItems, walkAll, rle, unrle,
+    plainAttr, pageLabels, sanitizeTable, sanitizeAttrs, FORMAT_VERSION };
 })();

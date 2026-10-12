@@ -4,7 +4,7 @@
    keyframes and music. Generated media is cached in IndexedDB so later opens are instant. */
 (function () {
   const W = 1920, H = 1080, FPS = 30, DUR = 6;
-  const KEY = 'sample-v3';
+  const KEY = 'sample-v4';
 
   /* ---------- tiny IndexedDB cache ---------- */
   const idb = () => new Promise((res, rej) => { const r = indexedDB.open('lumen-cut', 1); r.onupgradeneeded = () => r.result.createObjectStore('blobs'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -95,6 +95,43 @@
     };
   }
 
+  /* a friendly robot host filmed on a (slightly uneven, spill-y) green screen — keyed in the sample */
+  function host() {
+    const r = rng(21), grain = [...Array(900)].map(() => [r() * W, r() * H, r()]);
+    return (x, t) => {
+      const g = x.createRadialGradient(W * .45, H * .4, 80, W * .5, H * .5, W * .75); g.addColorStop(0, '#22c45a'); g.addColorStop(1, '#0e9a3c'); x.fillStyle = g; x.fillRect(0, 0, W, H);
+      for (const [gx, gy, k] of grain) { x.fillStyle = k > .5 ? 'rgba(255,255,255,.035)' : 'rgba(0,0,0,.04)'; x.fillRect(gx, gy, 3, 3); }
+      const bob = Math.sin(t * 2.2) * 14, cx = W * .5, cy = H * .56 + bob;
+      x.fillStyle = 'rgba(0,60,20,.35)'; x.beginPath(); x.ellipse(cx, H * .93, 230 - bob, 34, 0, 0, 7); x.fill();      // floor shadow (keys out mostly)
+      x.save(); x.shadowColor = 'rgba(80,255,120,.55)'; x.shadowBlur = 26;                                         // green spill rim
+      const body = x.createLinearGradient(cx - 200, 0, cx + 200, 0); body.addColorStop(0, '#9fb0c4'); body.addColorStop(.45, '#f4f8fc'); body.addColorStop(1, '#8a9cb2');
+      x.fillStyle = body; x.beginPath(); x.roundRect(cx - 170, cy - 40, 340, 330, 70); x.fill();
+      x.beginPath(); x.roundRect(cx - 150, cy - 330, 300, 250, 90); x.fill();                                      // head
+      x.restore();
+      x.fillStyle = '#16202c'; x.beginPath(); x.roundRect(cx - 118, cy - 290, 236, 150, 60); x.fill();                // visor
+      const blink = (t % 3.1) < .12 ? .15 : 1;
+      x.fillStyle = '#5ae8ff'; x.shadowColor = '#5ae8ff'; x.shadowBlur = 30;
+      [-55, 55].forEach(dx => { x.beginPath(); x.ellipse(cx + dx, cy - 218, 22, 26 * blink, 0, 0, 7); x.fill(); });
+      x.beginPath(); x.arc(cx, cy - 180, 34, .15 * Math.PI, .85 * Math.PI); x.lineWidth = 8; x.strokeStyle = '#5ae8ff'; x.stroke();
+      x.shadowBlur = 0;
+      x.strokeStyle = '#8a9cb2'; x.lineWidth = 10; x.beginPath(); x.moveTo(cx, cy - 330); x.lineTo(cx, cy - 390); x.stroke();      // antenna
+      x.fillStyle = '#ff7a3c'; x.shadowColor = '#ff7a3c'; x.shadowBlur = 40 + 20 * Math.sin(t * 6); x.beginPath(); x.arc(cx, cy - 400, 18, 0, 7); x.fill(); x.shadowBlur = 0;
+      // waving arm
+      x.save(); x.translate(cx + 165, cy + 10); x.rotate(-1.1 + Math.sin(t * 5) * .45); x.fillStyle = '#dfe7ef'; x.beginPath(); x.roundRect(-22, -200, 44, 210, 22); x.fill();
+      x.fillStyle = '#f4f8fc'; x.beginPath(); x.arc(0, -205, 34, 0, 7); x.fill(); x.restore();
+      x.fillStyle = '#dfe7ef'; x.beginPath(); x.roundRect(cx - 215, cy - 10, 44, 190, 22); x.fill();                  // other arm
+      x.fillStyle = '#ff7a3c'; x.beginPath(); x.roundRect(cx - 60, cy + 40, 120, 70, 18); x.fill();                   // chest panel
+      x.fillStyle = '#16202c'; for (let i = 0; i < 3; i++) { x.fillRect(cx - 42 + i * 32, cy + 58, 20, 34 * (.4 + .6 * Math.abs(Math.sin(t * 4 + i)))); }
+    };
+  }
+  /* "Teal & Orange" creative look as a .cube (goes through the same parser/validator as imported LUTs) */
+  LC.sampleCube = () => LC.makeCube('Teal & Orange', 17, (r, g, b) => {
+    const l = .2126 * r + .7152 * g + .0722 * b, k = l - .45;
+    let R = r + k * .16 + .02, G = g + k * .03, B = b - k * .2 + .03;
+    const L2 = .2126 * R + .7152 * G + .0722 * B; R = L2 + (R - L2) * 1.12; G = L2 + (G - L2) * 1.12; B = L2 + (B - L2) * 1.12;
+    return [R, G, B];
+  });
+
   /* ---------- audio generators ---------- */
   async function oceanAudio(dur) {
     const sr = 48000, ctx = new OfflineAudioContext(2, sr * dur, sr);
@@ -177,11 +214,11 @@
 
   async function generate(onp) {
     const out = {};
-    const scenes = [['aurora', 'Aurora', aurora, null], ['ocean', 'Ocean Sunset', ocean, 'ocean'], ['neon', 'Neon Drive', neon, null]];
+    const scenes = [['aurora', 'Aurora', aurora, null], ['ocean', 'Ocean Sunset', ocean, 'ocean'], ['neon', 'Neon Drive', neon, null], ['host', 'Robot Host (green screen)', host, null]];
     for (let i = 0; i < scenes.length; i++) {
       const [id, name, mk, aud] = scenes[i];
       const ab = aud ? await oceanAudio(DUR) : null;
-      const r = await encodeClip(mk(), DUR, ab, f => onp(`Rendering sample clip ${i + 1} of 3 — ${name} (${Math.round(f * 100)}%)`));
+      const r = await encodeClip(mk(), DUR, ab, f => onp(`Rendering sample clip ${i + 1} of ${scenes.length} — ${name} (${Math.round(f * 100)}%)`));
       out[id] = { blob: r.blob, name: `${name}.${r.ext}` };
     }
     onp('Composing music…');
@@ -191,7 +228,7 @@
   }
   LC.sampleMedia = async (onp = () => { }) => {
     let s = await cacheGet(KEY);
-    if (!s || !s.aurora) { s = await generate(onp); await cachePut(KEY, s); }
+    if (!s || !s.aurora || !s.host) { s = await generate(onp); await cachePut(KEY, s); }
     return s;
   };
   /* Rebuild runtime blobs for sample media referenced by a saved project */
@@ -206,10 +243,14 @@
     const P = LC.project = LC.newProject('1080p', 30); P.name = 'Lumen Cut Sample';
     LC.rt.media.clear();
     const add = (k) => { const it = s[k]; if (!it) return null; const m = LC.addMediaBlob(it.blob, it.name, null, { sample: k }); return m; };
-    const ms = { aurora: add('aurora'), ocean: add('ocean'), neon: add('neon'), music: add('music'), logo: add('logo') };
+    const ms = { aurora: add('aurora'), ocean: add('ocean'), neon: add('neon'), host: add('host'), music: add('music'), logo: add('logo') };
+    // 4 video tracks, 2 audio tracks
+    P.tracks = P.tracks.filter(t => t.name !== 'A3'); P.tracks.splice(3, 0, LC.makeTrack('video', 4));
+    P.tracks.forEach(t => t.h = t.kind === 'video' ? 42 : 38);
     onp('Analysing media…');
     for (const m of Object.values(ms)) if (m) await LC.analyze(m);
-    const [V1, V2, V3] = LC.videoTracks(), [A1, A2] = LC.audioTracks();
+    const [V1, V2, V3, V4] = LC.videoTracks(), [A1, A2] = LC.audioTracks();
+    const look = LC.addLutText(LC.sampleCube(), 'Teal & Orange');
     const clip = o => { const c = LC.makeClip(o); P.clips.push(c); return c; };
     const L = 4.5;
     const a = clip({ track: V1.id, type: 'video', media: ms.aurora.id, start: 0, in: .5, dur: L, name: ms.aurora.name });
@@ -217,24 +258,40 @@
     const b = clip({ track: V1.id, type: 'video', media: ms.ocean.id, start: L, in: .5, dur: L, name: ms.ocean.name, link: 'lk1' });
     b.props.temperature = 12;
     const bA = clip({ track: A1.id, type: 'audio', media: ms.ocean.id, start: L, in: .5, dur: L, name: ms.ocean.name, link: 'lk1' });
-    bA.props.fadeIn = .6; bA.props.fadeOut = .6; bA.props.volume = -3;
+    bA.props.volume = -3; bA.afx = LC.defaultAfx(); bA.afx.verb = { on: true, mix: 22, size: 2.2 }; bA.afx.eq = { on: true, low: -4, mid: 0, midF: 1000, high: 3 };
+    P.transitions.push({ id: 'xa1', track: A1.id, a: null, b: bA.id, type: 'cpower', dur: .8 }, { id: 'xa2', track: A1.id, a: bA.id, b: null, type: 'cpower', dur: .8 });
+    b.props.highlights = -25; b.props.shadows = 18; b.props.vibrance = 30; b.props.wH = [.18, .12, 0];
     const c = clip({ track: V1.id, type: 'video', media: ms.neon.id, start: L * 2, in: .5, dur: L, name: ms.neon.name });
-    c.kf.scale = [{ t: 0, v: 100 }, { t: L, v: 118, ease: false }];
+    c.kf.scale = [{ t: 0, v: 100, e: 'linear' }, { t: L, v: 118, e: 'linear' }];
+    c.kf.speed = [{ t: 0, v: 1, e: 'ease' }, { t: L, v: 1.2, e: 'linear' }];                           // gentle speed ramp
+    c.curves = { ...LC.defaultCurves(), rgb: [[0, 0], [.25, .2], [.75, .82], [1, 1]] };
+    a.lut = { id: look.id, amt: 70 };
+    // green-screen host keyed over the neon drive
+    const h = clip({ track: V4.id, type: 'video', media: ms.host.id, start: L * 2 + .3, in: .3, dur: L - .3, name: ms.host.name });
+    h.key = { ...LC.defaultKey(), on: true, color: '#18b84e', tol: 30, soft: 16, spill: 75, feather: 1.5, choke: 10 };
+    h.props.scale = 56; h.props.pos = [.77, .62]; h.props.contrast = 6;
+    h.kf.opacity = [{ t: 0, v: 0, e: 'easeout' }, { t: .6, v: 100, e: 'linear' }, { t: h.dur - .5, v: 100, e: 'linear' }, { t: h.dur, v: 0, e: 'linear' }];
+    // adjustment layer: teal & orange look + vignette over the opening
     P.transitions.push({ id: 'x1', track: V1.id, a: a.id, b: b.id, type: 'dissolve', dur: 1 });
     P.transitions.push({ id: 'x2', track: V1.id, a: b.id, b: c.id, type: 'push', dur: .8 });
     P.transitions.push({ id: 'x3', track: V1.id, a: c.id, b: null, type: 'dipblack', dur: 1 });
     const t1 = clip({ track: V2.id, type: 'title', start: .3, dur: 3.6, title: LC.defaultTitle({ text: 'LUMEN CUT', size: 190, font: 'Segoe UI', bold: true, y: .45, animIn: 'slide', animOut: 'fade', animDur: .8, shadowBlur: 40, shadowDist: 0, shadowColor: '#1a6a9a' }) });
-    clip({ track: V3.id, type: 'title', start: 1.0, dur: 2.9, title: LC.defaultTitle({ text: 'edit anything · free · in your browser', size: 54, bold: false, y: .6, color: '#d8f4ff', animIn: 'fade', animOut: 'fade', animDur: .7, shadowBlur: 10, shadowDist: 2 }) });
+    const t2 = clip({ track: V3.id, type: 'title', start: 1.0, dur: 2.9, title: LC.defaultTitle({ text: 'edit anything · free · in your browser', size: 54, bold: false, y: .6, color: '#d8f4ff', animIn: 'fade', animOut: 'fade', animDur: .7, shadowBlur: 10, shadowDist: 2 }) });
     clip({ track: V2.id, type: 'title', start: L + .6, dur: 3.4, title: LC.defaultTitle({ text: 'Golden Hour\nPacific Coast · 6:42 PM', size: 64, bold: true, preset: 'lower', x: .07, y: .8, align: 'left', box: true, boxColor: '#10243a', boxOpacity: 70, boxPad: 30, shadow: false, animIn: 'typewriter', animOut: 'fade', animDur: .5 }) });
     clip({ track: V2.id, type: 'title', start: L * 2 + .7, dur: 3.2, title: LC.defaultTitle({ text: 'NEON DRIVE', size: 150, font: 'Impact', bold: false, italic: true, y: .32, color: '#ffe9ff', stroke: true, strokeColor: '#ff2ad4', strokeWidth: 5, shadow: true, shadowColor: '#ff2ad4', shadowBlur: 50, shadowDist: 0, animIn: 'zoom', animOut: 'fade', animDur: .6 }) });
     if (ms.logo) {
       const lg = clip({ track: V3.id, type: 'image', media: ms.logo.id, start: L, dur: L * 2 - .5, name: ms.logo.name });
-      lg.props.pos = [.925, .12]; lg.props.scale = 11;
+      lg.props.pos = [.925, .12]; lg.props.scale = 11; lg.props.blend = 'screen';
       lg.kf.opacity = [{ t: 0, v: 0 }, { t: .8, v: 85 }, { t: lg.dur - .8, v: 85 }, { t: lg.dur, v: 0 }];
     }
     const mu = clip({ track: A2.id, type: 'audio', media: ms.music.id, start: 0, in: 0, dur: L * 3, name: ms.music.name });
-    mu.props.fadeIn = 1; mu.props.fadeOut = 2.5; mu.props.volume = -4;
+    mu.props.fadeIn = 1; mu.props.fadeOut = 2.5; mu.props.volume = -4; mu.afx = LC.defaultAfx(); mu.afx.eq = { on: true, low: 3, mid: -2, midF: 900, high: 2 }; mu.afx.comp = { on: true, thr: -20, ratio: 3, att: 10, rel: 200, gain: 0 };
+    A2.kf = { vol: [{ t: L - .6, v: 0, e: 'easeout' }, { t: L + .4, v: -7, e: 'linear' }, { t: L * 2 - .4, v: -7, e: 'easein' }, { t: L * 2 + .4, v: 0, e: 'linear' }] };   // duck the music under the ocean
+    const adj = clip({ track: V4.id, type: 'adjust', start: 0, dur: L - .2, name: 'Adjustment Layer' }); adj.props.vignette = -45; adj.props.contrast = 6;
     P.markers.push({ id: 'k1', t: L, name: 'Ocean', color: '#f08a24' }, { id: 'k2', t: L * 2, name: 'Neon', color: '#d43ad0' });
+    // the opening titles live in their own nested sequence (double-click it on V2 to open)
+    LC.activeSeq().name = 'Main Edit';
+    LC.nestClips([t1, t2], 'Intro Titles');
     return P;
   };
 })();

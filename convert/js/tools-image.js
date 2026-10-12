@@ -123,11 +123,10 @@
         if (src !== bmp && src.close) src.close();
         const dims = W !== bmp.width ? ` · ${bmp.width}×${bmp.height} → ${W}×${H}` : '';
         const bigger = blob.size >= f.size ? ' · the original is already smaller, keep it' : '';
-        return { name: `${baseName(f.name)}-compressed.${EXT[fmt]}`, blob, thumb: true, info: `${fmtSize(f.size)} → ${fmtSize(blob.size)} ${saving(f.size, blob.size)} · ${fmt.toUpperCase()} ${Math.round(q * 100)}%${dims}${bigger}` };
+        return { name: `${baseName(f.name)}-compressed.${EXT[fmt]}`, blob, thumb: true, infoHtml: `${fmtSize(f.size)} → ${fmtSize(blob.size)} ${saving(f.size, blob.size)} · ${fmt.toUpperCase()} ${Math.round(q * 100)}%${esc(dims + bigger)}` };
       } finally { bmp.close(); }
     }
   });
-  // info strings above include our own trusted markup; filenames are never interpolated into them.
 
   /* 4 ─ SVG → PNG */
   function parseLen(v) { if (!v) return null; const m = String(v).trim().match(/^([\d.]+)\s*(px|pt|pc|mm|cm|in)?$/i); if (!m) return null; const k = { px: 1, pt: 4 / 3, pc: 16, mm: 96 / 25.4, cm: 96 / 2.54, in: 96 }[(m[2] || 'px').toLowerCase()]; return parseFloat(m[1]) * k; }
@@ -337,6 +336,124 @@
     }
   });
   alias('base64-to-image', 'base64', { mode: 'dec' });
+
+  /* HEIC / HEIF → JPEG / PNG (libheif, LGPL, unmodified separate file) */
+  let heifMod = null;
+  async function heif() {
+    if (!heifMod) heifMod = (async () => { const f = await U.loadScript('vendor/libheif-bundle.js', 'libheif'); const m = typeof f === 'function' ? await f() : f; return m.HeifDecoder ? m : await m; })();
+    return heifMod;
+  }
+  register({
+    id: 'heic', cat: 'img', glyph: 'heic', name: 'HEIC → JPEG / PNG', keywords: 'heic heif iphone apple photo to jpg jpeg png convert',
+    desc: 'iPhone HEIC/HEIF photos to JPEG or PNG.',
+    accept: '.heic,.heif,image/heic,image/heif', acceptText: 'HEIC and HEIF photos', acceptTest: f => /^(heic|heif|hif)$/.test(extOf(f.name)) || /image\/hei[cf]/.test(f.type), multiple: true, zipName: 'heic-converted',
+    options: [
+      { key: 'to', label: 'Convert to', type: 'select', value: 'jpeg', options: [['jpeg', 'JPEG'], ['png', 'PNG'], ['webp', 'WebP']] },
+      { key: 'q', label: 'Quality', type: 'range', min: 0.3, max: 1, step: 0.01, value: 0.9, fmt: qFmt, show: o => o.to !== 'png' },
+      { key: 'all', label: 'Bursts', type: 'checkbox', text: 'Export every image in the file (not just the main one)', value: false }],
+    note: 'Decoded with libheif (LGPL-3.0). Metadata is not copied.',
+    async each(f, o, ctx) {
+      if (f.size > 200 * 1048576) throw new Error('File is too large (over 200 MB)');
+      ctx.progress(0.05, 'Loading the HEIC decoder');
+      const lh = await heif();
+      ctx.progress(0.2, 'Decoding ' + f.name);
+      const dec = new lh.HeifDecoder();
+      let imgs; try { imgs = dec.decode(new Uint8Array(await f.arrayBuffer())); } catch (e) { imgs = null; }
+      if (!imgs || !imgs.length) throw new Error('Not a readable HEIC/HEIF image');
+      const list = o.all ? imgs : [imgs[0]], out = [];
+      for (let i = 0; i < list.length; i++) {
+        ctx.check(); const im = list[i], w = im.get_width(), h = im.get_height(); U.checkDims(w, h);
+        ctx.progress(0.3 + 0.6 * i / list.length, `Converting image ${i + 1} of ${list.length}`);
+        const id = new ImageData(w, h);
+        await new Promise((res, rej) => im.display({ data: id.data, width: w, height: h }, d => d ? res() : rej(new Error('HEIC decoding failed'))));
+        const c = U.canvas(w, h), g = c.getContext('2d');
+        if (o.to === 'jpeg') { g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); const t = U.canvas(w, h); t.getContext('2d').putImageData(id, 0, 0); g.drawImage(t, 0, 0); } else g.putImageData(id, 0, 0);
+        const blob = await U.encodeCanvas(c, U.MIME[o.to], o.q);
+        out.push({ name: baseName(f.name) + (list.length > 1 ? '-' + (i + 1) : '') + '.' + EXT[o.to], blob, thumb: true, info: `${w}×${h} · HEIC → ${o.to.toUpperCase()}` });
+      }
+      imgs.forEach(im => im.free && im.free());
+      return out;
+    }
+  });
+  alias('heic-to-jpg', 'heic', { to: 'jpeg' }); alias('heic-to-png', 'heic', { to: 'png' });
+
+  /* PNG / JPG → SVG (ImageTracer, public domain) — runs in a worker so the page stays responsive */
+  function traceInWorker(imgd, options) {
+    const src = `importScripts(${JSON.stringify(new URL('vendor/imagetracer.js', document.baseURI).href)});
+      onmessage = e => { try { postMessage({ svg: ImageTracer.imagedataToSVG(e.data.imgd, e.data.options) }); } catch (err) { postMessage({ error: String(err && err.message || err) }); } };`;
+    const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), w = new Worker(url);
+    return { promise: new Promise((res, rej) => { w.onmessage = e => { w.terminate(); URL.revokeObjectURL(url); e.data.error ? rej(new Error(e.data.error)) : res(e.data.svg); }; w.onerror = e => { w.terminate(); URL.revokeObjectURL(url); rej(new Error(e.message || 'Tracing failed')); }; w.postMessage({ imgd: { width: imgd.width, height: imgd.height, data: imgd.data }, options }); }), stop: () => { w.terminate(); URL.revokeObjectURL(url); } };
+  }
+  const TRACE = {
+    logo: { numberofcolors: 8, pathomit: 8, ltres: 1, qtres: 1, colorquantcycles: 3, blurradius: 0, roundcoords: 1 },
+    detailed: { numberofcolors: 32, pathomit: 2, ltres: 0.5, qtres: 0.5, roundcoords: 2, colorquantcycles: 3 },
+    poster: { numberofcolors: 6, blurradius: 4, blurdelta: 30, pathomit: 12, colorsampling: 2 },
+    bw: { numberofcolors: 2, colorsampling: 0, pathomit: 8, blurradius: 1 }
+  };
+  register({
+    id: 'image-to-svg', cat: 'img', glyph: 'trace', name: 'PNG / JPG → SVG', keywords: 'vectorize trace bitmap png jpg to svg vector logo',
+    desc: 'Trace a bitmap into an editable SVG vector (best for logos and flat art).',
+    accept: 'image/*,.bmp', acceptText: 'PNG, JPEG, WebP, BMP, GIF (logos and flat graphics trace best)', acceptTest: isRaster, multiple: true, zipName: 'traced-svg',
+    options: [
+      { key: 'preset', label: 'Style', type: 'select', value: 'logo', options: [['logo', 'Logo / flat art'], ['detailed', 'Detailed (more colours)'], ['poster', 'Posterised (smooth)'], ['bw', 'Black & white']] },
+      { key: 'colors', label: 'Colours', type: 'range', min: 2, max: 64, step: 1, value: 8, show: o => o.preset !== 'bw' },
+      { key: 'max', label: 'Trace size', type: 'select', value: '800', options: [['400', 'Fast (400 px)'], ['800', 'Normal (800 px)'], ['1400', 'Fine (1400 px, slow)']] }],
+    note: 'Photos produce very large SVGs; tracing works best on images with flat colours.',
+    async each(f, o, ctx) {
+      ctx.progress(0.05, 'Decoding ' + f.name);
+      const bmp = await U.decodeImage(f);
+      let W = bmp.width, H = bmp.height; const s = Math.min(1, +o.max / Math.max(W, H)); W = Math.max(1, Math.round(W * s)); H = Math.max(1, Math.round(H * s));
+      const c = U.drawTo(s < 1 ? await U.resizeBitmap(bmp, W, H) : bmp, W, H); const ow = bmp.width, oh = bmp.height; bmp.close();
+      const imgd = c.getContext('2d').getImageData(0, 0, W, H);
+      const opts = { ...TRACE[o.preset], scale: 1 / s, viewbox: true };
+      if (o.preset !== 'bw') opts.numberofcolors = o.colors;
+      ctx.progress(0.2, `Tracing ${W}×${H} pixels`);
+      const job = traceInWorker(imgd, opts);
+      const timer = setInterval(() => { if (ctx.cancelled) job.stop(); }, 200);
+      let svg; try { svg = await Promise.race([job.promise, new Promise((_, rej) => { const iv = setInterval(() => { if (ctx.cancelled) { clearInterval(iv); rej(new Error('Cancelled')); } }, 250); job.promise.finally(() => clearInterval(iv)); })]); } finally { clearInterval(timer); }
+      // ImageTracer writes width/height of the traced bitmap; set the original size so the SVG drops in at 1:1
+      svg = svg.replace(/^<svg ([^>]*)>/, (m, a) => `<svg ${a.replace(/\swidth="[^"]*"|\sheight="[^"]*"|^width="[^"]*"\s?|^height="[^"]*"\s?/g, ' ').trim()} width="${ow}" height="${oh}">`);
+      const paths = (svg.match(/<path/g) || []).length;
+      return { name: baseName(f.name) + '.svg', blob: new Blob([svg], { type: 'image/svg+xml' }), thumb: true, preview: true, info: `${ow}×${oh} · ${paths.toLocaleString()} paths` };
+    }
+  });
+  alias('png-to-svg', 'image-to-svg'); alias('jpg-to-svg', 'image-to-svg');
+
+  /* Rotate, flip & crop */
+  register({
+    id: 'rotate-crop', cat: 'img', glyph: 'rotate', name: 'Rotate, flip & crop', keywords: 'rotate flip mirror crop aspect ratio square trim margins batch',
+    desc: 'Rotate, mirror and crop many images at once (to a ratio or by margins).',
+    accept: 'image/*,.avif,.bmp', acceptText: 'PNG, JPEG, WebP, AVIF, BMP, GIF', acceptTest: isRaster, multiple: true, zipName: 'edited-images',
+    options: [
+      { key: 'rot', label: 'Rotate', type: 'select', value: '90', options: [['0', 'No rotation'], ['90', '90° clockwise'], ['180', '180°'], ['270', '90° anticlockwise']] },
+      { key: 'flip', label: 'Flip', type: 'select', value: 'none', options: [['none', 'No flip'], ['h', 'Mirror horizontally'], ['v', 'Flip vertically']] },
+      { key: 'crop', label: 'Crop', type: 'select', value: 'none', options: [['none', 'No crop'], ['1:1', 'Square 1:1 (centre)'], ['4:3', '4:3 (centre)'], ['3:2', '3:2 (centre)'], ['16:9', '16:9 (centre)'], ['9:16', '9:16 portrait (centre)'], ['4:5', '4:5 portrait (centre)'], ['margins', 'Trim margins (px)']] },
+      { key: 'mt', label: 'Top', type: 'number', min: 0, step: 1, value: 0, unit: 'px', show: o => o.crop === 'margins' },
+      { key: 'mr', label: 'Right', type: 'number', min: 0, step: 1, value: 0, unit: 'px', show: o => o.crop === 'margins' },
+      { key: 'mb', label: 'Bottom', type: 'number', min: 0, step: 1, value: 0, unit: 'px', show: o => o.crop === 'margins' },
+      { key: 'ml', label: 'Left', type: 'number', min: 0, step: 1, value: 0, unit: 'px', show: o => o.crop === 'margins' },
+      { key: 'to', label: 'Save as', type: 'select', value: 'same', options: [['same', 'Same as original'], ['png', 'PNG'], ['jpeg', 'JPEG'], ['webp', 'WebP']] },
+      { key: 'q', label: 'Quality', type: 'range', min: 0.1, max: 1, step: 0.01, value: 0.92, fmt: qFmt, show: o => o.to !== 'png' }],
+    note: 'Cropping is applied after rotating. Margins are measured on the rotated image.',
+    async each(f, o, ctx) {
+      ctx.progress(0.1, 'Decoding ' + f.name);
+      const bmp = await U.decodeImage(f);
+      try {
+        const rot = +o.rot, sw = rot % 180 ? bmp.height : bmp.width, sh = rot % 180 ? bmp.width : bmp.height;
+        const r = U.canvas(sw, sh), g = r.getContext('2d');
+        g.translate(sw / 2, sh / 2); if (o.flip === 'h') g.scale(-1, 1); if (o.flip === 'v') g.scale(1, -1); g.rotate(rot * Math.PI / 180);
+        g.drawImage(bmp, -bmp.width / 2, -bmp.height / 2);
+        let x = 0, y = 0, w = sw, h = sh;
+        if (o.crop === 'margins') { x = Math.max(0, o.ml | 0); y = Math.max(0, o.mt | 0); w = sw - x - Math.max(0, o.mr | 0); h = sh - y - Math.max(0, o.mb | 0); if (w < 1 || h < 1) throw new Error(`The margins are larger than the image (${sw}×${sh})`); }
+        else if (o.crop !== 'none') { const [a, b] = o.crop.split(':').map(Number), t = a / b; if (sw / sh > t) { w = Math.round(sh * t); x = Math.round((sw - w) / 2); } else { h = Math.round(sw / t); y = Math.round((sh - h) / 2); } }
+        const fmt = o.to === 'same' ? sameFmt(f) : o.to;
+        const out = U.drawTo(r, w, h, fmt === 'jpeg' ? '#fff' : null, { sx: x, sy: y, sw: w, sh: h });
+        const blob = await U.encodeCanvas(out, U.MIME[fmt], fmt === 'png' ? undefined : o.q);
+        return { name: `${baseName(f.name)}-edited.${EXT[fmt]}`, blob, thumb: true, info: `${bmp.width}×${bmp.height} → ${w}×${h}` };
+      } finally { bmp.close(); }
+    }
+  });
+  alias('rotate-image', 'rotate-crop'); alias('crop-image', 'rotate-crop', { rot: '0', crop: '1:1' });
 
   LC.imageInternals = { parseDataInput, buildIco, svgToCanvas };
 })();

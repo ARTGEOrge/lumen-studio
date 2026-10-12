@@ -84,12 +84,13 @@ window.Wave = (() => {
       <canvas class="wv-over"></canvas>
       <div class="wv-mainwrap">
         <canvas class="wv-ruler"></canvas>
-        <div class="wv-lanes"><canvas class="wv-c"></canvas><canvas class="wv-o"></canvas><div class="wv-empty" hidden></div></div>
+        <div class="wv-lanes"><canvas class="wv-c"></canvas><canvas class="wv-o"></canvas><div class="wv-empty" hidden></div><div class="aero-pill spec-pill" hidden><b>Spectral selection</b><span class="dim" data-si></span><button class="aero-btn small pri" data-sp="heal" title="Spectral repair: rebuild the region from its surroundings (Ctrl+Shift+H)">Heal</button><button class="aero-btn small" data-sp="att" title="Attenuate the region">Attenuate…</button><button class="aero-btn small" data-sp="del" title="Remove the region (Shift+Delete)">Delete</button><button class="aero-btn small" data-sp="clr" title="Clear spectral selection">✕</button></div></div>
         <div class="wv-scroll"><div class="wv-thumb"></div></div>
       </div>`;
     cOver = $('.wv-over'); cRuler = $('.wv-ruler'); cMain = $('.wv-c'); cOv = $('.wv-o'); lanesEl = $('.wv-lanes'); scrollEl = $('.wv-scroll'); thumb = $('.wv-thumb');
     new ResizeObserver(() => { resize(); }).observe(lanesEl);
     bindLanes(); bindRuler(); bindOverview(); bindScroll();
+    root.querySelector('.spec-pill').addEventListener('click', e => { const a = e.target.dataset.sp; if (!a) return; if (a === 'clr') { A().specSel = null; invalidate(false); } else A().spectralOp(a === 'heal' ? 'heal' : a === 'del' ? 'delete' : 'attenuateDialog'); });
     resize();
   }
   function sizeCanvas(c, w, h) { c.width = Math.max(1, Math.round(w * dpr)); c.height = Math.max(1, Math.round(h * dpr)); c.style.width = w + 'px'; c.style.height = h + 'px'; const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); return g; }
@@ -299,6 +300,7 @@ window.Wave = (() => {
       const xa = xOf(S.a), xb = xOf(S.b);
       for (const L of lanes()) {
         const on = A().chOn[L.ch] !== false;
+        if (A().specSel && L.kind === 'spec') continue;
         g.fillStyle = on ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.06)'; g.fillRect(xa, L.y, xb - xa, L.h);
       }
       g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 1; g.beginPath(); g.moveTo(Math.round(xa) + 0.5, 0); g.lineTo(Math.round(xa) + 0.5, H); g.moveTo(Math.round(xb) + 0.5, 0); g.lineTo(Math.round(xb) + 0.5, H); g.stroke();
@@ -307,8 +309,28 @@ window.Wave = (() => {
     }
     const pp = A().playheadSample();
     if (pp != null) { const x = Math.round(xOf(pp)) + 0.5; g.strokeStyle = '#ff5a36'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+    drawSpecSel(g, d);
     if (dragRect) { g.strokeStyle = '#fff'; g.setLineDash([3, 3]); g.strokeRect(Math.min(dragRect.x0, dragRect.x1) + 0.5, 0.5, Math.abs(dragRect.x1 - dragRect.x0), H - 1); g.setLineDash([]); }
     g.restore();
+  }
+  function drawSpecSel(g, d) {
+    const S = specDrag || A().specSel, pill = root.querySelector('.spec-pill');
+    pill.hidden = !A().specSel || !!specDrag || !laneCache.some(L => L.kind === 'spec');
+    if (!S) return;
+    for (const L of laneCache) {
+      if (L.kind !== 'spec') continue;
+      g.save(); g.beginPath(); g.rect(0, L.y, waveW(), L.h); g.clip(); g.beginPath();
+      if (S.kind === 'rect') { const x0 = xOf(S.a), x1 = xOf(S.b), y0 = L.y + freqToY(S.f1, L.h, d.sr), y1 = L.y + freqToY(S.f0, L.h, d.sr); g.rect(x0, y0, x1 - x0, y1 - y0); }
+      else S.pts.forEach(([s, f], i) => { const x = xOf(s), y = L.y + freqToY(f, L.h, d.sr); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+      if (S.kind === 'lasso' && !specDrag) g.closePath();
+      g.fillStyle = 'rgba(255,255,255,.16)'; g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 1.2; g.setLineDash([4, 3]); g.stroke();
+      g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = 1; g.lineDashOffset = 4; g.stroke(); g.setLineDash([]); g.lineDashOffset = 0;
+      g.restore();
+    }
+    if (A().specSel && !specDrag) {
+      const bb = Spectral.bounds(A().specSel), hz = f => f >= 1000 ? (f / 1000).toFixed(2) + ' kHz' : Math.round(f) + ' Hz';
+      const si = pill.querySelector('[data-si]'), t = (A().specSel.kind === 'lasso' ? 'lasso · ' : '') + A().fmtT((bb.b - bb.a) / d.sr) + ' · ' + hz(bb.f0) + '–' + hz(bb.f1); if (si.textContent !== t) si.textContent = t;
+    }
   }
   function drawOverview() {
     const g = cOver.getContext('2d'), d = doc(), w = cOver.width / dpr, h = 40;
@@ -343,7 +365,7 @@ window.Wave = (() => {
   }
 
   /* ---------- interaction ---------- */
-  let drag = null, dragRect = null;
+  let drag = null, dragRect = null, specDrag = null;
   const localX = e => e.clientX - lanesEl.getBoundingClientRect().left;
   const localY = e => e.clientY - lanesEl.getBoundingClientRect().top;
   function snapSample(s, px = 7) {
@@ -362,7 +384,7 @@ window.Wave = (() => {
     }
     return s;
   }
-  function hitLane(y) { return laneCache.find(L => y >= L.y && y <= L.y + L.h); }
+  function hitLane(y) { const L = lanes().find(L => y >= L.y && y <= L.y + L.h); if (!L) return null; return laneCache.find(c => c.kind === L.kind && c.ch === L.ch && Math.abs(c.y - L.y) < 1) || L; }
   function bindLanes() {
     cOv.addEventListener('contextmenu', e => e.preventDefault());
     cOv.addEventListener('pointerdown', e => {
@@ -375,24 +397,36 @@ window.Wave = (() => {
       try { cOv.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ };
       if (tool === 'hand' || e.button === 1) { drag = { mode: 'pan', x0: x, start0: A().view.start }; cOv.style.cursor = 'grabbing'; return; }
       if (tool === 'zoom') { drag = { mode: 'zoom', x0: x, alt: e.altKey || e.button === 2 }; dragRect = { x0: x, x1: x }; return; }
+      if (tool === 'marquee' || tool === 'lasso') {
+        if (!L || L.kind !== 'spec') { Aero.toast('Draw spectral selections on the spectrogram (View › Spectral or Split)'); return; }
+        const s = Math.max(0, Math.min(len(), sOf(x))), f = yToFreq(y - L.y, L.h, d.sr);
+        drag = { mode: tool, L, x0: x, y0: y }; specDrag = tool === 'marquee' ? { kind: 'rect', a: s, b: s, f0: f, f1: f, s0: s, fa: f } : { kind: 'lasso', pts: [[s, f]] };
+        invalidate(false); return;
+      }
       if (e.button === 2) return;
       const S = A().sel, s = sOf(x), edgeTol = 5;
       if (S.b > S.a && Math.abs(xOf(S.a) - x) < edgeTol) drag = { mode: 'sel', anchor: S.b };
       else if (S.b > S.a && Math.abs(xOf(S.b) - x) < edgeTol) drag = { mode: 'sel', anchor: S.a };
       else if (e.shiftKey) drag = { mode: 'sel', anchor: Math.abs(s - S.a) > Math.abs(s - S.b) ? S.a : S.b };
-      else drag = { mode: 'sel', anchor: snapSample(s), fresh: true, x0: x };
+      else { drag = { mode: 'sel', anchor: snapSample(s), fresh: true, x0: x }; A().specSel = null; }
       drag.moved = false; onSelMove(x);
     });
     cOv.addEventListener('pointermove', e => {
       const x = localX(e);
       if (!drag) {
         const S = A().sel, tool = A().tool();
-        cOv.style.cursor = tool === 'hand' ? 'grab' : tool === 'zoom' ? 'zoom-in' : (S.b > S.a && (Math.abs(xOf(S.a) - x) < 5 || Math.abs(xOf(S.b) - x) < 5)) ? 'ew-resize' : 'text';
+        cOv.style.cursor = tool === 'hand' ? 'grab' : tool === 'zoom' ? 'zoom-in' : tool === 'marquee' || tool === 'lasso' ? 'crosshair' : (S.b > S.a && (Math.abs(xOf(S.a) - x) < 5 || Math.abs(xOf(S.b) - x) < 5)) ? 'ew-resize' : 'text';
         A().hover(sOf(x), hitLane(localY(e)), localY(e));
         return;
       }
       if (drag.mode === 'pan') { A().view.start = drag.start0 - (x - drag.x0) * A().view.spp; clampView(); invalidate(); A().viewChanged(); return; }
       if (drag.mode === 'zoom') { dragRect.x1 = x; invalidate(false); return; }
+      if (drag.mode === 'marquee' || drag.mode === 'lasso') {
+        const L = drag.L, y = Math.max(L.y, Math.min(L.y + L.h, localY(e))), s = Math.max(0, Math.min(len(), sOf(x))), f = yToFreq(y - L.y, L.h, doc().sr);
+        if (drag.mode === 'marquee') { specDrag.a = Math.min(specDrag.s0, s); specDrag.b = Math.max(specDrag.s0, s); specDrag.f0 = Math.min(specDrag.fa, f); specDrag.f1 = Math.max(specDrag.fa, f); }
+        else { const lp = specDrag.pts[specDrag.pts.length - 1]; if (Math.hypot(xOf(lp[0]) - x, L.y + freqToY(lp[1], L.h, doc().sr) - y) > 3) specDrag.pts.push([s, f]); }
+        invalidate(false); return;
+      }
       onSelMove(x);
       autoScroll(x);
     });
@@ -402,6 +436,13 @@ window.Wave = (() => {
       if (drag.mode === 'zoom') {
         const a = Math.min(dragRect.x0, dragRect.x1), b = Math.max(dragRect.x0, dragRect.x1); dragRect = null;
         if (b - a > 6) zoomRange(sOf(a), sOf(b)); else zoomAt(sOf(x), drag.alt ? 2 : 0.5);
+      } else if (drag.mode === 'marquee' || drag.mode === 'lasso') {
+        const S = specDrag; specDrag = null;
+        const ok = S.kind === 'rect' ? (xOf(S.b) - xOf(S.a) > 3 && S.f1 - S.f0 > 1) : S.pts.length >= 3;
+        if (ok) {
+          const sel = S.kind === 'rect' ? { kind: 'rect', a: Math.round(S.a), b: Math.round(S.b), f0: S.f0, f1: S.f1 } : { kind: 'lasso', pts: S.pts.map(([s, f]) => [Math.round(s), f]), log: !!A().settings.logFreq };
+          const bb = Spectral.bounds(sel); A().specSel = sel; A().setSel(bb.a, bb.b, true);
+        } else A().specSel = null;
       } else if (drag.mode === 'sel') {
         if (drag.fresh && !drag.moved) { const s = snapSample(sOf(drag.x0)); A().setSel(s, s, true); }
         else { const S = A().sel; A().setSel(snapSample(S.a, 0), snapSample(S.b, 0), true); }
@@ -494,6 +535,6 @@ window.Wave = (() => {
     scrollEl.addEventListener('pointerdown', e => { if (e.target !== scrollEl || !doc()) return; const v = A().view, vis = waveW() * v.spp; v.start += (e.offsetX < thumb.offsetLeft ? -1 : 1) * vis * 0.9; clampView(); invalidate(false); A().viewChanged(); });
   }
 
-  return { init, resize, invalidate, draw, zoomAt, zoomIn, zoomFit, zoomSel, zoomSamples, zoomRange, scrollTo, ensureVisible, clampView, waveW, pyramid, stats, lut, CMAPS, chName, xOf, sOf,
+  return { lanes, freqToY, yToFreq, init, resize, invalidate, draw, zoomAt, zoomIn, zoomFit, zoomSel, zoomSamples, zoomRange, scrollTo, ensureVisible, clampView, waveW, pyramid, stats, lut, CMAPS, chName, xOf, sOf,
     get width() { return W; } };
 })();

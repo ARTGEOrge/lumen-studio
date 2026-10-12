@@ -35,7 +35,13 @@
     play: '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9.5-5.5z" fill="currentColor"/></svg>', home: svg('<path d="M2 7.5 8 2.5l6 5M3.5 6.5v7h9v-7"/>'), copy: svg('<rect x="5" y="5" width="9" height="9" rx="1"/><path d="M11 5V3a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h2"/>')
   };
   P.ICON = ICON;
-  const typeIcon = n => n.component ? ICON.component : n.type === 'instance' ? ICON.instance : (n.type === 'rect' && (n.fills || []).some(f => f.type === 'image')) ? ICON.image : ICON[n.type] || ICON.rect;
+  ICON.bool = svg('<rect x="1.8" y="1.8" width="8" height="8" rx="1"/><rect x="6.2" y="6.2" width="8" height="8" rx="1"/>');
+  ICON.mask = svg('<rect x="2" y="2" width="12" height="12" rx="2"/><circle cx="8" cy="8" r="3.5" fill="currentColor"/>');
+  ICON.bUnion = svg('<path d="M2 2h7v4h5v8H6v-4H2z" fill="currentColor" fill-opacity=".35"/>');
+  ICON.bSubtract = svg('<path d="M2 2h7v4H6v4H2z" fill="currentColor" fill-opacity=".35"/><rect x="6" y="6" width="8" height="8" stroke-dasharray="2 1.5"/>');
+  ICON.bIntersect = svg('<rect x="2" y="2" width="7" height="8"/><rect x="6" y="6" width="8" height="8"/><rect x="6" y="6" width="3" height="4" fill="currentColor"/>');
+  ICON.bExclude = svg('<path d="M2 2h7v4H6v4H2zM9 6h5v8H6v-4h3z" fill="currentColor" fill-opacity=".35"/>');
+  const typeIcon = n => n.mask ? ICON.mask : n.component ? ICON.component : n.type === 'instance' ? ICON.instance : (n.type === 'rect' && (n.fills || []).some(f => f.type === 'image')) ? ICON.image : ICON[n.type] || ICON.rect;
 
   /* ======================= layers ======================= */
   const expanded = new Set();
@@ -138,7 +144,7 @@
     const grid = h('div', { class: 'swgrid' });
     ED.doc.colorStyles.forEach(s => {
       const sw = h('div', { class: 'csw', title: `${s.name}  ${s.color}${s.a < 1 ? ' ' + Math.round(s.a * 100) + '%' : ''}\nClick: apply as fill · Shift+click: apply as stroke · Double-click: edit` },
-        h('span', { class: 'chip', style: `background:${LP.rgba(s.color, s.a)}` }), h('span', { class: 'cname', text: s.name }));
+        h('span', { class: 'chip', style: (() => { const vs = [{ color: s.color, a: s.a }].concat(LP.modesOf(ED.doc).slice(1).map(m => s.modes?.[m.id] || (m.id === 'dark' && s.dark)).filter(Boolean)); if (vs.length < 2) return `background:${LP.rgba(s.color, s.a)}`; const st = 100 / vs.length; return `background:linear-gradient(135deg,${vs.map((c, i) => `${LP.rgba(c.color, c.a ?? 1)} ${i * st}% ${(i + 1) * st}%`).join(',')})`; })() }), h('span', { class: 'cname', text: s.name }));
       sw.onclick = e => A.applyColorStyle(s, e.shiftKey ? 'stroke' : 'fill');
       sw.ondblclick = () => editColorStyle(s);
       grid.append(sw);
@@ -197,11 +203,17 @@
   }
   P.renderAssets = renderAssets;
   function editColorStyle(s) {
+    const extra = LP.modesOf(ED.doc).slice(1);
+    const fromV = v => { s.color = v.color; s.a = v.a / 100; delete s.dark; s.modes = {}; extra.forEach(m => { if (v['on_' + m.id]) s.modes[m.id] = { color: v['c_' + m.id], a: v['a_' + m.id] / 100 }; }); if (!Object.keys(s.modes).length) delete s.modes; };
+    const mv = id => (s.modes && s.modes[id]) || (id === 'dark' && s.dark) || null;
+    const fields = [{ key: 'name', label: 'Name', type: 'text', value: s.name }, { key: 'color', label: LP.modesOf(ED.doc)[0].name + ' color', type: 'color', value: s.color }, { key: 'a', label: 'Opacity %', type: 'range', min: 0, max: 100, value: Math.round((s.a ?? 1) * 100) }];
+    extra.forEach(m => fields.push({ key: 'on_' + m.id, label: `Own value in "${m.name}" mode`, type: 'checkbox', value: !!mv(m.id) }, { key: 'c_' + m.id, label: m.name + ' color', type: 'color', value: mv(m.id)?.color || s.color }, { key: 'a_' + m.id, label: m.name + ' opacity %', type: 'range', min: 0, max: 100, value: Math.round((mv(m.id)?.a ?? s.a ?? 1) * 100) }));
+    fields.push({ key: 'del', label: 'Delete this style', type: 'checkbox', value: false });
     Aero.dialog({
-      title: 'Edit color style', instruction: 'Changes update every layer that uses this style.',
-      fields: [{ key: 'name', label: 'Name', type: 'text', value: s.name }, { key: 'color', label: 'Color', type: 'color', value: s.color }, { key: 'a', label: 'Opacity %', type: 'range', min: 0, max: 100, value: Math.round((s.a ?? 1) * 100) }, { key: 'del', label: 'Delete this style', type: 'checkbox', value: false }],
-      onChange: v => { if (v.del) return; s.color = v.color; s.a = v.a / 100; ED.live(); },
-      onOK: v => { if (v.del) { A.deleteStyle('color', s); return; } s.name = v.name; s.color = v.color; s.a = v.a / 100; syncStyleCopies(); ED.commit('Edit color style'); },
+      title: 'Edit color style', instruction: 'Changes update every layer that uses this style. Per-mode values are used by artboards / prototypes in that color mode.',
+      fields,
+      onChange: v => { if (v.del) return; fromV(v); ED.live(); },
+      onOK: v => { if (v.del) { A.deleteStyle('color', s); return; } s.name = v.name; fromV(v); syncStyleCopies(); ED.commit('Edit color style'); },
       onCancel: () => restoreFromHist()
     });
   }
@@ -230,6 +242,7 @@
     ED.on('sel', renderInspector); ED.on('doc', renderInspector);
     ED.on('live', () => { if (!inspEl.contains(document.activeElement) && !scrubbing) renderInspector(); });
     ED.on('mode', renderInspector);
+    ED.on('textsel', () => { if (!inspEl.contains(document.activeElement)) renderInspector(); });
   };
   ED.listeners.mode = [];
   let scrubbing = false;
@@ -250,7 +263,12 @@
   const sel = () => ED.selNodes();
   const mixed = (ns, f) => { const vs = ns.map(f); return vs.every(v => JSON.stringify(v) === JSON.stringify(vs[0])) ? vs[0] : null; };
   function apply(key, fn, label, live) {
-    sel().forEach(n => { if (ED.canEdit(n, key)) ED.setProp(n, key, typeof fn === 'function' ? fn(n) : fn); });
+    sel().forEach(n => {
+      if (!ED.canEdit(n, key)) return;
+      ED.setProp(n, key, typeof fn === 'function' ? fn(n) : fn);
+      // a new layer fill on mixed-style text replaces the per-range colors
+      if (key === 'fills' && n.type === 'text' && n.runs && !live && /color/i.test(label || '')) { const r = LP.applyRunStyle(n, 0, String(n.text || '').length, { color: null, a: null, cs: null }); ED.setProp(n, 'runs', r); if (!r) delete n.runs; }
+    });
     live ? ED.live() : ED.commit(label);
   }
   P.apply = apply;
@@ -319,6 +337,7 @@
     // geometry
     const geo = section(one && ED.isArtboard(n) ? 'Artboard' : 'Position & size');
     if (one && ED.isArtboard(n)) {
+      geo.append(row(h('span', { class: 'lbl', text: 'Color mode' }), selectEl(LP.modesOf(ED.doc).map(m => [m.id, m.name]), LP.nodeMode(ED.doc, n), m => { if (m === LP.defaultMode(ED.doc)) delete n.cmode; else n.cmode = m; ED.commit('Color mode'); }), h('span', { class: 'dim small', text: 'color styles use this mode\'s values' })));
       geo.append(row(selectEl([['', 'Device preset…'], ...A.PRESETS.map(p => [p.name, `${p.name}  ${p.w}×${p.h}`])], '', name => { const p = A.PRESETS.find(q => q.name === name); if (!p) return; setSize(n, p.w, p.h); ED.commit('Artboard preset'); }, { cls: 'wide' })));
     }
     const dis = clone;
@@ -339,7 +358,7 @@
       const opts = [['fixed', 'Fixed'], ['hug', 'Hug contents'], ['fill', 'Fill container']];
       s.append(row(h('span', { class: 'lbl', text: 'Width' }), selectEl(opts, mixed(ns, x => x.sizeH || 'fixed'), val => apply('sizeH', val, 'Sizing'))),
         row(h('span', { class: 'lbl', text: 'Height' }), selectEl(opts, mixed(ns, x => x.sizeV || 'fixed'), val => apply('sizeV', val, 'Sizing'))),
-        row(checkbox('Absolute position (ignore auto layout)', ns.every(x => x.absolute), c => apply('absolute', c, 'Absolute position'))));
+        row(checkbox('Absolute position (ignore auto layout)', ns.every(x => x.absolute), c => apply('absolute', c, 'Absolute position'))), ...minMaxRows(ns));
     } else if (pv && !clone) {
       const s = section('Constraints');
       const ch = mixed(ns, x => (x.cons || {}).h || 'left'), cv = mixed(ns, x => (x.cons || {}).v || 'top');
@@ -354,6 +373,7 @@
     // text
     if (ns.every(x => x.type === 'text')) textSection(ns);
     if (ns.every(x => x.type === 'icon')) iconSection(ns);
+    vectorSection(ns);
     // appearance
     const ap = section('Layer');
     ap.append(row(numField('Opacity', Math.round(mixed(ns, x => ED.scene.view(x).opacity ?? 1) * 100), (val, live) => apply('opacity', val / 100, 'Opacity', live), { min: 0, max: 100, suffix: '%', wide: true }),
@@ -419,20 +439,34 @@
     if (!clone) s.append(row(h('button', { class: 'aero-btn small', text: 'Go to main', onclick: A.goToMain }), h('button', { class: 'aero-btn small', text: 'Reset', title: 'Reset overrides', onclick: A.resetOverrides }), h('button', { class: 'aero-btn small', text: 'Detach', onclick: A.detach })));
   }
   function textInput(val, onSet, ph) { const i = h('input', { type: 'text', value: val, placeholder: ph || '' }); i.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') i.blur(); }; i.onchange = () => onSet(i.value.trim()); return i; }
+  // min / max width & height (auto layout sizing limits)
+  function minMaxRows(ns) {
+    const f = (k, lbl, t) => numField(lbl, mixed(ns, x => x[k] || 0), (val, live) => { ns.forEach(x => { if (ED.isClone(x)) return; if (val > 0) x[k] = val; else delete x[k]; }); live ? ED.live() : ED.commit('Min / max size'); }, { min: 0, title: t + ' (0 = none)' });
+    return [row(f('minW', 'Min W', 'Minimum width'), f('maxW', 'Max W', 'Maximum width')), row(f('minH', 'Min H', 'Minimum height'), f('maxH', 'Max H', 'Maximum height'))];
+  }
   function autoLayoutSection(n) {
     const L = n.layout;
     const s = section('Auto layout', iconBtn(L ? ICON.minus : ICON.plus, L ? 'Remove auto layout' : 'Add auto layout (Shift+A)', () => L ? A.removeAutoLayout() : A.addAutoLayout()));
-    if (!L) { s.append(h('div', { class: 'dim small', text: 'Stack children horizontally or vertically; they reflow as content changes.' })); return; }
+    if (!L) { s.append(h('div', { class: 'dim small', text: 'Stack children horizontally, vertically or in a grid; they reflow as content changes.' })); return; }
     const set = (fn, label, live) => { fn(n.layout); live ? ED.live() : ED.commit(label); };
-    s.append(row(segBtns([['h', ICON.dirH, 'Horizontal'], ['v', ICON.dirV, 'Vertical']], L.mode, m => set(l => l.mode = m, 'Direction')),
-      numField('Gap', L.gap, (val, live) => set(l => l.gap = val, 'Spacing', live), { min: 0, title: 'Spacing between items' })));
+    const G = L.mode === 'grid', H = L.mode === 'h';
+    s.append(row(segBtns([['h', ICON.dirH, 'Horizontal'], ['v', ICON.dirV, 'Vertical'], ['grid', ICON.tidy, 'Grid']], L.mode, m => set(l => { l.mode = m; if (m === 'grid' && !l.cols) l.cols = 2; }, 'Direction')),
+      numField(G || L.wrap ? 'Col gap' : 'Gap', L.gap, (val, live) => set(l => l.gap = val, 'Spacing', live), { min: 0, title: 'Spacing between items' })));
+    if (H) s.append(row(checkbox('Wrap onto new rows', !!L.wrap, c => set(l => { l.wrap = c; if (c && l.gapY == null) l.gapY = l.gap || 0; }, 'Wrap')), L.wrap ? numField('Row gap', L.gapY ?? L.gap, (val, live) => set(l => l.gapY = val, 'Row gap', live), { min: 0 }) : h('span')));
+    if (G) s.append(row(numField('Columns', L.cols || 2, (val, live) => set(l => l.cols = Math.max(1, Math.min(64, Math.round(val))), 'Grid columns', live), { min: 1, max: 64 }), numField('Row gap', L.gapY ?? L.gap, (val, live) => set(l => l.gapY = val, 'Row gap', live), { min: 0 })));
     const pad = L.pad || [0, 0, 0, 0];
     s.append(row(...['↑', '→', '↓', '←'].map((t, i) => numField(t, pad[i], (val, live) => set(l => { l.pad = (l.pad || [0, 0, 0, 0]).slice(); l.pad[i] = val; }, 'Padding', live), { min: 0, title: ['Top', 'Right', 'Bottom', 'Left'][i] + ' padding' }))));
-    const H = L.mode === 'h';
-    s.append(row(h('span', { class: 'lbl', text: H ? 'Align Y' : 'Align X' }), segBtns(H ? [['start', ICON.vT, 'Top'], ['center', ICON.vM, 'Middle'], ['end', ICON.vB, 'Bottom']] : [['start', ICON.tL, 'Left'], ['center', ICON.tC, 'Center'], ['end', ICON.tR, 'Right']], L.align || 'start', val => set(l => l.align = val, 'Align'))));
-    s.append(row(h('span', { class: 'lbl', text: 'Distribute' }), selectEl([['start', 'Packed start'], ['center', 'Packed center'], ['end', 'Packed end'], ['between', 'Space between']], L.justify || 'start', val => set(l => l.justify = val, 'Distribute'))));
+    const vOpts = [['start', ICON.vT, 'Top'], ['center', ICON.vM, 'Middle'], ['end', ICON.vB, 'Bottom']], hOpts = [['start', ICON.tL, 'Left'], ['center', ICON.tC, 'Center'], ['end', ICON.tR, 'Right']];
+    if (G) {
+      s.append(row(h('span', { class: 'lbl', text: 'In cell X' }), segBtns(hOpts, L.justify || 'start', val => set(l => l.justify = val, 'Align'))));
+      s.append(row(h('span', { class: 'lbl', text: 'In cell Y' }), segBtns(vOpts, L.align || 'start', val => set(l => l.align = val, 'Align'))));
+    } else {
+      s.append(row(h('span', { class: 'lbl', text: H ? 'Align Y' : 'Align X' }), segBtns(H ? vOpts : hOpts, L.align || 'start', val => set(l => l.align = val, 'Align'))));
+      s.append(row(h('span', { class: 'lbl', text: 'Distribute' }), selectEl([['start', 'Packed start'], ['center', 'Packed center'], ['end', 'Packed end'], ['between', 'Space between']], L.justify || 'start', val => set(l => l.justify = val, 'Distribute'))));
+    }
     const opts = [['fixed', 'Fixed'], ['hug', 'Hug contents']];
     s.append(row(h('span', { class: 'lbl', text: 'Width' }), selectEl(opts, n.sizeH === 'fill' ? 'fixed' : n.sizeH || 'fixed', val => { n.sizeH = val; ED.commit('Sizing'); }), h('span', { class: 'lbl', text: 'Height' }), selectEl(opts, n.sizeV === 'fill' ? 'fixed' : n.sizeV || 'fixed', val => { n.sizeV = val; ED.commit('Sizing'); })));
+    s.append(...minMaxRows([n]));
   }
   function gridSection(n) {
     const s = section('Layout grid', iconBtn(ICON.plus, 'Add layout grid', () => { n.grids = n.grids || []; n.grids.push({ type: 'columns', count: n.w > 600 ? 12 : 4, gutter: n.w > 600 ? 24 : 16, margin: n.w > 600 ? 80 : 16, color: '#ff3b3b', a: .1, visible: true }); ED.commit('Add layout grid'); }));
@@ -444,31 +478,106 @@
       if (g.type !== 'grid') s.append(row(numField('Gutter', g.gutter, (val, live) => set(x => x.gutter = val, 'Grid', live), { min: 0, wide: true }), numField('Margin', g.margin, (val, live) => set(x => x.margin = val, 'Grid', live), { min: 0, wide: true })));
     });
   }
+  // a text layer's value for key over its whole text (null when ranges differ)
+  const layerTextVal = (x, key) => { const v = LP.rangeValue(x, ED.doc, 0, Math.max(1, String(x.text || '').length), key); return v === undefined ? null : v; };
+  const rangeTs = (x, s, e) => { let val, first = true; const len = String(x.text || '').length; if (e <= s) { s = Math.max(0, s - 1); e = s + 1; } LP.normRuns(x.runs, len).forEach(g => { if (!(g.e > s && g.s < e)) return; const v = g.st.ts || ''; if (first) { val = v; first = false; } else if (v !== val) val = null; }); return first ? '' : val; };
   function textSection(ns) {
     const n = ns[0], s = section('Text');
-    const st = mixed(ns, x => ED.scene.view(x).textStyleId || '');
-    const styleSel = selectEl([['', 'No text style'], ...ED.doc.textStyles.map(t => [t.id, t.name])], st, id => { if (!id) { apply('textStyleId', null, 'Detach text style'); return; } A.applyTextStyle(ED.doc.textStyles.find(t => t.id === id)); });
-    s.append(row(styleSel, iconBtn(ICON.plus, 'Create text style from this text', () => A.addTextStyle())));
-    const T = x => LP.textProps(ED.scene.view(x), ED.doc);
-    const setT = (key, val, label, live) => { sel().forEach(x => { if (ED.isClone(x)) return; x[key] = val; if (x.textStyleId) x.textStyleId = null; }); live ? ED.live() : ED.commit(label); };
+    const ts = ED.textSel(), editing = ts && ns.length === 1 && ts.n.id === n.id, hasRange = editing && ts.e > ts.s;
+    const pend = editing && !hasRange ? ED.pendingStyle() : null;
+    if (editing) s.querySelector('.ihead').append(h('span', { class: 'badge', text: hasRange ? `${ts.e - ts.s} chars selected` : 'next typed text' }));
+    const val = key => pend && pend[key] !== undefined && pend[key] !== null ? pend[key] : editing ? (v => v === undefined ? null : v)(LP.rangeValue(n, ED.doc, ts.s, ts.e, key)) : mixed(ns, x => layerTextVal(x, key));
     const clone = ns.some(x => ED.isClone(x));
-    s.append(row(selectEl(LP.FONTS, mixed(ns, x => T(x).font), val => setT('font', val, 'Font'), { disabled: clone, cls: 'wide' })));
-    s.append(row(selectEl(WEIGHTS, mixed(ns, x => String(T(x).weight)), val => setT('weight', +val, 'Font weight'), { disabled: clone }),
-      numField('Size', mixed(ns, x => T(x).size), (val, live) => setT('size', val, 'Font size', live), { min: 1, max: 1000, disabled: clone })));
-    s.append(row(numField('Line', mixed(ns, x => T(x).lh || 0), (val, live) => setT('lh', val, 'Line height', live), { min: 0, title: 'Line height in px (0 = auto)', disabled: clone }),
-      numField('Letter', mixed(ns, x => T(x).ls || 0), (val, live) => setT('ls', val, 'Letter spacing', live), { step: .1, title: 'Letter spacing in px', disabled: clone })));
-    s.append(row(segBtns([['left', ICON.tL, 'Align left'], ['center', ICON.tC, 'Center'], ['right', ICON.tR, 'Align right'], ['justify', ICON.tJ, 'Justify']], mixed(ns, x => x.align), val => apply('align', val, 'Text align')),
-      segBtns([['top', ICON.vT, 'Top'], ['middle', ICON.vM, 'Middle'], ['bottom', ICON.vB, 'Bottom']], mixed(ns, x => x.valign || 'top'), val => apply('valign', val, 'Vertical align'))));
-    s.append(row(h('span', { class: 'lbl', text: 'Resizing' }), selectEl([['width', 'Auto width'], ['height', 'Auto height'], ['fixed', 'Fixed size']], mixed(ns, x => x.auto || 'width'), val => apply('auto', val, 'Text resizing'))));
-    s.append(row(selectEl([['none', 'No decoration'], ['underline', 'Underline'], ['strike', 'Strikethrough']], mixed(ns, x => x.deco || 'none'), val => apply('deco', val, 'Decoration')),
-      selectEl([['none', 'As typed'], ['upper', 'UPPERCASE'], ['lower', 'lowercase']], mixed(ns, x => x.tcase || 'none'), val => apply('tcase', val, 'Case')),
-      iconBtn('<b style="font-style:italic;font-family:Georgia">I</b>', 'Italic', () => setT('italic', !ns.every(x => T(x).italic), 'Italic'), ns.every(x => T(x).italic))));
-    if (ns.length === 1) {
+    // whole-layer change: set the layer key and drop per-range overrides of it
+    const setT = (key, v, label, live) => {
+      if (editing) { ED.applyRangeStyle({ [key]: v }); return; } // range, or pending style at the caret
+      sel().forEach(x => {
+        if (ED.isClone(x)) return;
+        x[key] = v; if (x.textStyleId && LP.TEXT_KEYS.includes(key)) x.textStyleId = null;
+        if (x.runs) { const r = LP.applyRunStyle(x, 0, String(x.text || '').length, LP.TEXT_KEYS.includes(key) ? { [key]: null, ts: null } : { [key]: null }); if (r) x.runs = r; else delete x.runs; }
+      });
+      if (editing) { if (!live) ED.editing.snapshot(); ED.editing.refresh(ED.editing.sel); return; }
+      live ? ED.live() : ED.commit(label);
+    };
+    const dis = clone && !hasRange;
+    const stVal = hasRange ? rangeTs(n, ts.s, ts.e) : mixed(ns, x => ED.scene.view(x).textStyleId || '');
+    const styleSel = selectEl([['', hasRange ? 'No text style (range)' : 'No text style'], ...ED.doc.textStyles.map(t => [t.id, t.name])], stVal, id => {
+      if (editing) { ED.applyRangeStyle({ ts: id || null, font: null, size: null, weight: null, italic: null, lh: null, ls: null }); return; }
+      if (!id) { apply('textStyleId', null, 'Detach text style'); return; } A.applyTextStyle(ED.doc.textStyles.find(t => t.id === id));
+    });
+    s.append(row(styleSel, iconBtn(ICON.plus, 'Create text style from this text', () => A.addTextStyle())));
+    s.append(row(selectEl(LP.FONTS, val('font'), v => setT('font', v, 'Font'), { disabled: dis, cls: 'wide' })));
+    s.append(row(selectEl(WEIGHTS, (w => w == null ? null : String(w))(val('weight')), v => setT('weight', +v, 'Font weight'), { disabled: dis }),
+      numField('Size', val('size'), (v, live) => setT('size', v, 'Font size', live), { min: 1, max: 1000, disabled: dis })));
+    s.append(row(numField('Line', val('lh'), (v, live) => setT('lh', v, 'Line height', live), { min: 0, title: 'Line height in px (0 = auto)', disabled: dis }),
+      numField('Letter', val('ls'), (v, live) => setT('ls', v, 'Letter spacing', live), { step: .1, title: 'Letter spacing in px', disabled: dis })));
+    s.append(row(segBtns([['left', ICON.tL, 'Align left'], ['center', ICON.tC, 'Center'], ['right', ICON.tR, 'Align right'], ['justify', ICON.tJ, 'Justify']], mixed(ns, x => x.align), v => layerSet('align', v, 'Text align')),
+      segBtns([['top', ICON.vT, 'Top'], ['middle', ICON.vM, 'Middle'], ['bottom', ICON.vB, 'Bottom']], mixed(ns, x => x.valign || 'top'), v => layerSet('valign', v, 'Vertical align'))));
+    s.append(row(h('span', { class: 'lbl', text: 'Resizing' }), selectEl([['width', 'Auto width'], ['height', 'Auto height'], ['fixed', 'Fixed size']], mixed(ns, x => x.auto || 'width'), v => layerSet('auto', v, 'Text resizing'))));
+    const it = val('italic');
+    s.append(row(selectEl([['none', 'No decoration'], ['underline', 'Underline'], ['strike', 'Strikethrough']], val('deco'), v => setT('deco', v, 'Decoration'), { disabled: dis }),
+      selectEl([['none', 'As typed'], ['upper', 'UPPERCASE'], ['lower', 'lowercase']], mixed(ns, x => x.tcase || 'none'), v => layerSet('tcase', v, 'Case')),
+      iconBtn('<b style="font-style:italic;font-family:Georgia">I</b>', 'Italic (Ctrl+I while editing)', () => setT('italic', !it, 'Italic'), !!it)));
+    // range color (mixed-style text): overrides the layer fill for the selected characters
+    if (hasRange || ns.some(x => (x.runs || []).some(r => r.color || r.cs))) {
+      let cs = null;
+      if (hasRange) { let f = true; LP.normRuns(n.runs, String(n.text || '').length).forEach(g => { if (!(g.e > ts.s && g.s < ts.e)) return; const q = g.st.cs || ''; if (f) { cs = q; f = false; } else if (q !== cs) cs = null; }); }
+      const col = val('color');
+      const st = cs && ED.doc.colorStyles.find(c => c.id === cs);
+      const r = row(h('span', { class: 'lbl', text: hasRange ? 'Color' : 'Range colors' }));
+      if (hasRange) {
+        if (st) r.append(h('span', { class: 'grow stylename', html: `<span class="chip" style="background:${LP.rgba(st.color, st.a)}"></span>${esc(st.name)}` }));
+        else r.append(colorInput(col || '#000000', val('a') ?? 1, (c, a, live) => { if (!live) ED.applyRangeStyle({ color: c, a, cs: null }); }));
+        r.append(styleMenu(id => ED.applyRangeStyle({ cs: id, color: null, a: null })));
+      } else r.append(h('span', { class: 'grow dim small', text: 'some characters have their own color' }));
+      r.append(iconBtn(ICON.unlinkStyle, hasRange ? 'Use the layer fill for these characters' : 'Remove all range colors', () => {
+        if (hasRange) ED.applyRangeStyle({ color: null, a: null, cs: null });
+        else { sel().forEach(x => { if (!x.runs) return; const rr = LP.applyRunStyle(x, 0, String(x.text || '').length, { color: null, a: null, cs: null }); ED.setProp(x, 'runs', rr); if (!rr) delete x.runs; }); ED.commit('Remove range colors'); }
+      }));
+      s.append(r);
+    }
+    if (hasRange) s.append(row(h('button', { class: 'aero-btn small', text: 'Clear range styles', title: 'Remove every style override from the selected characters', onclick: () => ED.applyRangeStyle(Object.fromEntries(LP.RUN_KEYS.map(k => [k, null]))) }), h('span', { class: 'dim small', text: 'Ctrl+B / I / U toggle bold, italic, underline' })));
+    else if (!editing && ns.length === 1) s.append(h('div', { class: 'dim small', text: 'Double-click the text to edit it in place; select characters to style them individually.' }));
+    if (ns.length === 1 && !editing) {
       const ta = h('textarea', { class: 'tcontent', rows: 2 }); ta.value = n.text || '';
       ta.onkeydown = e => e.stopPropagation();
       ta.onchange = () => { ED.setProp(n, 'text', ta.value); ED.commit('Edit text'); };
       s.append(ta);
     }
+    function layerSet(key, v, label) { if (editing) { sel().forEach(x => ED.setProp(x, key, v)); ED.editing.refresh(ED.editing.sel); return; } apply(key, v, label); }
+  }
+  // boolean ops / flatten / point editing / mask
+  function vectorSection(ns) {
+    const n = ns[0], one = ns.length === 1, clone = ns.some(x => ED.isClone(x));
+    if (clone) return;
+    const shapes = ns.filter(x => !ED.isArtboard(x));
+    const isBool = one && n.type === 'bool';
+    const canBool = isBool || shapes.length >= 2;
+    const isPath = one && n.type === 'path';
+    const canFlatten = ns.some(x => ['rect', 'ellipse', 'bool', 'path', 'group', 'frame'].includes(x.type) && !ED.isArtboard(x) && !x.component);
+    const inParent = ns.every(x => ED.parent(x) && ED.parent(x) !== ED.doc);
+    if (!canBool && !canFlatten && !inParent) return;
+    const s = section(isBool ? 'Boolean group' : 'Vector');
+    if (canBool) {
+      const ops = [['union', ICON.bUnion, 'Union (Ctrl+Alt+U)'], ['subtract', ICON.bSubtract, 'Subtract (Ctrl+Alt+S)'], ['intersect', ICON.bIntersect, 'Intersect (Ctrl+Alt+I)'], ['exclude', ICON.bExclude, 'Exclude (Ctrl+Alt+X)']];
+      s.append(row(h('span', { class: 'lbl', text: isBool ? 'Operation' : 'Combine' }), segBtns(ops, isBool ? n.op || 'union' : null, op => A.boolean(op))));
+      if (isBool) s.append(h('div', { class: 'dim small', text: 'Operands stay editable: double-click to select one and move or edit it.' }));
+    }
+    if (ED.pathEdit && isPath && ED.pathEdit === n.id) {
+      const ps = ED.pathSel, c = ps && LP.contoursOf(n)[ps.ci], pt = c && c.pts[ps.i];
+      s.append(h('div', { class: 'dim small', text: 'Editing points — drag points/handles (Alt breaks handles), click a segment to add a point, Delete removes, Alt+click or double-click toggles corner/smooth.' }));
+      s.append(row(
+        h('button', { class: 'aero-btn small', text: pt && (pt.ox != null || pt.ix != null) ? 'Make corner' : 'Make smooth', disabled: !pt, onclick: () => { ED.convertPathPoint(n, ps.ci, ps.i); ED.normalizePath(n); ED.commit('Convert point'); } }),
+        h('button', { class: 'aero-btn small', text: 'Delete point', disabled: !pt, onclick: () => ED.deleteSelectedPoint() }),
+        h('button', { class: 'aero-btn small', text: c ? (c.closed ? 'Open path' : 'Close path') : 'Close path', disabled: !c, onclick: () => { c.closed = !c.closed; ED.commit(c.closed ? 'Close path' : 'Open path'); } })));
+      s.append(row(h('button', { class: 'aero-btn small pri', text: 'Done', onclick: () => ED.exitPathEdit() })));
+    } else if (canFlatten || isPath) {
+      s.append(row(
+        one && ['path', 'rect', 'ellipse', 'bool'].includes(n.type) ? h('button', { class: 'aero-btn small', text: 'Edit points', title: 'Edit anchor points (Enter); shapes are converted to vectors first', onclick: () => A.editPoints() }) : '',
+        canFlatten ? h('button', { class: 'aero-btn small', text: 'Flatten', title: 'Convert to a single editable vector (Ctrl+E)', onclick: () => A.flatten() }) : ''));
+    }
+    if (inParent) s.append(row(checkbox('Use as mask (clips the layers above it)', ns.every(x => x.mask), c => { ns.forEach(x => { x.mask = c; }); ED.commit(c ? 'Use as mask' : 'Release mask'); })));
+    if (inParent && ns.every(x => x.mask)) s.append(row(h('span', { class: 'lbl', text: 'Mask type' }), selectEl([['alpha', 'Alpha (opacity, soft edges)'], ['luminance', 'Luminance (brightness)'], ['vector', 'Vector outline (clip)']], mixed(ns, x => x.maskType || 'alpha'), v => { ns.forEach(x => { if (v === 'alpha') delete x.maskType; else x.maskType = v; }); ED.commit('Mask type'); })));
   }
   function iconSection(ns) {
     const s = section('Icon');
@@ -585,6 +694,10 @@
     inspEl.append(h('div', { class: 'ititle' }, h('span', { class: 'grow', text: ED.doc.name || 'Document' })));
     const s = section('Canvas');
     s.append(row(h('span', { class: 'lbl', text: 'Background' }), colorInput(ED.doc.bg || '#e8ecf1', 1, (c, a, live) => { ED.doc.bg = c; live ? ED.redraw() : ED.commit('Canvas color'); })));
+    const ms = section('Color modes', iconBtn(ICON.plus, 'Add color mode', async () => { const name = await Aero.prompt('New color mode', 'Name', 'Mode ' + (LP.modesOf(ED.doc).length + 1)); if (!name) return; ED.doc.modes = LP.modesOf(ED.doc).slice(); let id = name.toLowerCase().replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'mode'; while (ED.doc.modes.some(m => m.id === id)) id += '-2'; ED.doc.modes.push({ id, name: name.slice(0, 60) }); ED.commit('Add color mode'); }));
+    LP.modesOf(ED.doc).forEach((m, i) => ms.append(row(textInput(m.name, v => { ED.doc.modes = LP.modesOf(ED.doc).slice(); ED.doc.modes[i] = Object.assign({}, m, { name: v || m.name }); ED.commit('Rename color mode'); }, 'name'), h('span', { class: 'dim small', text: i ? `${ED.doc.colorStyles.filter(c => c.modes?.[m.id]).length} styles` : 'default' }),
+      i ? iconBtn(ICON.x, 'Delete mode', () => { ED.doc.modes = LP.modesOf(ED.doc).filter(x => x.id !== m.id); ED.doc.colorStyles.forEach(c => { if (c.modes) delete c.modes[m.id]; }); LP.walk(ED.doc, n => { if (n.cmode === m.id) delete n.cmode; }); ED.commit('Delete color mode'); }) : h('span'))));
+    ms.append(h('div', { class: 'dim small', text: 'Give color styles a value per mode (double-click a color in Assets); artboards pick a mode; the "Set color mode" interaction switches it in the prototype.' }));
     const ab = section('New artboard');
     const g = h('div', { class: 'presets' });
     A.PRESETS.forEach(p => g.append(h('button', { class: 'preset', onclick: () => A.newArtboard(p) }, h('b', { text: p.name }), h('span', { class: 'dim', text: `${p.w} × ${p.h}` }))));
@@ -596,11 +709,41 @@
   }
 
   /* ---------- prototype inspector ---------- */
-  const TRIGGERS = [['tap', 'Tap / click'], ['hover', 'While hovering'], ['press', 'While pressing'], ['delay', 'After delay'], ['key', 'Key press']];
-  const ACTIONS = [['navigate', 'Navigate to'], ['overlay', 'Open overlay'], ['back', 'Back'], ['scrollTo', 'Scroll to'], ['changeTo', 'Change to (variant)']];
+  const TRIGGERS = [['tap', 'Tap / click'], ['drag', 'On drag'], ['swipe', 'Swipe'], ['hover', 'While hovering'], ['press', 'While pressing'], ['delay', 'After delay'], ['key', 'Key press']];
+  const ACTIONS = [['navigate', 'Navigate to'], ['overlay', 'Open overlay'], ['back', 'Back'], ['scrollTo', 'Scroll to'], ['changeTo', 'Change to (variant)'], ['setVar', 'Set variable'], ['setMode', 'Set color mode']];
   const TRANS = [['instant', 'Instant'], ['dissolve', 'Dissolve'], ['smart', 'Smart animate'], ['slideLeft', 'Slide in ←'], ['slideRight', 'Slide in →'], ['slideUp', 'Slide in ↑'], ['slideDown', 'Slide in ↓'], ['pushLeft', 'Push ←'], ['pushRight', 'Push →'], ['pushUp', 'Push ↑'], ['pushDown', 'Push ↓']];
   const EASES = [['linear', 'Linear'], ['ease-in', 'Ease in'], ['ease-out', 'Ease out'], ['ease-in-out', 'Ease in & out'], ['snap', 'Snap'], ['spring', 'Spring']];
+  const CMPS = [['==', '='], ['!=', '≠'], ['>', '>'], ['<', '<'], ['>=', '≥'], ['<=', '≤']];
+  const VTYPES = [['bool', 'Boolean'], ['num', 'Number'], ['str', 'String']];
   P.TRANS = TRANS;
+  const varName = id => (ED.doc.vars || []).find(v => v.id === id)?.name || '—';
+  // value editor matching a variable's type
+  function varValueInput(def, val, onSet) {
+    if (!def || def.type === 'bool') return selectEl([['true', 'true'], ['false', 'false']], String(LP.coerceVar('bool', val)), v => onSet(v === 'true'));
+    if (def.type === 'num') return numField('=', Number(val) || 0, v => onSet(v), { step: 1 });
+    return textInput(String(val ?? ''), v => onSet(v), 'text');
+  }
+  // condition row {v, op, val}; onSet(null) removes it
+  function condRow(label, c, onSet) {
+    const vars = ED.doc.vars || [];
+    if (!c) return row(h('span', { class: 'lbl', text: label }), h('button', { class: 'aero-btn small', text: '+ Condition', disabled: !vars.length, title: vars.length ? 'Only when a variable matches' : 'Create a variable first (Prototype tab, nothing selected)', onclick: () => onSet({ v: vars[0].id, op: '==', val: vars[0].type === 'bool' ? true : vars[0].value }) }));
+    const def = vars.find(v => v.id === c.v);
+    return row(h('span', { class: 'lbl', text: label }), selectEl(vars.map(v => [v.id, v.name]), c.v, id => onSet(Object.assign({}, c, { v: id }))),
+      selectEl(def && def.type !== 'num' ? CMPS.slice(0, 2) : CMPS, c.op || '==', op => onSet(Object.assign({}, c, { op }))),
+      varValueInput(def, c.val, val => onSet(Object.assign({}, c, { val }))), iconBtn(ICON.x, 'Remove condition', () => onSet(null)));
+  }
+  function varsSection() {
+    const s = section('Variables', iconBtn(ICON.plus, 'Add variable', () => { const vars = ED.doc.vars = ED.doc.vars || []; vars.push({ id: LP.newId(), name: 'variable' + (vars.length + 1), type: 'bool', value: false }); ED.commit('Add variable'); }));
+    const vars = ED.doc.vars || [];
+    if (!vars.length) s.append(h('div', { class: 'dim small', text: 'Booleans, numbers and strings that interactions can set ("Set variable"), that can show / hide layers ("Visible when") and that text can display.' }));
+    vars.forEach((v, i) => {
+      const set = (fn, label) => { fn(v); ED.commit(label); };
+      s.append(row(textInput(v.name, val => set(x => { x.name = val || x.name; }, 'Rename variable'), 'name'),
+        selectEl(VTYPES, v.type, t => set(x => { x.type = t; x.value = LP.coerceVar(t, x.value); }, 'Variable type')),
+        varValueInput(v, v.value, val => set(x => { x.value = LP.coerceVar(x.type, val); }, 'Variable value')),
+        iconBtn(ICON.x, 'Delete variable', () => { vars.splice(i, 1); ED.commit('Delete variable'); })));
+    });
+  }
   function protoInspector() {
     const ns = sel();
     if (ns.length !== 1) {
@@ -609,6 +752,7 @@
       const flows = LP.flowStarts(ED.doc);
       if (!flows.length) s.append(h('div', { class: 'dim small', text: 'Select an artboard and tick "Flow starting point". Without one, preview starts at the first artboard.' }));
       flows.forEach(f => s.append(row(h('span', { class: 'ticon', html: ICON.home }), h('span', { class: 'grow', text: `${f.flowStart} → ${f.name}` }), h('button', { class: 'aero-btn small', text: '▶', title: 'Preview this flow', onclick: () => window.APP.preview(f.id) }))));
+      varsSection();
       const h2 = section('How to');
       h2.append(h('div', { class: 'dim small', html: 'Select a layer, then drag the <b style="color:#1f8bff">●</b> handle onto an artboard to create a tap → navigate interaction. Edit trigger, action and transition here. Press <b>Ctrl+Enter</b> to preview.' }));
       return;
@@ -619,36 +763,60 @@
       const s = section('Artboard');
       s.append(row(checkbox('Flow starting point', !!n.flowStart, c => { n.flowStart = c ? (n.name.replace(/\s+\d+$/, '') + ' flow') : null; ED.commit('Flow start'); })));
       if (n.flowStart) s.append(row(h('span', { class: 'lbl', text: 'Flow name' }), textInput(n.flowStart, val => { n.flowStart = val || 'Flow'; ED.commit('Rename flow'); })));
-      s.append(row(numField('Viewport H', n.viewportH || 0, (val) => { n.viewportH = val > 0 ? val : null; ED.commit('Viewport height'); }, { min: 0, wide: true, title: 'Visible height in preview; taller artboards scroll vertically (0 = no scrolling)' })));
-      s.append(h('div', { class: 'dim small', text: n.viewportH && n.viewportH < n.h ? `Scrolls ${Math.round(n.h - n.viewportH)}px in preview.` : 'Set a viewport height smaller than the artboard to make it scroll.' }));
-    } else if (ED.isArtboard(ED.parent(n)) && !clone) {
+      s.append(row(numField('Viewport W', n.viewportW || 0, (val) => { n.viewportW = val > 0 ? val : null; ED.commit('Viewport width'); }, { min: 0, title: 'Visible width in preview; wider artboards scroll horizontally (0 = no scrolling)' }),
+        numField('Viewport H', n.viewportH || 0, (val) => { n.viewportH = val > 0 ? val : null; ED.commit('Viewport height'); }, { min: 0, title: 'Visible height in preview; taller artboards scroll vertically (0 = no scrolling)' })));
+      const sx = n.viewportW && n.viewportW < n.w ? Math.round(n.w - n.viewportW) : 0, sy = n.viewportH && n.viewportH < n.h ? Math.round(n.h - n.viewportH) : 0;
+      s.append(h('div', { class: 'dim small', text: sx || sy ? `Scrolls ${sy ? sy + 'px vertically' : ''}${sx && sy ? ' and ' : ''}${sx ? sx + 'px horizontally' : ''} in preview.` : 'Set a viewport smaller than the artboard to make the screen scroll.' }));
+    } else if (!clone) {
       const s = section('Scrolling');
-      s.append(row(checkbox('Fix position when scrolling', !!n.fixed, c => { n.fixed = c; ED.commit('Fixed position'); })));
+      if (ED.isArtboard(ED.parent(n))) s.append(row(checkbox('Fix position when scrolling', !!n.fixed, c => { n.fixed = c; ED.commit('Fixed position'); })));
+      if (n.type === 'frame' || n.type === 'instance') {
+        s.append(row(h('span', { class: 'lbl', text: 'Overflow' }), selectEl([['', 'No scrolling'], ['v', 'Vertical scrolling'], ['h', 'Horizontal scrolling'], ['both', 'Both directions']], n.scroll || '', val => { if (val) { n.scroll = val; if (n.type === 'frame') n.clip = true; } else delete n.scroll; ED.commit('Overflow scrolling'); })));
+        if (n.scroll) { const R = LP.scrollRange(ED.scene, n); s.append(h('div', { class: 'dim small', text: R.x || R.y ? `Content scrolls ${R.y ? Math.round(R.y) + 'px vertically' : ''}${R.x && R.y ? ', ' : ''}${R.x ? Math.round(R.x) + 'px horizontally' : ''} (drag or wheel in preview).` : 'Content fits — make children extend past the frame to scroll.' })); }
+      }
+      if (!s.querySelector('.irow')) s.remove();
+    }
+    // conditional visibility & text binding
+    if (!ED.isArtboard(n)) {
+      const s = section('Variables');
+      s.append(condRow('Visible when', v.showIf || null, c => { if (c) ED.setProp(n, 'showIf', c); else { ED.setProp(n, 'showIf', null); delete n.showIf; } ED.commit('Conditional visibility'); }));
+      if ((v.mainType || n.type) === 'text') s.append(row(h('span', { class: 'lbl', text: 'Text shows' }), selectEl([['', 'its own text'], ...(ED.doc.vars || []).map(x => [x.id, 'variable: ' + x.name])], v.bindText || '', id => { ED.setProp(n, 'bindText', id || null); if (!id) delete n.bindText; ED.commit('Bind text'); })));
     }
     const own = (clone ? v.proto : (n.type === 'instance' ? n.proto : n.proto)) || [];
     const inherited = n.type === 'instance' ? (v.proto || []).filter(p => !own.includes(p) && !(n.proto || []).some(q => q.trigger === p.trigger)) : [];
     const s = section('Interactions', iconBtn(ICON.plus, 'Add interaction', () => { const list = JSON.parse(JSON.stringify(own)); list.push({ trigger: 'tap', action: 'navigate', target: null, trans: 'dissolve', ease: 'ease-out', dur: 300 }); if (!ED.setProp(n, 'proto', list)) return Aero.toast('Edit interactions of instance contents on the main component'); ED.commit('Add interaction'); }));
     if (!own.length && !inherited.length) s.append(h('div', { class: 'dim small', text: 'No interactions. Click + or drag the blue handle to an artboard.' }));
     own.forEach((p, i) => s.append(interactionCard(n, p, i, own)));
-    if (inherited.length) { s.append(h('div', { class: 'dim small', style: 'margin-top:6px', text: 'From main component:' })); inherited.forEach(p => s.append(h('div', { class: 'icard inh', text: `${(TRIGGERS.find(t => t[0] === p.trigger) || [, p.trigger])[1]} → ${(ACTIONS.find(a => a[0] === p.action) || [, p.action])[1]} ${p.target && ED.get(p.target) ? ED.get(p.target).component?.variant || ED.get(p.target).name : ''}` }))); }
+    if (n.component && own.some(p => p.trigger === 'hover' || p.trigger === 'press')) s.append(h('div', { class: 'dim small', style: 'margin-top:6px', text: 'Interactive component: these interactions work in every instance.' }));
+    if (inherited.length) { s.append(h('div', { class: 'dim small', style: 'margin-top:6px', text: 'From main component (interactive component):' })); inherited.forEach(p => s.append(h('div', { class: 'icard inh', text: `${(TRIGGERS.find(t => t[0] === p.trigger) || [, p.trigger])[1]} → ${(ACTIONS.find(a => a[0] === p.action) || [, p.action])[1]} ${p.action === 'setVar' ? varName(p.v) : p.target && ED.get(p.target) ? ED.get(p.target).component?.variant || ED.get(p.target).name : ''}` }))); }
   }
   function interactionCard(n, p, i, list) {
     const card = h('div', { class: 'icard' });
     const upd = (fn, label) => { const l = JSON.parse(JSON.stringify(list)); fn(l[i]); ED.setProp(n, 'proto', l); ED.commit(label); };
-    card.append(row(h('span', { class: 'lbl', text: 'Trigger' }), selectEl(TRIGGERS, p.trigger, val => upd(q => q.trigger = val, 'Trigger')), iconBtn(ICON.x, 'Remove interaction', () => { const l = list.filter((_, j) => j !== i); ED.setProp(n, 'proto', l); ED.commit('Remove interaction'); })));
+    card.append(row(h('span', { class: 'lbl', text: 'Trigger' }), selectEl(TRIGGERS, p.trigger, val => upd(q => { q.trigger = val; if (val === 'swipe' && !q.dir) q.dir = 'left'; }, 'Trigger')), iconBtn(ICON.x, 'Remove interaction', () => { const l = list.filter((_, j) => j !== i); ED.setProp(n, 'proto', l); ED.commit('Remove interaction'); })));
     if (p.trigger === 'delay') card.append(row(numField('Delay', p.delay ?? 1000, val => upd(q => q.delay = val, 'Delay'), { min: 0, suffix: 'ms', wide: true })));
+    if (p.trigger === 'swipe') card.append(row(h('span', { class: 'lbl', text: 'Direction' }), selectEl([['left', '← Left'], ['right', '→ Right'], ['up', '↑ Up'], ['down', '↓ Down'], ['any', 'Any direction']], p.dir || 'left', val => upd(q => q.dir = val, 'Swipe direction'))));
     if (p.trigger === 'key') { const k = h('input', { type: 'text', value: p.key || '', placeholder: 'Press a key…', readonly: true, class: 'keycap' }); k.onkeydown = e => { e.preventDefault(); e.stopPropagation(); upd(q => q.key = e.key === ' ' ? 'Space' : e.key, 'Key'); }; card.append(row(h('span', { class: 'lbl', text: 'Key' }), k)); }
-    card.append(row(h('span', { class: 'lbl', text: 'Action' }), selectEl(ACTIONS, p.action, val => upd(q => { q.action = val; q.target = null; if (val === 'changeTo') q.trans = 'smart'; }, 'Action'))));
+    card.append(row(h('span', { class: 'lbl', text: 'Action' }), selectEl(ACTIONS, p.action, val => upd(q => { q.action = val; q.target = null; if (val === 'changeTo') q.trans = 'smart'; if (val === 'setVar') { const v0 = (ED.doc.vars || [])[0]; q.v = v0 ? v0.id : null; q.vop = v0 && v0.type === 'bool' ? 'toggle' : 'set'; q.val = v0 ? v0.value : null; q.trans = 'smart'; } if (val === 'setMode') { q.mode = 'toggle'; q.trans = 'dissolve'; } }, 'Action'))));
     let dests = null;
     if (p.action === 'navigate' || p.action === 'overlay') dests = LP.artboards(ED.doc).filter(a => a !== ED.scene.top(n) || p.action === 'overlay').map(a => [a.id, a.name]);
     if (p.action === 'scrollTo') { const top = ED.scene.top(n); dests = []; const walk = (x, d) => ED.kids(x).forEach(k => { if (!ED.isClone(k)) { dests.push([k.id, '  '.repeat(d) + k.name]); walk(k, d + 1); } }); if (top) walk(top, 0); }
     if (p.action === 'changeTo') { const main = n.type === 'instance' ? A.mainOf(n) : (n.component ? n : null); dests = main ? A.variantsOf(main).map(c => [c.id, c.component.variant || c.name]) : []; if (!main) card.append(h('div', { class: 'dim small', text: 'Change to works on component instances (or on a main component, for interactive components).' })); }
     if (dests) card.append(row(h('span', { class: 'lbl', text: 'Destination' }), selectEl([['', '— choose —'], ...dests], p.target || '', val => upd(q => q.target = val || null, 'Destination'))));
-    if (p.action === 'overlay') card.append(row(h('span', { class: 'lbl', text: 'Position' }), selectEl([['center', 'Center'], ['top', 'Top'], ['bottom', 'Bottom']], p.overlayPos || 'center', val => upd(q => q.overlayPos = val, 'Overlay position')), checkbox('Dim', p.dim !== false, c => upd(q => q.dim = c, 'Overlay dim'))));
-    if (p.action !== 'back' || true) {
-      card.append(row(h('span', { class: 'lbl', text: 'Animation' }), selectEl(TRANS, p.trans || 'instant', val => upd(q => q.trans = val, 'Transition'))));
-      if ((p.trans || 'instant') !== 'instant' || p.action === 'scrollTo') card.append(row(selectEl(EASES, p.ease || 'ease-out', val => upd(q => q.ease = val, 'Easing')), numField('ms', p.dur ?? 300, val => upd(q => q.dur = val, 'Duration'), { min: 0, max: 10000, step: 10 })));
+    if (p.action === 'setVar') {
+      const vars = ED.doc.vars || [], def = vars.find(x => x.id === p.v);
+      if (!vars.length) card.append(h('div', { class: 'dim small', text: 'No variables yet — add one in the Prototype tab with nothing selected.' }));
+      else {
+        card.append(row(h('span', { class: 'lbl', text: 'Variable' }), selectEl(vars.map(x => [x.id, x.name]), p.v || '', id => upd(q => { q.v = id; const d = vars.find(x => x.id === id); q.val = d ? d.value : null; }, 'Variable'))));
+        const ops = def && def.type === 'bool' ? [['set', 'Set to'], ['toggle', 'Toggle']] : def && def.type === 'num' ? [['set', 'Set to'], ['add', 'Increase by'], ['sub', 'Decrease by']] : [['set', 'Set to'], ['add', 'Append']];
+        card.append(row(selectEl(ops, p.vop || 'set', val => upd(q => q.vop = val, 'Variable operation')), p.vop === 'toggle' ? h('span', { class: 'grow' }) : varValueInput(def, p.val, val => upd(q => q.val = val, 'Variable value'))));
+      }
     }
+    if (p.action === 'setMode') card.append(row(h('span', { class: 'lbl', text: 'Mode' }), selectEl([['toggle', 'Next mode (cycle)'], ...LP.modesOf(ED.doc).map(m => [m.id, m.name])], p.mode || 'toggle', val => upd(q => q.mode = val, 'Color mode'))));
+    if (p.action === 'overlay') card.append(row(h('span', { class: 'lbl', text: 'Position' }), selectEl([['center', 'Center'], ['top', 'Top'], ['bottom', 'Bottom']], p.overlayPos || 'center', val => upd(q => q.overlayPos = val, 'Overlay position')), checkbox('Dim', p.dim !== false, c => upd(q => q.dim = c, 'Overlay dim'))));
+    card.append(row(h('span', { class: 'lbl', text: 'Animation' }), selectEl(TRANS, p.trans || 'instant', val => upd(q => q.trans = val, 'Transition'))));
+    if ((p.trans || 'instant') !== 'instant' || p.action === 'scrollTo') card.append(row(selectEl(EASES, p.ease || 'ease-out', val => upd(q => q.ease = val, 'Easing')), numField('ms', p.dur ?? 300, val => upd(q => q.dur = val, 'Duration'), { min: 0, max: 10000, step: 10 })));
+    card.append(condRow('Only if', p.cond || null, c => upd(q => { if (c) q.cond = c; else delete q.cond; }, 'Condition')));
     return card;
   }
 

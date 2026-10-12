@@ -7,6 +7,7 @@
   const need = (ok, msg) => { if (!ok) Aero.toast(msg); return ok; };
 
   A.deleteSel = () => {
+    if (ED.pathEdit && ED.pathSel && ED.deleteSelectedPoint()) return;
     const roots = ED.selRoots();
     if (roots.some(n => ED.isClone(n))) {
       // hide layers inside instances (override) instead of deleting
@@ -39,15 +40,84 @@
     ED.sel = [g.id]; ED.commit('Group');
   };
   A.ungroup = () => {
-    const roots = editableRoots().filter(n => (n.type === 'group' || n.type === 'frame' && !ED.isArtboard(n)));
+    const roots = editableRoots().filter(n => (n.type === 'group' || n.type === 'bool' || n.type === 'frame' && !ED.isArtboard(n)));
     if (!need(roots.length, 'Select a group or frame to ungroup')) return;
     const ids = [];
     roots.forEach(g => {
       const par = ED.parent(g), arr = ED.childArr(par); let idx = arr.indexOf(g);
-      g.children.slice().forEach(c => { ED.reparent(c, par, ++idx); ids.push(c.id); });
+      g.children.slice().forEach(c => { ED.reparent(c, par, ++idx); if (par === ED.doc) delete c.mask; ids.push(c.id); });
       ED.removeNode(g);
     });
     ED.sel = ids; ED.commit('Ungroup');
+  };
+  /* ---------- boolean operations, flatten, masks ---------- */
+  const SHAPE_TYPES = { rect: 1, ellipse: 1, path: 1, bool: 1, frame: 1, instance: 1, group: 1, icon: 1, text: 1 };
+  // wrap layers (same parent) into a new container node, keeping their stacking order
+  function wrapRoots(roots, node) {
+    const par = ED.parent(roots[0]), arr = ED.childArr(par);
+    const order = roots.slice().sort((a, b) => arr.indexOf(a) - arr.indexOf(b));
+    arr.splice(Math.max(...order.map(n => arr.indexOf(n))) + 1, 0, node); ED.update();
+    order.forEach(n => ED.reparent(n, node));
+    return order;
+  }
+  A.boolean = op => {
+    const sel = ED.selNodes();
+    if (sel.length === 1 && sel[0].type === 'bool' && !ED.isClone(sel[0])) { sel[0].op = op; sel[0].name = /^(Union|Subtract|Intersect|Exclude)$/.test(sel[0].name) ? LP.BOOL_OPS[op] : sel[0].name; ED.commit(LP.BOOL_OPS[op]); return; }
+    const roots = editableRoots().filter(n => !ED.isArtboard(n) && SHAPE_TYPES[n.type]);
+    if (!need(roots.length >= 2, 'Select two or more shapes for a boolean operation')) return;
+    const par = ED.parent(roots[0]);
+    if (!need(roots.every(n => ED.parent(n) === par), 'Boolean operations need layers with the same parent')) return;
+    if (!need(window.paper, 'Boolean engine unavailable')) return;
+    const arr = ED.childArr(par), bottom = roots.slice().sort((a, b) => arr.indexOf(a) - arr.indexOf(b))[0];
+    const bv = ED.scene.view(bottom), paintable = bottom.type !== 'text' && bottom.type !== 'icon' && bottom.type !== 'group';
+    const g = LP.node('bool', { name: LP.BOOL_OPS[op], op, x: 0, y: 0, w: 1, h: 1,
+      fills: paintable && (bv.fills || []).length ? JSON.parse(JSON.stringify(bv.fills)) : [LP.solid(bottom.type === 'icon' ? (bv.color || '#1e1e1e') : '#d9d9d9')],
+      strokes: paintable ? JSON.parse(JSON.stringify(bv.strokes || [])) : [] });
+    wrapRoots(roots, g);
+    ED.sel = [g.id]; ED.commit(LP.BOOL_OPS[op]);
+  };
+  // convert shapes / boolean groups into an editable vector path
+  A.flatten = () => {
+    const roots = editableRoots().filter(n => ['rect', 'ellipse', 'path', 'bool', 'frame', 'group'].includes(n.type) && !ED.isArtboard(n) && !n.component);
+    if (!need(roots.length, 'Select shapes or a boolean group to flatten')) return [];
+    const ids = [];
+    roots.forEach(n => {
+      const v = ED.scene.view(n);
+      const d = LP.outlineD(ED.scene, n); if (!d) return;
+      const segs = LP.parsePath(d), b = LP.segBounds(segs);
+      const local = LP.segsToD(segs, b.x, b.y);
+      const src = n.type === 'group' ? (ED.kids(n).find(k => (ED.scene.view(k).fills || []).length) || n) : n;
+      const sv = ED.scene.view(src);
+      const p = LP.node('path', { name: n.type === 'bool' || n.type === 'group' ? n.name : n.name + ' (vector)', x: b.x, y: b.y, w: Math.max(1, b.w), h: Math.max(1, b.h), bw: Math.max(1, b.w), bh: Math.max(1, b.h),
+        cont: LP.dToContours(local), pts: [], closed: false, fills: JSON.parse(JSON.stringify(sv.fills || [])), strokes: JSON.parse(JSON.stringify(sv.strokes || [])), shadows: JSON.parse(JSON.stringify(v.shadows || [])),
+        opacity: v.opacity ?? 1, blend: v.blend || 'normal', rule: v.rule === 'evenodd' ? 'evenodd' : 'nonzero', cons: n.cons, sizeH: n.sizeH, sizeV: n.sizeV, absolute: n.absolute, proto: n.proto, mask: n.mask, exports: n.exports });
+      if (v.blur) p.blur = JSON.parse(JSON.stringify(v.blur));
+      ['proto', 'mask', 'exports', 'absolute'].forEach(k => { if (p[k] == null) delete p[k]; });
+      const arr = ED.childArr(ED.parent(n)); arr.splice(arr.indexOf(n), 1, p); ids.push(p.id);
+    });
+    ED.sel = ids; ED.commit('Flatten');
+    return ids;
+  };
+  A.editPoints = () => {
+    let n = ED.selNodes()[0]; if (!need(n && !ED.isClone(n), 'Select a vector or shape')) return;
+    if (n.type !== 'path') { const ids = A.flatten(); n = ids.length ? ED.get(ids[0]) : null; }
+    if (n) ED.enterPathEdit(n);
+  };
+  // the bottom-most selected layer masks the layers above it (grouped together)
+  A.useAsMask = () => {
+    const roots = editableRoots().filter(n => !ED.isArtboard(n));
+    if (!need(roots.length, 'Select a shape to use as a mask (plus the layers to mask)')) return;
+    if (roots.length === 1) {
+      const n = roots[0];
+      if (!need(ED.parent(n) !== ED.doc, 'Put the mask inside a frame or group, or select it together with the layers to mask')) return;
+      n.mask = !n.mask; ED.commit(n.mask ? 'Use as mask' : 'Release mask'); return;
+    }
+    const par = ED.parent(roots[0]);
+    if (!need(roots.every(n => ED.parent(n) === par), 'Mask layers must share the same parent')) return;
+    const g = LP.node('group', { name: 'Mask group', x: 0, y: 0, w: 1, h: 1 });
+    const order = wrapRoots(roots, g);
+    order[0].mask = true;
+    ED.sel = [g.id]; ED.commit('Use as mask');
   };
   A.frameSelection = (auto) => {
     const roots = editableRoots(); if (!need(roots.length, 'Select layers first')) return null;
@@ -161,14 +231,14 @@
     const p = s ? ED.parent(s) : ED.doc;
     ED.select(ED.kids(p).filter(n => n.visible !== false && !n.locked).map(n => n.id));
   };
-  A.selectParent = () => { if (ED.pathEdit) { ED.pathEdit = null; ED.redraw(); return; } const s = ED.selNodes()[0]; if (!s) return; const p = ED.parent(s); ED.select(p && p !== ED.doc ? [p.id] : []); };
-  A.selectChildren = () => { const s = ED.selNodes()[0]; if (!s) return; if (s.type === 'text') { ED.startTextEdit(s); return; } const k = ED.kids(s); if (k.length) ED.select(k.map(n => n.id)); };
+  A.selectParent = () => { if (ED.pathEdit) { ED.exitPathEdit(); return; } const s = ED.selNodes()[0]; if (!s) return; const p = ED.parent(s); ED.select(p && p !== ED.doc ? [p.id] : []); };
+  A.selectChildren = () => { const s = ED.selNodes()[0]; if (!s) return; if (s.type === 'text') { ED.startTextEdit(s); return; } if (s.type === 'path' && !ED.pathEdit) { ED.enterPathEdit(s); return; } const k = ED.kids(s); if (k.length) ED.select(k.map(n => n.id)); };
   A.toggle = key => { const roots = ED.selNodes(); if (!roots.length) return; const val = key === 'visible' ? !roots.every(n => n.visible !== false) : !roots.every(n => n.locked); roots.forEach(n => ED.setProp(n, key, val)); ED.commit(key === 'visible' ? (val ? 'Show' : 'Hide') : (val ? 'Lock' : 'Unlock')); };
   A.flip = axis => {
     const roots = editableRoots().filter(n => n.type === 'path'); if (!need(roots.length, 'Flip works on paths')) return;
     roots.forEach(n => {
       if (n.d) { n.d = window.IO.transformD(n.d, axis === 'h' ? [-1, 0, 0, 1, n.bw, 0] : [1, 0, 0, -1, 0, n.bh]); return; }
-      n.pts.forEach(p => { const k = axis === 'h' ? 'x' : 'y', b = axis === 'h' ? n.bw : n.bh; ['', 'o', 'i'].forEach(q => { const kk = q ? q + k : k; if (p[kk] != null) p[kk] = b - p[kk]; }); });
+      LP.contoursOf(n).forEach(c => c.pts.forEach(p => { const k = axis === 'h' ? 'x' : 'y', b = axis === 'h' ? n.bw : n.bh; ['', 'o', 'i'].forEach(q => { const kk = q ? q + k : k; if (p[kk] != null) p[kk] = b - p[kk]; }); }));
     });
     ED.commit('Flip');
   };
@@ -285,6 +355,7 @@
     ED.commit('Add color style');
   };
   A.applyColorStyle = (st, target = 'fill') => {
+    if (target === 'fill' && ED.applyRangeStyle && ED.applyRangeStyle({ cs: st.id, color: null, a: null })) return;
     const sel = ED.selNodes(); if (!need(sel.length, 'Select layers to apply the color')) return;
     sel.forEach(n => {
       if (n.type === 'icon') { ED.setProp(n, 'color', st.color); return; }
@@ -307,8 +378,9 @@
     ED.commit('Add text style');
   };
   A.applyTextStyle = st => {
+    if (ED.applyRangeStyle && ED.applyRangeStyle({ ts: st.id, font: null, size: null, weight: null, italic: null, lh: null, ls: null })) return;
     const sel = ED.selNodes().filter(n => n.type === 'text'); if (!need(sel.length, 'Select text layers')) return;
-    sel.forEach(n => { ED.setProp(n, 'textStyleId', st.id); if (!ED.isClone(n)) LP.TEXT_KEYS.forEach(k => n[k] = st[k]); });
+    sel.forEach(n => { ED.setProp(n, 'textStyleId', st.id); if (!ED.isClone(n)) { LP.TEXT_KEYS.forEach(k => n[k] = st[k]); if (n.runs) { const r = LP.applyRunStyle(n, 0, String(n.text || '').length, { font: null, size: null, weight: null, italic: null, lh: null, ls: null, ts: null }); if (r) n.runs = r; else delete n.runs; } } });
     ED.commit('Apply text style');
   };
   A.deleteStyle = (kind, st) => {

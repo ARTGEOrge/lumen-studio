@@ -24,8 +24,9 @@
 .fcount{margin-left:auto;color:var(--dim)}
 
 /* ---------- grid ---------- */
-#grid{flex:1;overflow-y:auto;overflow-x:hidden;padding:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--ts,170px),1fr));grid-auto-rows:calc(var(--ts,170px) + 30px);gap:8px;align-content:start;outline:none}
-.cell{position:relative;display:flex;flex-direction:column;border:1px solid #c8d4e2;border-radius:4px;background:linear-gradient(#fdfeff,#eef3f9);box-shadow:0 1px 2px rgba(20,40,70,.12);overflow:hidden}
+#grid{flex:1;overflow-y:auto;overflow-x:hidden;position:relative;outline:none;contain:strict}
+.gsizer{position:absolute;left:0;top:0;width:1px;pointer-events:none}
+.cell{position:absolute;box-sizing:border-box;display:flex;flex-direction:column;border:1px solid #c8d4e2;border-radius:4px;background:linear-gradient(#fdfeff,#eef3f9);box-shadow:0 1px 2px rgba(20,40,70,.12);overflow:hidden}
 .cell:hover{border-color:var(--hov-border);background:linear-gradient(var(--hov-top),var(--hov-bot))}
 .cell.sel{border-color:var(--sel-border);background:linear-gradient(var(--sel-top),var(--sel-bot));box-shadow:inset 0 0 0 1px rgba(255,255,255,.8),0 1px 3px rgba(20,60,110,.25)}
 .cell.active{border-color:#2f6fb0;box-shadow:inset 0 0 0 1px #fff,0 0 0 1px #2f6fb0,0 2px 6px rgba(20,60,110,.35)}
@@ -68,13 +69,14 @@
 #empty .row{display:flex;gap:10px;margin:12px 0}
 
 /* ---------- filmstrip ---------- */
-#filmstrip{grid-column:1/-1;height:86px;display:flex;gap:4px;padding:5px 8px;overflow-x:auto;overflow-y:hidden;background:linear-gradient(#e9f0f8,#d3dfec);border-top:1px solid #a7bcd6}
+#filmstrip{grid-column:1/-1;height:86px;position:relative;overflow-x:auto;overflow-y:hidden;background:linear-gradient(#e9f0f8,#d3dfec);border-top:1px solid #a7bcd6}
 #filmstrip[hidden]{display:none}
-#filmstrip .fs{flex:none;height:72px;min-width:60px;display:grid;place-items:center;padding:3px;border:1px solid transparent;border-radius:3px;position:relative}
+#filmstrip .fs{position:absolute;top:5px;width:100px;height:72px;box-sizing:border-box;display:grid;place-items:center;padding:3px;border:1px solid transparent;border-radius:3px}
+.fsizer{height:1px;pointer-events:none}
 #filmstrip .fs:hover{border-color:var(--hov-border);background:linear-gradient(var(--hov-top),var(--hov-bot))}
 #filmstrip .fs.sel{border-color:var(--sel-border);background:linear-gradient(var(--sel-top),var(--sel-bot))}
 #filmstrip .fs.active{border-color:#2f6fb0;box-shadow:inset 0 0 0 1px #fff}
-#filmstrip img{max-height:62px;max-width:100px;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+#filmstrip img{max-height:62px;max-width:92px;box-shadow:0 1px 3px rgba(0,0,0,.4)}
 #filmstrip .fs .s{position:absolute;bottom:1px;left:4px;font-size:9px;color:#e3a21a;text-shadow:0 0 2px #000,0 0 2px #000}
 
 /* ---------- side panels ---------- */
@@ -138,3 +140,47 @@
 .tabs-mini{display:flex;gap:2px;margin:2px 0 6px}
 .tabs-mini button{flex:1;border:1px solid #b6c9e0;background:linear-gradient(#fff,#e6eef7);border-radius:3px;padding:2px 0;font-size:11px;color:var(--navy)}
 .tabs-mini button.on{background:linear-gradient(#cfe7fc,#a9d2f6);border-color:#5d95c9;font-weight:600}
+
+/* ---------- local tools (masking, spot removal) ---------- */
+.toolpill{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:5;white-space:nowrap}
+.toolpill input[type=range]{width:64px}
+.toolpill{gap:6px;font-size:11.5px}
+.toolpill .aero-btn.small{min-width:0}
+.toolpill .aero-btn.on,.mk-acts .aero-btn.on,.mk-brushrow .aero-btn.on{border-color:#2c628b;background:linear-gradient(#e5f4fc,#c4e5f6 50%,#98d1ef 50%,#68b3db)}
+.toolpill label{display:flex;align-items:center;gap:3px}
+#localhint{top:12px}
+.mk-add{align-items:center}
+.mk-add .ovl,.cbl{display:flex;align-items:center;gap:3px;margin-left:auto;font-size:11.5px}
+.cbl{margin-left:6px}
+.mk-list{max-height:132px;min-height:0;border:1px solid #c5d5e8;margin:4px 0;background:#fff}
+.mk-list .aero-item{font-size:11.5px;gap:5px}
+.mk-list input{margin:0}
+.mkic{width:14px;height:14px;flex:none;border-radius:3px;border:1px solid #567}
+.mkic.linear{background:linear-gradient(#fff,#3a76c0)}.mkic.radial{background:radial-gradient(circle,#fff 30%,#3a76c0)}.mkic.brush{background:linear-gradient(135deg,#fff 40%,#e3a21a 40% 60%,#fff 60%)}
+.mk-empty{margin:4px 0}
+.mk-sw{display:inline-block;width:22px;height:18px;border:1px solid #567;border-radius:3px;align-self:center}
+
+/* ---------- dates (calendar) view ---------- */
+#dates{flex:1;overflow:auto;padding:10px 14px;color:var(--navy)}
+#dates[hidden]{display:none}
+.dt-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.dt-year{font:300 24px var(--font);min-width:64px;text-align:center}
+.dt-years{margin-left:auto;display:flex;gap:3px;flex-wrap:wrap}
+.dt-years .aero-btn.on{border-color:#2c628b;background:linear-gradient(#e5f4fc,#c4e5f6 50%,#98d1ef 50%,#68b3db)}
+.dt-months{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.dt-month{background:linear-gradient(#fdfeff,#eef3f9);border:1px solid #c8d4e2;border-radius:5px;padding:6px 8px 8px;box-shadow:0 1px 2px rgba(20,40,70,.12)}
+.dt-month.empty{opacity:.6}
+.dt-mh{display:flex;justify-content:space-between;font-weight:600;margin-bottom:4px;cursor:pointer}
+.dt-mh:hover{color:var(--link)}
+.dt-mh span{color:var(--dim);font-weight:400;font-size:11px}
+.dt-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.dt-grid i{font-style:normal;font-size:9.5px;color:var(--dim);text-align:center}
+.dt-grid b{position:relative;font-weight:400;font-size:10.5px;text-align:center;height:22px;line-height:22px;border-radius:3px;color:#9aa8b8}
+.dt-grid b.has{color:#10243c;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(30,70,120,.25)}
+.dt-grid b.has:hover{box-shadow:inset 0 0 0 1px #2f6fb0,0 0 0 1px #2f6fb0}
+.dt-grid b.on{box-shadow:inset 0 0 0 2px #e3a21a}
+.dt-grid b em{position:absolute;right:1px;bottom:-3px;font-style:normal;font-size:7.5px;color:#1c3a5a;opacity:.75}
+/* smart collections */
+.srules{display:flex;flex-direction:column;gap:4px;margin:6px 0;max-height:260px;overflow:auto}
+.srule{display:grid;grid-template-columns:150px 140px 1fr auto;gap:4px;align-items:center}
+.srule .aero-btn.small{min-width:0;padding:1px 6px}

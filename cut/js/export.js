@@ -37,9 +37,9 @@
 
   /* exact-frame source provider used by export and still-frame */
   class ExactFrames {
-    constructor() { this.srcs = new Map(); this.demux = new Map(); this.cur = new Map(); this.slow = false; }
-    async source(c) {
-      let s = this.srcs.get(c.id); if (s) return s;
+    constructor() { this.srcs = new Map(); this.demux = new Map(); this.cur = new Map(); this.lastUse = new Map(); this.slow = false; }
+    async source(c, key = c.id) {
+      let s = this.srcs.get(key); if (s) return s;
       const rt = LC.rt.media.get(c.media);
       s = (async () => {
         try {
@@ -47,28 +47,44 @@
           return await LC.DecodedSource.create(await d);
         } catch (e) { console.info('Lumen Cut: falling back to seek decoding for', LC.mediaOf(c)?.name, '-', e.message); this.slow = true; return new LC.SeekSource(rt.url); }
       })();
-      this.srcs.set(c.id, s); return s;
+      this.srcs.set(key, s); return s;
     }
     async prepare(t) {
       this.cur.clear();
-      for (const tr of LC.videoTracks()) {
-        if (tr.mute) continue;
-        for (const L of LC.Compositor.layersAt(tr, t)) {
-          const c = L.clip; if (c.type !== 'video') continue;
-          const rt = LC.rt.media.get(c.media); if (!rt || rt.status !== 'ok') continue;
-          const m = LC.mediaOf(c); const st = Math.min(Math.max(LC.srcTime(c, t), 0), Math.max(0, m.duration - 1e-3));
-          const src = await this.source(c); const f = await src.frameAt(st);
-          if (f) this.cur.set(c.id, { src: f, w: f.displayWidth || f.videoWidth, h: f.displayHeight || f.videoHeight, key: 'x:' + c.id });
+      // collect what is needed synchronously (descends into nested sequences), then decode
+      const need = [];
+      LC.walkVideo(t, (c, tt, path) => {
+        if (c.type !== 'video') return;
+        const rt = LC.rt.media.get(c.media); if (!rt || rt.status !== 'ok') return;
+        const m = LC.mediaOf(c); need.push({ c, key: path + c.id, st: Math.min(Math.max(LC.srcTime(c, tt), 0), Math.max(0, m.duration - 1e-3)) });
+      });
+      for (const n of need) {
+        const f = await this.frameOf(n.c, n.st, n.key); this.lastUse.set(n.key, t);
+        if (f) this.cur.set(n.key, { src: f, w: f.displayWidth || f.videoWidth, h: f.displayHeight || f.videoHeight, key: 'x:' + n.key });
+      }
+      // release decoders not used for a while
+      for (const [key, p] of this.srcs) { const lu = this.lastUse.get(key); if (lu == null || Math.abs(t - lu) > 2) { p.then(s => s.close()); this.srcs.delete(key); this.lastUse.delete(key); } }
+    }
+    /* frame at source time st; a stalled/failed decoder is recreated once, then replaced by seek decoding */
+    async frameOf(c, st, key = c.id) {
+      for (let attempt = 0; ; attempt++) {
+        const src = await this.source(c, key);
+        try { return await src.frameAt(st); }
+        catch (e) {
+          if (src instanceof LC.SeekSource) throw e;
+          console.info('Lumen Cut: video decoder problem (' + e.message + '), ' + (attempt ? 'falling back to seek decoding' : 'retrying'));
+          try { src.close(); } catch (_) { }
+          const rt = LC.rt.media.get(c.media);
+          if (attempt) { this.slow = true; this.srcs.set(key, Promise.resolve(new LC.SeekSource(rt.url))); }
+          else { const d = this.demux.get(c.media); this.srcs.set(key, Promise.resolve(d).then(x => LC.DecodedSource.create(x)).catch(() => { this.slow = true; return new LC.SeekSource(rt.url); })); }
         }
       }
-      // release decoders of clips that are finished
-      for (const [id, p] of this.srcs) { const c = LC.clip(id); if (!c || c.start + c.dur + 2 < t) { p.then(s => s.close()); this.srcs.delete(id); } }
     }
     get(c, st) {
       const m = LC.mediaOf(c), rt = m && LC.rt.media.get(m.id);
       if (!rt || rt.status !== 'ok') return 'offline';
       if (c.type === 'image') return rt.img ? { src: rt.img, w: m.w, h: m.h, key: 'img:' + m.id, version: 1 } : null;
-      return this.cur.get(c.id) || null;
+      return this.cur.get((LC._nestPath || '') + c.id) || null;
     }
     close() { for (const p of this.srcs.values()) p.then(s => s.close()); this.srcs.clear(); this.demux.clear(); }
   }
@@ -76,7 +92,9 @@
 
   /* Render one exact frame at full project resolution → canvas */
   LC.renderStill = async (t, scale = 1) => {
-    const S = LC.project.settings, can = document.createElement('canvas'), comp = new LC.Compositor(can);
+    // one shared offscreen compositor (browsers cap the number of live WebGL contexts); callers copy the canvas right away
+    if (!LC._stillComp || LC._stillComp.gl.isContextLost()) { const c = document.createElement('canvas'); LC._stillComp = new LC.Compositor(c); }
+    const S = LC.project.settings, comp = LC._stillComp, can = comp.canvas;
     comp.resize(even(S.w * scale), even(S.h * scale));
     const ex = new ExactFrames();
     try { await ex.prepare(t); comp.render(t, (c, st) => ex.get(c, st)); } finally { ex.close(); }
@@ -103,7 +121,7 @@
     if (opts.range === 'inout') { t0 = P.inPoint ?? 0; t1 = P.outPoint ?? seq; }
     if (t1 - t0 < 1 / fps) throw new Error('Nothing to export in that range');
     const W = even(S.w * (opts.scale || 1)), H = even(S.h * (opts.scale || 1));
-    const hasAudio = opts.audio !== false && P.clips.some(c => c.type === 'audio' && LC.rt.media.get(c.media)?.audio);
+    const hasAudio = opts.audio !== false && P.clips.some(c => (c.type === 'audio' && LC.rt.media.get(c.media)?.audio) || LC.clipKind(c) === 'naudio');
     const codecs = await pickCodecs(opts.format || 'mp4', W, H, fps, opts.quality || 'high', hasAudio);
     const nFrames = Math.round((t1 - t0) * fps);
     const vChunks = [], aChunks = []; let vErr = null, aErr = null;

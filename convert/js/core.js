@@ -5,9 +5,12 @@ window.LC = (() => {
   const tools = [], byId = {}, aliases = {};
   const CATS = [
     { id: 'img', name: 'Images', cls: 'c-img' },
-    { id: 'pdf', name: 'PDF', cls: 'c-pdf' },
+    { id: 'pdf', name: 'PDF & documents', cls: 'c-pdf' },
     { id: 'av', name: 'Audio & video', cls: 'c-av' },
-    { id: 'data', name: 'Data & text', cls: 'c-data' }];
+    { id: 'data', name: 'Data & spreadsheets', cls: 'c-data' },
+    { id: 'text', name: 'Text & code', cls: 'c-text' },
+    { id: 'calc', name: 'Colours, units & time', cls: 'c-calc' },
+    { id: 'files', name: 'Archives, QR codes & checksums', cls: 'c-files' }];
 
   /* ---------- tiny helpers ---------- */
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -53,6 +56,9 @@ window.LC = (() => {
     purify: () => loadScript('vendor/purify.min.js', 'DOMPurify'),
     mp4: () => loadScript('vendor/mp4-muxer.js', 'Mp4Muxer'),
     webm: () => loadScript('vendor/webm-muxer.js', 'WebMMuxer'),
+    turndown: () => loadScript('vendor/turndown.browser.umd.js', 'TurndownService'),
+    qrcode: () => loadScript('vendor/qrcode.js', 'qrcode'),
+    jsqr: () => loadScript('vendor/jsQR.js', 'jsQR'),
     gifenc: () => loaded.gifenc || (loaded.gifenc = import(vendorUrl('gifenc.esm.js'))),
     pdfjs: () => loaded.pdfjs || (loaded.pdfjs = import(vendorUrl('pdfjs/pdf.min.js')).then(m => { m.GlobalWorkerOptions.workerSrc = vendorUrl('pdfjs/pdf.worker.min.js'); return m; }))
   };
@@ -61,7 +67,7 @@ window.LC = (() => {
     const pdfjs = await lib.pdfjs(), base = vendorUrl('pdfjs/');
     const task = pdfjs.getDocument({ data: bytes.slice(), password: password || undefined, cMapUrl: base + 'cmaps/', cMapPacked: true, standardFontDataUrl: base + 'standard_fonts/',
       wasmUrl: base + 'wasm/', iccUrl: base + 'iccs/', isEvalSupported: false, enableXfa: false, verbosity: 0 });
-    try { return await task.promise; }
+    try { const doc = await task.promise; if (typeof doc.destroy !== 'function') doc.destroy = () => task.destroy(); return doc; }
     catch (e) {
       if (e && e.name === 'PasswordException') throw new Error(password ? 'The password is wrong.' : 'This PDF is password-protected. Enter its password in the options and try again.');
       throw new Error('Not a readable PDF (' + (e && e.message || e) + ')');
@@ -171,6 +177,27 @@ window.LC = (() => {
     yaml: '<path d="M8 4c-3 0-2 4-3 6l-2 2 2 2c1 2 0 6 3 6M16 4c3 0 2 4 3 6l2 2-2 2c-1 2 0 6-3 6"/><path d="M10 9h4M10 12h4M10 15h3"/>',
     md: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M5 15V9l3 3 3-3v6M16 9v6m-2-2 2 2 2-2"/>',
     color: '<circle cx="12" cy="12" r="9"/><circle cx="8" cy="10" r="1.5"/><circle cx="12" cy="7.5" r="1.5"/><circle cx="16" cy="10" r="1.5"/><path d="M13 21c-2-2 0-5 3-4"/>',
+    heic: '<rect x="6" y="2" width="12" height="20" rx="2.5"/><circle cx="12" cy="18.5" r=".8"/><path d="m8 13 2.5-3 2 2 1.5-1.5L16 13"/>',
+    rotate: '<path d="M4 12a8 8 0 1 0 2.3-5.6"/><path d="M4 3v4h4"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
+    trace: '<path d="M4 20c3-9 7-14 16-16"/><circle cx="4" cy="20" r="1.8"/><circle cx="20" cy="4" r="1.8"/><path d="M8 7h4M6 9V5"/>',
+    doc: '<path d="M6 2h8l5 5v15H6z"/><path d="M14 2v5h5"/><path d="M9 12l1 5 2-4 2 4 1-5"/>',
+    sheet: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/><path d="m13 11 4 2.5-4 2.5" />',
+    book: '<path d="M4 4h6a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H4zM20 4h-6a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h6z"/>',
+    zip: '<path d="M5 3h10l4 4v14H5z"/><path d="M10 3v2h2v2h-2v2h2v2h-2v2"/><rect x="9.5" y="14" width="3" height="4" rx=".8"/>',
+    unzip: '<path d="M4 8h16v12H4z"/><path d="M3 4h18v4H3z"/><path d="M12 11v6m-3-3 3 3 3-3"/>',
+    qr: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM18 18h3v3M14 21h1"/>',
+    scan: '<path d="M3 8V4h4M17 4h4v4M21 16v4h-4M7 20H3v-4"/><rect x="8" y="8" width="8" height="8"/><path d="M3 12h18"/>',
+    hash: '<path d="M9 3 7 21M17 3l-2 18M4 8.5h16M3 15.5h16"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
+    link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+    amp: '<text x="1" y="16" style="font-size:12px">&amp;;</text>',
+    case: '<text x="1" y="16" style="font-size:11.5px">Aa</text><path d="M3 20h18"/>',
+    num: '<text x="0.5" y="15.5" style="font-size:9.5px">0x1</text><path d="M3 20h18"/>',
+    roman: '<text x="1.5" y="16" style="font-size:11px">XIV</text>',
+    speed: '<path d="M4 18a9 9 0 1 1 16 0"/><path d="m12 13 4-5"/><circle cx="12" cy="13" r="1.5"/>',
+    cut: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.5 7.5 20 18M8.5 16.5 20 6"/>',
+    xml: '<path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/>',
     units: '<path d="M3 16 16 3l5 5L8 21z"/><path d="m7 12 2 2M10 9l2 2M13 6l2 2"/>'
   };
   const glyph = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${G[name] || G.convert}</svg>`;
@@ -308,7 +335,9 @@ window.LC = (() => {
         const url = URL.createObjectURL(r.blob); urls.push(url);
         if (r.thumb) { const im = el('img', 'th'); im.src = url; im.alt = ''; im.loading = 'lazy'; li.append(im); }
         const info = el('div', 'info'); info.append(el('span', 'nm', esc(r.name)));
-        info.append(el('small', null, fmtSize(r.blob.size) + (r.info ? ' · ' + r.info : '')));
+        const sm = el('small'); sm.textContent = fmtSize(r.blob.size) + (r.info ? ' · ' + r.info : ''); // info is plain text (may contain names from the file)
+        if (r.infoHtml) { const h = el('span', null, r.infoHtml); sm.append(' · ', h); } // infoHtml: our own markup only
+        info.append(sm);
         li.append(info);
         if (r.text != null) { const b = el('button', null, 'Copy text'); b.type = 'button'; b.onclick = () => copyText(r.text); li.append(b); }
         const a = el('a', 'btn go', 'Download'); a.href = url; a.download = safeName(r.name); li.append(a);
@@ -343,12 +372,12 @@ window.LC = (() => {
             const sub = { ...ctx, progress: (p, l) => setProgress((i + clamp(p, 0, 1)) / n, `${n > 1 ? `File ${i + 1} of ${n}: ` : ''}${l || f.name}`) };
             sub.progress(0);
             try { ctx.check(); const r = await t.each(f, opts, sub); out.push(...[].concat(r)); }
-            catch (e) { if (cancelled) { out.push({ name: f.name, error: 'Cancelled' }); break; } console.warn(e); out.push({ name: f.name, error: e.message || String(e) }); }
+            catch (e) { if (cancelled) { out.push({ name: f.name, error: 'Cancelled' }); break; } out.push({ name: f.name, error: e.message || String(e) }); }
             await tick();
           }
         } else {
           try { out.push(...[].concat(await t.run(files.slice(), opts, ctx))); }
-          catch (e) { if (!cancelled) console.warn(e); out.push({ name: t.multiple && files.length > 1 ? `${files.length} files` : files[0].name, error: cancelled ? 'Cancelled' : (e.message || String(e)) }); }
+          catch (e) { out.push({ name: t.multiple && files.length > 1 ? `${files.length} files` : files[0].name, error: cancelled ? 'Cancelled' : (e.message || String(e)) }); }
         }
         setProgress(1, 'Done');
       } finally {

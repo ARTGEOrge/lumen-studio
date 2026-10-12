@@ -165,6 +165,7 @@
   LM.addEffect = (type, L = LM.selLayer()) => {
     if (!L) { Aero.toast('Select a layer first'); return; }
     const fx = F.effect(type);
+    if (type === 'rays') { const b = LM.layerBounds(L, LM.st.time); fx.p.center.v = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]; }
     if (type === 'ramp') { const [w, h] = LM.layerSize(L); fx.p.p0.v = [w / 2, 0]; fx.p.p1.v = [w / 2, h]; if (L.type === 'shape' || L.type === 'text') { const b = LM.layerBounds(L, LM.st.time); fx.p.p0.v = [(b[0] + b[2]) / 2, b[1]]; fx.p.p1.v = [(b[0] + b[2]) / 2, b[3]]; } }
     L.effects.push(fx); L.expanded = true; LM.ui.open.add(L.id + '|effects'); LM.ui.open.add(L.id + '|fx.' + fx.id);
     LM.commit('Add ' + LM.FX[type].name);

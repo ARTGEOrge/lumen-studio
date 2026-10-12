@@ -1,6 +1,6 @@
 // Glossy command bar: options for the active tool, or properties of the selected annotation.
 import { App, emit, on } from './state.js';
-import { patchAnnot, deleteAnnot, editFreetext, fitFreetext, replaceAnnot } from './tools.js';
+import { patchAnnot, deleteAnnot, editFreetext, fitFreetext, replaceAnnot, EXT_TOOLS } from './tools.js';
 import { displayLabel, STAMPS, MARKUP } from './annots.js';
 import { esc, prefs } from './util.js';
 
@@ -42,9 +42,9 @@ export function renderCmdbar() {
     h += controlsFor(a.type === 'freetext' ? (a.content ? 'edittext' : (a.bw || a.fill ? 'freetext' : 'filltext')) : a.type, a);
     h += `<span class="sep"></span><button class="aero-btn" data-act="comment">Comment</button><button class="aero-btn" data-act="delete" title="Delete (Del)">Delete</button>`;
   } else {
-    const t = App.tool; h += `<span class="tname">${TOOL_NAME[t] || t}</span>`;
-    h += controlsFor(t, App.opts[t] || {});
-    h += `<span class="hint">${HINT[t] || ''}</span>`;
+    const t = App.tool, X = EXT_TOOLS[t]; h += `<span class="tname">${X ? X.name || X.title.replace(/^.*?:\s*/, '') : TOOL_NAME[t] || t}</span>`;
+    h += X ? (X.controls?.() || '') : controlsFor(t, App.opts[t] || {});
+    h += `<span class="hint">${X ? X.hint || '' : HINT[t] || ''}</span>`;
   }
   bar.innerHTML = h;
 }

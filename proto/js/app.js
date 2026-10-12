@@ -49,7 +49,7 @@
   APP.closePreview = () => document.querySelector('.lp-preview .pri')?.click();
 
   /* ---------- command bar ---------- */
-  const TOOL_NAMES = { select: 'Select', frame: 'Artboard / Frame', rect: 'Rectangle', ellipse: 'Ellipse', line: 'Line', pen: 'Pen', text: 'Text', hand: 'Hand' };
+  const TOOL_NAMES = { comment: 'Comment', select: 'Select', frame: 'Artboard / Frame', rect: 'Rectangle', ellipse: 'Ellipse', line: 'Line', pen: 'Pen', text: 'Text', hand: 'Hand' };
   function updateCmd() {
     const cmd = $('#cmd'); cmd.innerHTML = '';
     const modes = h('div', { class: 'modes' });
@@ -65,6 +65,7 @@
         cmd.append(s, h('span', { class: 'hint', text: 'Drag to draw a frame · drawing around layers wraps them' }));
       } else if (ED.tool === 'pen') cmd.append(h('span', { class: 'hint', text: 'Click to add points · drag for curves · click the first point to close · Enter to finish' }));
       else if (ED.tool === 'text') cmd.append(h('span', { class: 'hint', text: 'Click for auto-width text · drag for a fixed-width text box' }));
+      else if (ED.tool === 'comment') cmd.append(h('span', { class: 'hint', text: 'Click anywhere to pin a review comment · click a pin to reply or resolve' }));
       else if (ED.tool === 'select') cmd.append(h('span', { class: 'hint', text: 'Double-click to enter groups/instances · Ctrl+click selects deep · Alt shows distances' }));
       else cmd.append(h('span', { class: 'hint', text: 'Drag on the canvas · Shift keeps proportions' }));
     } else if (ED.mode === 'proto') cmd.append(h('span', { class: 'hint', text: 'Select a layer and drag its blue handle onto an artboard to link it' }));
@@ -130,11 +131,14 @@
       ['Edit', 'Ctrl+D duplicate · Alt+drag duplicate · arrows nudge (Shift ×10) · Ctrl+G group · Ctrl+Shift+G ungroup · Ctrl+Alt+G frame selection · Shift+A auto layout'],
       ['Transform', 'Shift constrains proportions / 45° lines / 15° rotation · Alt resizes from centre · Ctrl while moving disables snapping'],
       ['Components', 'Ctrl+Alt+K create component · Ctrl+Alt+B detach instance'], ['Align', 'Alt+A left · Alt+D right · Alt+W top · Alt+S bottom · Alt+H / Alt+V centres · Ctrl+Alt+T tidy up'],
+      ['Text', 'Double-click / Enter edits text in place · select characters and use the inspector to style them (with only a caret, the style applies to what you type next) · Ctrl+B / Ctrl+I / Ctrl+U bold, italic, underline · Ctrl+Z inside the editor undoes typing · Esc or Ctrl+Enter finishes'],
+      ['Vector', 'Ctrl+Alt+U union · Ctrl+Alt+S subtract · Ctrl+Alt+I intersect · Ctrl+Alt+X exclude · Ctrl+E flatten · Ctrl+Alt+M use as mask · Enter / double-click a path edits points (click a segment adds a point, Delete removes, Alt+click converts corner/smooth, Alt-drag breaks handles, Esc done)'],
+      ['Review', 'C comment tool · click a pin to reply / resolve · Shift+C show / hide comments'],
       ['Modes', 'Alt+1 design · Alt+2 prototype · Alt+3 inspect · Ctrl+Enter preview (Esc closes)'], ['Measure', 'Hold Alt and hover to see distances to the selection']];
     Aero.dialog({ title: 'Keyboard shortcuts', noCancel: true, width: 620, html: `<table class="kbd">${rows.map(r => `<tr><th>${r[0]}</th><td>${Aero.esc(r[1])}</td></tr>`).join('')}</table>` });
   }
   function aboutDialog() {
-    Aero.dialog({ title: 'About Lumen Proto', noCancel: true, instruction: 'Lumen Proto 1.0', html: `<p class="dnote">UI/UX design and prototyping: artboards, components with variants, auto layout, color &amp; text styles, interactive prototypes with smart animate, dev handoff and export to PNG, SVG, PDF and standalone HTML.</p><p class="dnote">Bundled: Lucide icons (ISC), Inter typeface (SIL OFL 1.1), fflate (MIT). Part of the Lumen Studio suite.</p>` });
+    Aero.dialog({ title: 'About Lumen Proto', noCancel: true, instruction: 'Lumen Proto 1.1', html: `<p class="dnote">UI/UX design and prototyping: artboards, components with variants, auto layout, color &amp; text styles, interactive prototypes with smart animate, dev handoff and export to PNG, SVG, PDF and standalone HTML.</p><p class="dnote">New in 1.1: mixed-style text, boolean operations, masks, point editing, vector PDF, drag &amp; swipe triggers, overflow scrolling, variables &amp; conditions, dark-mode color styles, review comments, wrap / grid auto layout, design libraries.</p><p class="dnote">Bundled: Lucide icons (ISC), Inter typeface (SIL OFL 1.1), fflate (MIT), paper.js 0.12.18 (MIT, boolean geometry), Inter 4.1 static TTFs (SIL OFL 1.1, embedded as font subsets in PDF exports). Part of the Lumen Studio suite.</p>` });
   }
 
   /* ---------- context menu ---------- */
@@ -168,6 +172,8 @@
       onSave: () => IO.save(false),
       menus: {
         File: [['New', 'Ctrl+N', APP.newDoc], ['Open…', 'Ctrl+O', IO.open], ['Open Sample', '', APP.openSample], '-', ['Save', 'Ctrl+S', () => IO.save(false)], ['Save As…', 'Ctrl+Shift+S', () => IO.save(true)], '-',
+          '#Design library', ['Import design library…', '', () => IO.importLibraryFile().catch(e => Aero.alert('Import library', e.message))], ['Export design library…', '', IO.exportLibrary], '-',
+          ['Import review comments…', '', IO.importReviewFile],
           ['Import SVG / PNG / JPEG…', 'Ctrl+Shift+I', APP.import], ['Place image…', 'Ctrl+Shift+K', APP.placeImage], '-', '#Export',
           ['Artboards as PNG', 'Ctrl+Shift+E', () => IO.exportArtboards('png', 1)], ['Artboards as PNG @2x', '', () => IO.exportArtboards('png', 2)], ['Artboards as SVG', '', () => IO.exportArtboards('svg', 1)], ['Artboards as PDF', '', () => IO.exportArtboards('pdf', 2)],
           ['Selection (export settings)…', '', () => IO.exportNodes(ED.selNodes())], ['Batch export marked layers (ZIP)', 'Ctrl+Alt+E', IO.batchExport], '-', ['Interactive HTML prototype…', 'Ctrl+Alt+H', IO.exportHTML]],
@@ -175,12 +181,15 @@
           { label: 'Cut', key: 'Ctrl+X', noShortcut: true, fn: () => A.cut(), disabled: () => !any() }, { label: 'Copy', key: 'Ctrl+C', noShortcut: true, fn: () => A.copy(), disabled: () => !any() }, { label: 'Paste', key: 'Ctrl+V', noShortcut: true, fn: () => A.paste(), disabled: () => !A.clip },
           ['Duplicate', 'Ctrl+D', A.duplicate], ['Delete', 'Delete/Backspace', A.deleteSel], '-', ['Select all', 'Ctrl+A', A.selectAll], ['Select children', 'Enter', A.selectChildren], ['Select parent / deselect', 'Escape', () => { if (ED.penPts) { ED.finishPen(false); return; } if (document.querySelector('.lp-ctx')) { document.querySelector('.lp-ctx').remove(); return; } if (!ED.sel.length) return; A.selectParent(); }]],
         Object: [['Group', 'Ctrl+G', A.group], ['Ungroup', 'Ctrl+Shift+G', A.ungroup], ['Frame selection', 'Ctrl+Alt+G', A.wrapInFrame], '-', ['Add / remove auto layout', 'Shift+A', A.addAutoLayout], '-',
+          '#Vector', ['Union selection', 'Ctrl+Alt+U', () => A.boolean('union')], ['Subtract selection', 'Ctrl+Alt+S', () => A.boolean('subtract')], ['Intersect selection', 'Ctrl+Alt+I', () => A.boolean('intersect')], ['Exclude selection', 'Ctrl+Alt+X', () => A.boolean('exclude')],
+          ['Flatten', 'Ctrl+E', A.flatten], ['Edit points', '', A.editPoints], ['Use as mask', 'Ctrl+Alt+M', A.useAsMask], '-',
           ['Create component', 'Ctrl+Alt+K', A.createComponent], ['Add variant…', '', A.addVariant], ['Detach instance', 'Ctrl+Alt+B', A.detach], ['Reset overrides', '', A.resetOverrides], ['Go to main component', '', A.goToMain], '-',
           ['Bring to front', 'Ctrl+Shift+]', () => A.arrange('front')], ['Bring forward', 'Ctrl+]', () => A.arrange('forward')], ['Send backward', 'Ctrl+[', () => A.arrange('backward')], ['Send to back', 'Ctrl+Shift+[', () => A.arrange('back')], '-',
           ['Align left', 'Alt+A', () => A.align('left')], ['Align horizontal centers', 'Alt+H', () => A.align('hcenter')], ['Align right', 'Alt+D', () => A.align('right')], ['Align top', 'Alt+W', () => A.align('top')], ['Align vertical centers', 'Alt+V', () => A.align('vcenter')], ['Align bottom', 'Alt+S', () => A.align('bottom')],
           ['Distribute horizontally', 'Shift+Alt+H', () => A.distribute('h')], ['Distribute vertically', 'Shift+Alt+V', () => A.distribute('v')], ['Tidy up', 'Ctrl+Alt+T', A.tidyUp], '-',
           ['Flip path horizontal', 'Shift+H', () => A.flip('h')], ['Flip path vertical', 'Shift+V', () => A.flip('v')], ['Show / hide', 'Ctrl+Shift+H', () => A.toggle('visible')], ['Lock / unlock', 'Ctrl+Shift+L', () => A.toggle('locked')], ['Rename…', 'F2', () => { const n = ED.selNodes()[0]; if (n) ED.renameNode(n); }]],
         View: [['Zoom in', 'Ctrl+=', () => ED.zoomBy(1.25)], ['Zoom out', 'Ctrl+-', () => ED.zoomBy(0.8)], ['Zoom to fit', 'Ctrl+1', ED.zoomFit], ['Zoom to selection', 'Ctrl+2', ED.zoomSel], ['Actual size (100%)', 'Ctrl+0', ED.zoom100], '-',
+          { label: 'Comments', key: 'Shift+C', fn: () => window.COMMENTS.toggleVisible(), checked: () => ED.showComments }, { label: 'Resolved comments', key: '', fn: () => { ED.showResolved = !ED.showResolved; ED.redraw(); window.COMMENTS.renderList(); }, checked: () => ED.showResolved },
           { label: 'Layout grids', key: "Ctrl+'", fn: () => { ED.showGrids = !ED.showGrids; ED.redraw(); }, checked: () => ED.showGrids }, { label: 'Snapping & smart guides', key: '', fn: () => { ED.snapOn = !ED.snapOn; }, checked: () => ED.snapOn }, '-',
           { label: 'Design mode', key: 'Alt+1', fn: () => APP.setMode('design'), checked: () => ED.mode === 'design' }, { label: 'Prototype mode', key: 'Alt+2', fn: () => APP.setMode('proto'), checked: () => ED.mode === 'proto' }, { label: 'Inspect mode (dev handoff)', key: 'Alt+3', fn: () => APP.setMode('inspect'), checked: () => ED.mode === 'inspect' }, '-',
           ['Preview prototype', 'Ctrl+Enter/F5', () => APP.preview()]],
@@ -198,6 +207,7 @@
       { id: 'select', title: 'Select', key: 'V', icon: I.select }, null,
       { id: 'frame', title: 'Artboard / Frame', key: 'A', icon: I.frame }, { id: 'rect', title: 'Rectangle', key: 'R', icon: I.rect }, { id: 'ellipse', title: 'Ellipse', key: 'E', icon: I.ellipse },
       { id: 'line', title: 'Line', key: 'L', icon: I.line }, { id: 'pen', title: 'Pen', key: 'P', icon: I.pen }, { id: 'text', title: 'Text', key: 'T', icon: I.text }, null,
+      { id: 'comment', title: 'Comment (review)', key: 'C', icon: '<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/>' }, null,
       { id: 'image', title: 'Place image', icon: I.image }, { id: 'icon', title: 'Icons (Assets)', icon: I.icon }, null, { id: 'hand', title: 'Hand', key: 'H', icon: I.hand }
     ], id => {
       if (id === 'image') { setTimeout(() => ED.toolbox.set(ED.tool === 'image' ? 'select' : ED.tool), 0); APP.placeImage(); return; }
@@ -216,7 +226,7 @@
     // left tabs
     document.querySelectorAll('#ltabs .aero-tab').forEach(t => t.onclick = () => showLeft(t.dataset.tab));
     document.querySelectorAll('#rtabs .aero-tab').forEach(t => t.onclick = () => APP.setMode(t.dataset.mode));
-    P.initLayers($('#layers')); P.initAssets($('#assets')); P.initInspector($('#insp'));
+    P.initLayers($('#layers')); P.initAssets($('#assets')); P.initInspector($('#insp')); window.COMMENTS.initList($('#comments'));
     ED.listeners.hist.push(() => { if (!$('#history').hidden) Aero.renderHistory($('#history'), ED.hist, i => ED.goHist(i)); });
     // clipboard events (system clipboard aware)
     const typing = () => document.activeElement?.matches?.('input,textarea,select,[contenteditable=true]');
@@ -243,7 +253,7 @@
     // pen: Enter finishes
     addEventListener('keydown', e => {
       if (e.key === 'Enter' && ED.penPts && !e.target.matches('input,textarea')) { e.preventDefault(); e.stopImmediatePropagation(); ED.finishPen(false); }
-      if (e.key === 'Escape' && ED.pathEdit) { ED.pathEdit = null; ED.redraw(); }
+      if (e.key === 'Escape' && ED.pathEdit && !e.target.matches('input,textarea')) { e.preventDefault(); e.stopImmediatePropagation(); ED.exitPathEdit(); }
     }, true);
     APP.setMode('design');
     ED.setDoc(LP.newDoc(), 'Untitled');
@@ -254,7 +264,8 @@
   }
   function showLeft(tab) {
     document.querySelectorAll('#ltabs .aero-tab').forEach(t => t.classList.toggle('on', t.dataset.tab === tab));
-    $('#layers').hidden = tab !== 'layers'; $('#assets').hidden = tab !== 'assets'; $('#history').hidden = tab !== 'history';
+    $('#layers').hidden = tab !== 'layers'; $('#assets').hidden = tab !== 'assets'; $('#history').hidden = tab !== 'history'; $('#comments').hidden = tab !== 'comments';
+    if (tab === 'comments') window.COMMENTS.renderList();
     if (tab === 'assets') P.renderAssets();
     if (tab === 'history') Aero.renderHistory($('#history'), ED.hist, i => ED.goHist(i));
   }

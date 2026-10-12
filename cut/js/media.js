@@ -1,7 +1,7 @@
 'use strict';
 /* Lumen Cut — media bin: import, analysis (duration, thumbnails, filmstrip, decoded audio + peaks), bin UI, relink. */
 (function () {
-  LC.rt = { media: new Map() };   // runtime data per media id: {blob, url, status, audio, peaks, thumb, strip, img}
+  LC.rt = LC.rt || {}; LC.rt.media = LC.rt.media || new Map();   // runtime data per media id: {blob, url, status, audio, peaks, thumb, strip, img}
   const VIDEO_EXT = /\.(mp4|m4v|webm|mov|mkv|ogv)$/i, AUDIO_EXT = /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i, IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i;
   LC.kindOf = (name, type = '') => {
     if (/\.lcut$/i.test(name)) return 'project';
@@ -104,6 +104,11 @@
     Aero.busy(`Importing ${added.length} file${added.length > 1 ? 's' : ''}…`);
     try { for (const m of added) await LC.analyze(m); } finally { Aero.busy(); }
     const ok = added.filter(m => LC.rt.media.get(m.id).status === 'ok');
+    if (LC.prefs?.sceneOnImport) {
+      let cuts = 0;
+      try { for (const m of ok) if (m.kind === 'video') { Aero.busy(`Detecting scene cuts in ${m.name}…`); cuts += (await LC.detectScenes(m)).length; } } catch (e) { console.warn('Scene detection failed', e); } finally { Aero.busy(); }
+      if (cuts) setTimeout(() => Aero.toast(`Detected ${cuts} scene cut${cuts > 1 ? 's' : ''} — Clip → Split at Scene Cuts`, 3500), 2400);
+    }
     added.filter(m => !ok.includes(m)).forEach(m => { LC.project.media = LC.project.media.filter(x => x !== m); });
     LC.bin.sel = new Set(ok.map(m => m.id));
     LC.bin.render();
@@ -137,6 +142,7 @@
       return;
     }
     const used = new Set(P.clips.map(c => c.media));
+    LC.binSequences?.(box, f);
     for (const m of items) {
       const rt = LC.rt.media.get(m.id) || {}, off = rt.status === 'offline' || rt.status === 'error';
       const d = Aero.el('div', 'aero-item binitem' + (bin.sel.has(m.id) ? ' sel' : '') + (off ? ' offline' : ''));
@@ -148,7 +154,7 @@
       if (rt.thumb) { const c = rt.thumb.cloneNode(); c.getContext('2d').drawImage(rt.thumb, 0, 0); th.appendChild(c); }
       if (m.kind === 'video' || m.kind === 'audio') th.insertAdjacentHTML('beforeend', `<span class="bdur">${LC.tc(m.duration)}</span>`);
       d.onclick = e => { if (e.ctrlKey || e.shiftKey) { bin.sel.has(m.id) ? bin.sel.delete(m.id) : bin.sel.add(m.id); } else bin.sel = new Set([m.id]); bin.render(); };
-      d.ondblclick = () => { if (off) LC.relinkDialog([m]); else LC.editToTimeline('overwrite'); };
+      d.ondblclick = () => { if (off) LC.relinkDialog([m]); else LC.src.load(m.id); };
       d.ondragstart = e => { if (!bin.sel.has(m.id)) { bin.sel = new Set([m.id]); bin.render(); } LC.drag = { kind: 'media', ids: [...bin.sel] }; e.dataTransfer.setData('text/x-lcut', 'media'); e.dataTransfer.effectAllowed = 'copy'; };
       d.ondragend = () => { LC.drag = null; LC.tl.dropGhost = null; LC.tl.draw(); };
       box.appendChild(d);
@@ -156,9 +162,11 @@
   };
   bin.removeSelected = async () => {
     const ids = [...bin.sel]; if (!ids.length) return Aero.toast('Select media in the Project panel first');
-    const P = LC.project, uses = P.clips.filter(c => ids.includes(c.media));
-    if (uses.length && !(await Aero.confirm('Remove media', `${uses.length} clip${uses.length > 1 ? 's use' : ' uses'} this media. Remove the media and its clips from the sequence?`, 'Remove'))) return;
-    LC.removeClips(uses.map(c => c.id)); P.media = P.media.filter(m => !ids.includes(m.id)); bin.sel.clear();
+    const P = LC.project; LC.syncSeq();
+    const uses = P.sequences.reduce((n, s) => n + LC.seqClips(s.id).filter(c => ids.includes(c.media)).length, 0);
+    if (uses && !(await Aero.confirm('Remove media', `${uses} clip${uses > 1 ? 's use' : ' uses'} this media. Remove the media and its clips from every sequence?`, 'Remove'))) return;
+    for (const s of P.sequences) LC.withSeq(s.id, () => { const rm = LC.project.clips.filter(c => ids.includes(c.media)).map(c => c.id); if (rm.length) LC.removeClips(rm); });
+    P.media = P.media.filter(m => !ids.includes(m.id)); bin.sel.clear();
     LC.commit('Remove media'); LC.refresh();
   };
 

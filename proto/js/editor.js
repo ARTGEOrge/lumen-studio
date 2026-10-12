@@ -52,7 +52,11 @@
     if (ED.isClone(n)) {
       if (!LP.OVERRIDABLE.has(key)) return false;
       const top = ED.topInstance(n); const rel = String(n.id).slice(String(top.id).length + 1);
-      top.overrides = top.overrides || {}; const o = (top.overrides[rel] = top.overrides[rel] || {}); o[key] = JSON.parse(JSON.stringify(val));
+      top.overrides = top.overrides || {};
+      // reuse an existing override entry for this layer (entries may be keyed by id path or matched by layer-name path)
+      let k = rel;
+      if (!top.overrides[rel] && n._nrel) { const k2 = Object.keys(top.overrides).find(q => top.overrides[q] && top.overrides[q].__ === n._nrel && !q.startsWith('#')); if (k2) k = k2; }
+      const o = (top.overrides[k] = top.overrides[k] || {}); o[key] = JSON.parse(JSON.stringify(val));
       if (n._nrel) o.__ = n._nrel;
       n[key] = val; return true;
     }
@@ -130,7 +134,7 @@
     return c[i];
   };
   const hitSkip = n => n.locked && !ED.isArtboard(n);
-  ED.hitChain = (wx, wy, extra = {}) => LP.hitTest(ED.scene, ED.doc.children, wx, wy, Object.assign({ skip: hitSkip, tol: 3 / ED.view.z, matrix: null }, extra));
+  ED.hitChain = (wx, wy, extra = {}) => LP.hitTest(ED.scene, ED.doc.children, wx, wy, Object.assign({ skip: hitSkip, tol: 3 / ED.view.z, matrix: null, masks: true }, extra));
 
   /* ======================= rendering ======================= */
   let raf = 0;
@@ -151,7 +155,9 @@
     ED.doc.children.forEach(n => {
       const b = ED.wbox(n); if (b.x > vw.x + vw.w || b.y > vw.y + vw.h || b.x + b.w < vw.x || b.y + b.h < vw.y) return;
       if (ED.isArtboard(n) && n.visible !== false) { ctx.save(); ctx.shadowColor = 'rgba(20,40,70,.18)'; ctx.shadowBlur = 6 * dpr; ctx.shadowOffsetY = 1 * dpr; ctx.fillStyle = '#fff'; ctx.fillRect(n.x, n.y, n.w, n.h); ctx.restore(); }
+      ED.doc._mode = LP.nodeMode(ED.doc, n);
       LP.drawNode(ctx, ED.scene, n, { hide, base: c });
+      ED.doc._mode = LP.defaultMode(ED.doc);
     });
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawOverlay(ctx, r);
@@ -204,7 +210,7 @@
       const purple = sel.every(n => n.component || n.type === 'instance' || ED.isClone(n));
       const col = purple ? PURPLE : BLUE;
       sel.forEach(n => strokePoly(ctx, sPts(n), col, 1));
-      if (ED.mode === 'design' && !ED.editing && !(ED.drag && ED.drag.kind === 'move')) {
+      if (ED.mode === 'design' && !ED.editing && !ED.pathEdit && !(ED.drag && ED.drag.kind === 'move')) {
         const H = ED.handles();
         if (H) {
           if (sel.length > 1) strokePoly(ctx, H.box, col, 1);
@@ -234,6 +240,7 @@
     if (ED.mode === 'proto') drawWires(ctx);
     // inspect measurements
     if ((ED.mode === 'inspect' || ED.altDown) && sel.length && hv && !sel.includes(hv) && !ED.drag) drawMeasure(ctx, ED.unionBox(sel), ED.wbox(hv));
+    window.COMMENTS?.draw(ctx);
   }
   function drawGrids(ctx, n) {
     const m = ED.worldMatrix(n), z = ED.view.z;
@@ -272,7 +279,7 @@
     // gaps
     const kids = ED.kids(n).filter(k => k.visible !== false && !k.absolute);
     ctx.fillStyle = 'rgba(255,45,132,.18)';
-    for (let i = 1; i < kids.length; i++) {
+    for (let i = 1; i < (L.mode === 'grid' || L.wrap ? 0 : kids.length); i++) {
       const p = ED.wbox(kids[i - 1]), q = ED.wbox(kids[i]);
       if (L.mode === 'h') { const x0 = p.x + p.w, x1 = q.x; if (x1 > x0) { const s = ED.w2s(x0, b.y + pad[0]); ctx.fillRect(s.x, s.y, (x1 - x0) * z, (b.h - pad[0] - pad[2]) * z); } }
       else { const y0 = p.y + p.h, y1 = q.y; if (y1 > y0) { const s = ED.w2s(b.x + pad[3], y0); ctx.fillRect(s.x, s.y, (b.w - pad[1] - pad[3]) * z, (y1 - y0) * z); } }
@@ -347,7 +354,7 @@
       wirePath(ctx, s, e);
       ctx.fillStyle = ctx.strokeStyle; ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(e.x - 8, e.y - 4.5); ctx.lineTo(e.x - 8, e.y + 4.5); ctx.fill();
       ctx.beginPath(); ctx.arc(s.x, s.y, 3, 0, 7); ctx.fill();
-      if (active) label(ctx, ({ tap: 'Tap', hover: 'Hover', press: 'Press', delay: 'Delay', key: 'Key' }[p.trigger] || p.trigger), (s.x + e.x) / 2, (s.y + e.y) / 2 - 10, BLUE);
+      if (active) label(ctx, ({ tap: 'Tap', hover: 'Hover', press: 'Press', delay: 'Delay', key: 'Key', drag: 'Drag', swipe: 'Swipe ' + (p.dir || '') }[p.trigger] || p.trigger), (s.x + e.x) / 2, (s.y + e.y) / 2 - 10, BLUE);
       ctx.restore();
     });
     const h = ED.wireHandle();
@@ -382,11 +389,15 @@
     const m = ED.worldMatrix(n), sx = n.bw ? n.w / n.bw : 1, sy = n.bh ? n.h / n.bh : 1;
     const S = (x, y) => { const p = M.ap(m, x * sx, y * sy); return ED.w2s(p.x, p.y); };
     ctx.save(); ctx.strokeStyle = BLUE; ctx.lineWidth = 1;
-    (n.pts || []).forEach(p => {
-      const a = S(p.x, p.y);
-      if (p.ox != null) { const o = S(p.ox, p.oy), q = S(p.ix ?? p.x, p.iy ?? p.y); ctx.beginPath(); ctx.moveTo(q.x, q.y); ctx.lineTo(o.x, o.y); ctx.stroke(); [o, q].forEach(h => { ctx.beginPath(); ctx.arc(h.x, h.y, 3, 0, 7); ctx.fillStyle = '#fff'; ctx.fill(); ctx.stroke(); }); }
-      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.rect(a.x - 3.5, a.y - 3.5, 7, 7); ctx.fill(); ctx.stroke();
-    });
+    // outline of the path being edited
+    ctx.beginPath();
+    LP.contoursOf(n).forEach(c => { const pts = c.pts; if (!pts.length) return; const a0 = S(pts[0].x, pts[0].y); ctx.moveTo(a0.x, a0.y); const seg = (a, b) => { const c1 = S(a.ox ?? a.x, a.oy ?? a.y), c2 = S(b.ix ?? b.x, b.iy ?? b.y), e = S(b.x, b.y); ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, e.x, e.y); }; for (let i = 1; i < pts.length; i++) seg(pts[i - 1], pts[i]); if (c.closed && pts.length > 1) seg(pts[pts.length - 1], pts[0]); });
+    ctx.stroke();
+    LP.contoursOf(n).forEach((c, ci) => c.pts.forEach((p, i) => {
+      const a = S(p.x, p.y), selp = ED.pathSel && ED.pathSel.ci === ci && ED.pathSel.i === i;
+      [['o', p.ox, p.oy], ['i', p.ix, p.iy]].forEach(([k, hx, hy]) => { if (hx == null) return; const o = S(hx, hy); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(o.x, o.y); ctx.stroke(); ctx.beginPath(); ctx.arc(o.x, o.y, 3, 0, 7); ctx.fillStyle = '#fff'; ctx.fill(); ctx.stroke(); });
+      ctx.fillStyle = selp ? BLUE : '#fff'; ctx.beginPath(); ctx.rect(a.x - 3.5, a.y - 3.5, 7, 7); ctx.fill(); ctx.stroke();
+    }));
     ctx.restore();
   }
 
@@ -409,6 +420,7 @@
     return { pts, box: corners };
   };
   function handleAt(sx, sy) {
+    if (ED.pathEdit) return null;
     const H = ED.handles(); if (!H || !H.pts.length) return null;
     for (const h of H.pts) if (!h.hidden && Math.abs(h.x - sx) <= 6 && Math.abs(h.y - sy) <= 6) return { kind: "resize", k: h.k };
     // rotation zone: just outside corners (single selection)
@@ -500,13 +512,24 @@
     const { sx, sy } = localPt(e), w = ED.s2w(sx, sy);
     if (e.button === 1 || e.button === 0 && (spaceDown || ED.tool === 'hand')) { ED.drag = { kind: 'pan', sx, sy, vx: ED.view.x, vy: ED.view.y }; ED.updateCursor('grabbing'); return; }
     if (e.button === 2) return;
+    if (e.button === 0 && ED.commentDown && ED.commentDown(e, sx, sy, w)) { ED.drag = null; return; }
     if (ED.mode === 'proto') return protoDown(e, sx, sy, w);
     if (ED.mode === 'inspect') { const ch = ED.hitChain(w.x, w.y); ED.select([ED.pickTarget(ch, true) || ED.pickTarget(ch)].filter(Boolean)); return; }
     const tool = ED.tool;
     if (tool === 'pen') return penDown(e, w);
     if (['rect', 'ellipse', 'frame', 'text', 'line'].includes(tool)) { ED.drag = { kind: 'create', tool, x0: w.x, y0: w.y, x1: w.x, y1: w.y, sx, sy }; return; }
     // select tool
-    if (ED.pathEdit) { const ph = pathPointAt(sx, sy); if (ph) { ED.drag = { kind: 'pathpt', ...ph, start: JSON.stringify(ED.get(ED.pathEdit).pts) }; return; } }
+    if (ED.pathEdit) {
+      const ph = pathPointAt(sx, sy);
+      if (ph) {
+        if (!ph.key && e.altKey) { ED.convertPathPoint(ph.n, ph.ci, ph.i); ED.pathSel = { ci: ph.ci, i: ph.i }; ED.normalizePath(ph.n); ED.commit('Convert point'); return; }
+        if (!ph.key) ED.pathSel = { ci: ph.ci, i: ph.i };
+        ED.drag = { kind: 'pathpt', ...ph, alt: e.altKey }; ED.redraw(); ED.emit('sel'); return;
+      }
+      const sg = pathSegAt(sx, sy);
+      if (sg) { const n = ED.get(ED.pathEdit); const ni = ED.insertPathPoint(n, sg.ci, sg.i, sg.t); ED.pathSel = { ci: sg.ci, i: ni }; ED.drag = { kind: 'pathpt', n, ci: sg.ci, i: ni, key: '', added: true }; ED.live(); return; }
+      const ch0 = ED.hitChain(w.x, w.y); if (!(ch0 && ch0.some(x => x.id === ED.pathEdit))) ED.exitPathEdit(); else { ED.pathSel = null; ED.redraw(); return; }
+    }
     const h = handleAt(sx, sy);
     if (h) { startTransform(h, w, e); return; }
     // artboard title?
@@ -593,7 +616,7 @@
         ED.redraw(); break;
       }
       case 'pen': { const p = d.pt; p.ox = w.x; p.oy = w.y; p.ix = 2 * p.x - w.x; p.iy = 2 * p.y - w.y; ED.redraw(); break; }
-      case 'pathpt': pathPtDrag(d, w); break;
+      case 'pathpt': d.moved = true; pathPtDrag(d, w, e); break;
       case 'wire': {
         d.e = { x: sx, y: sy };
         const ch = ED.hitChain(w.x, w.y, { skip: n => n === d.n || ED.isAncestor(d.n, n) && false });
@@ -637,6 +660,15 @@
       if (inside(w.x, w.y, { x: pb.x - 20, y: pb.y - 20, w: pb.w + 40, h: pb.h + 40 })) {
         const kids = ED.kids(par).filter(k => k !== first && k.visible !== false && !k.absolute);
         const H = pv.layout.mode === 'h';
+        if (pv.layout.mode === 'grid' || pv.layout.wrap) {
+          // reading order: before the first item on a later row, or left of an item's centre on the same row
+          let idx = kids.length;
+          for (let i = 0; i < kids.length; i++) { const b = ED.wbox(kids[i]); if (w.y < b.y || (w.y <= b.y + b.h && w.x < b.x + b.w / 2)) { idx = i; break; } }
+          d.reorder = { par, idx };
+          const rb = kids[idx] ? ED.wbox(kids[idx]) : kids[idx - 1] ? (q => ({ x: q.x + q.w + 4, y: q.y, w: 0, h: q.h }))(ED.wbox(kids[idx - 1])) : { x: pb.x + 4, y: pb.y + 4, w: 0, h: 20 };
+          d.insert = { x0: rb.x - 2, y0: rb.y, x1: rb.x - 2, y1: rb.y + rb.h };
+          ED.guides = null; ED.redraw(); return;
+        }
         let idx = kids.length;
         for (let i = 0; i < kids.length; i++) { const b = ED.wbox(kids[i]); if ((H ? w.x < b.x + b.w / 2 : w.y < b.y + b.h / 2)) { idx = i; break; } }
         d.reorder = { par, idx };
@@ -768,33 +800,109 @@
     ED.childArr(par).push(n); ED.sel = [n.id]; ED.commit('Pen path'); ED.setTool('select');
   }
   ED.finishPen = finishPen;
+  /* ----- vector point editing (any path, including imported SVG paths) ----- */
+  // enter point-edit mode: path data is converted to editable contours (same geometry)
+  ED.enterPathEdit = n => {
+    if (!n || n.type !== 'path' || ED.isClone(n) || n.locked) return false;
+    if (n.d) { n.cont = LP.dToContours(n.d); delete n.d; n.pts = []; n.closed = false; }
+    else if (!n.cont) { n.cont = [{ pts: n.pts || [], closed: !!n.closed }]; n.pts = []; n.closed = false; }
+    if (!n.cont.some(c => c.pts.length)) return false;
+    ED.update(); ED.pathEdit = n.id; ED.pathSel = null; ED.select([n.id]);
+    Aero.toast('Edit points: drag points/handles · click a segment to add a point · Delete removes · Alt+click converts · Esc when done');
+    return true;
+  };
+  ED.exitPathEdit = () => { if (!ED.pathEdit) return; ED.pathEdit = null; ED.pathSel = null; ED.emit('sel'); ED.redraw(); };
+  const pathScale = n => [n.bw ? n.w / n.bw : 1, n.bh ? n.h / n.bh : 1];
   function pathPointAt(sx, sy) {
     const n = ED.get(ED.pathEdit); if (!n) return null;
-    const m = ED.worldMatrix(n), kx = n.bw ? n.w / n.bw : 1, ky = n.bh ? n.h / n.bh : 1;
-    for (let i = 0; i < n.pts.length; i++) {
-      const p = n.pts[i];
-      for (const key of ['', 'o', 'i']) {
-        const x = key ? p[key + 'x'] : p.x, y = key ? p[key + 'y'] : p.y; if (x == null) continue;
-        const wp = M.ap(m, x * kx, y * ky), s = ED.w2s(wp.x, wp.y);
-        if (Math.hypot(s.x - sx, s.y - sy) < 7) return { i, key, n };
-      }
-    }
+    const m = ED.worldMatrix(n), [kx, ky] = pathScale(n);
+    const cs = LP.contoursOf(n);
+    // handles of the selected point first, then anchors, then other handles
+    const tryKey = (ci, i, key) => { const p = cs[ci].pts[i]; const x = key ? p[key + 'x'] : p.x, y = key ? p[key + 'y'] : p.y; if (x == null) return null; const wp = M.ap(m, x * kx, y * ky), s = ED.w2s(wp.x, wp.y); return Math.hypot(s.x - sx, s.y - sy) < 7 ? { ci, i, key, n } : null; };
+    if (ED.pathSel) { for (const k of ['o', 'i']) { const r = cs[ED.pathSel.ci]?.pts[ED.pathSel.i] && tryKey(ED.pathSel.ci, ED.pathSel.i, k); if (r) return r; } }
+    for (let ci = 0; ci < cs.length; ci++) for (let i = 0; i < cs[ci].pts.length; i++) { const r = tryKey(ci, i, ''); if (r) return r; }
+    for (let ci = 0; ci < cs.length; ci++) for (let i = 0; i < cs[ci].pts.length; i++) for (const k of ['o', 'i']) { const r = tryKey(ci, i, k); if (r) return r; }
     return null;
   }
-  function pathPtDrag(d, w) {
-    const n = d.n, m = M.inv(ED.worldMatrix(n)), kx = n.bw ? n.w / n.bw : 1, ky = n.bh ? n.h / n.bh : 1;
-    const l = M.ap(m, w.x, w.y), x = l.x / kx, y = l.y / ky, p = n.pts[d.i];
-    if (!d.key) { const dx = x - p.x, dy = y - p.y; p.x = x; p.y = y; if (p.ox != null) { p.ox += dx; p.oy += dy; p.ix += dx; p.iy += dy; } }
-    else { p[d.key + 'x'] = x; p[d.key + 'y'] = y; const o = d.key === 'o' ? 'i' : 'o'; if (p[o + 'x'] != null) { p[o + 'x'] = 2 * p.x - x; p[o + 'y'] = 2 * p.y - y; } }
+  const segPt = (a, b, t) => {
+    const c1 = { x: a.ox ?? a.x, y: a.oy ?? a.y }, c2 = { x: b.ix ?? b.x, y: b.iy ?? b.y }, u = 1 - t;
+    return { x: u * u * u * a.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * b.x, y: u * u * u * a.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * b.y };
+  };
+  // nearest segment under a screen point → {ci, i (segment start), t}
+  function pathSegAt(sx, sy) {
+    const n = ED.get(ED.pathEdit); if (!n) return null;
+    const m = ED.worldMatrix(n), [kx, ky] = pathScale(n);
+    let best = null;
+    LP.contoursOf(n).forEach((c, ci) => {
+      const pts = c.pts, cnt = c.closed ? pts.length : pts.length - 1;
+      for (let i = 0; i < cnt; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        for (let k = 1; k < 48; k++) {
+          const t = k / 48, q = segPt(a, b, t), wp = M.ap(m, q.x * kx, q.y * ky), s = ED.w2s(wp.x, wp.y), d = Math.hypot(s.x - sx, s.y - sy);
+          if (d < 6 && (!best || d < best.d)) best = { ci, i, t, d };
+        }
+      }
+    });
+    return best;
+  }
+  // split a bezier segment at t (de Casteljau) and insert the new point; returns its index
+  ED.insertPathPoint = (n, ci, i, t) => {
+    const c = LP.contoursOf(n)[ci], pts = c.pts, a = pts[i], j = (i + 1) % pts.length, b = pts[j];
+    const L = (p, q) => ({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
+    let np;
+    if (a.ox == null && b.ix == null) np = L(a, b);
+    else {
+      const P1 = { x: a.ox ?? a.x, y: a.oy ?? a.y }, P2 = { x: b.ix ?? b.x, y: b.iy ?? b.y };
+      const p01 = L(a, P1), p12 = L(P1, P2), p23 = L(P2, b), p012 = L(p01, p12), p123 = L(p12, p23), p = L(p012, p123);
+      a.ox = p01.x; a.oy = p01.y; b.ix = p23.x; b.iy = p23.y;
+      np = { x: p.x, y: p.y, ix: p012.x, iy: p012.y, ox: p123.x, oy: p123.y };
+    }
+    pts.splice(i + 1, 0, np);
+    return i + 1;
+  };
+  ED.removePathPoint = (n, ci, i) => {
+    const cs = LP.contoursOf(n), c = cs[ci]; if (!c) return;
+    c.pts.splice(i, 1);
+    if (c.pts.length < 2) cs.splice(ci, 1);
+    ED.pathSel = null;
+    if (!cs.some(q => q.pts.length >= 2)) { ED.removeNode(n); ED.pathEdit = null; ED.sel = []; return 'deleted'; }
+  };
+  // corner ↔ smooth
+  ED.convertPathPoint = (n, ci, i) => {
+    const c = LP.contoursOf(n)[ci], pts = c.pts, p = pts[i]; if (!p) return;
+    if (p.ox != null || p.ix != null) { delete p.ox; delete p.oy; delete p.ix; delete p.iy; return; }
+    const prev = pts[i - 1] || (c.closed ? pts[pts.length - 1] : null), next = pts[i + 1] || (c.closed ? pts[0] : null);
+    const a = prev || p, b = next || p;
+    let tx = b.x - a.x, ty = b.y - a.y; const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+    const l1 = prev ? Math.hypot(p.x - prev.x, p.y - prev.y) / 3 : 0, l2 = next ? Math.hypot(next.x - p.x, next.y - p.y) / 3 : 0;
+    p.ix = p.x - tx * (l1 || l2); p.iy = p.y - ty * (l1 || l2); p.ox = p.x + tx * (l2 || l1); p.oy = p.y + ty * (l2 || l1);
+  };
+  ED.deleteSelectedPoint = () => {
+    const n = ED.pathEdit && ED.get(ED.pathEdit); if (!n || !ED.pathSel) return false;
+    const r = ED.removePathPoint(n, ED.pathSel.ci, ED.pathSel.i);
+    if (r !== 'deleted') ED.normalizePath(n);
+    ED.commit('Delete point'); return true;
+  };
+  function pathPtDrag(d, w, e) {
+    const n = d.n, m = M.inv(ED.worldMatrix(n)), [kx, ky] = pathScale(n);
+    const l = M.ap(m, w.x, w.y), x = l.x / kx, y = l.y / ky, p = LP.contoursOf(n)[d.ci].pts[d.i];
+    if (!p) return;
+    if (!d.key) { const dx = x - p.x, dy = y - p.y; p.x = x; p.y = y; if (p.ox != null) { p.ox += dx; p.oy += dy; } if (p.ix != null) { p.ix += dx; p.iy += dy; } }
+    else { p[d.key + 'x'] = x; p[d.key + 'y'] = y; const o = d.key === 'o' ? 'i' : 'o'; if (p[o + 'x'] != null && !(d.alt || e?.altKey)) { p[o + 'x'] = 2 * p.x - x; p[o + 'y'] = 2 * p.y - y; } }
     ED.live();
   }
   // re-fit a path's box to its points after editing
   ED.normalizePath = n => {
-    const kx = n.bw ? n.w / n.bw : 1, ky = n.bh ? n.h / n.bh : 1;
-    const all = []; n.pts.forEach(p => { all.push([p.x * kx, p.y * ky]); if (p.ox != null) all.push([p.ox * kx, p.oy * ky], [p.ix * kx, p.iy * ky]); });
+    const [kx, ky] = pathScale(n);
+    const cs = LP.contoursOf(n);
+    const all = []; cs.forEach(c => c.pts.forEach(p => { all.push([p.x * kx, p.y * ky]); if (p.ox != null) all.push([p.ox * kx, p.oy * ky]); if (p.ix != null) all.push([p.ix * kx, p.iy * ky]); }));
+    if (!all.length) return;
     const x0 = Math.min(...all.map(a => a[0])), y0 = Math.min(...all.map(a => a[1])), x1 = Math.max(...all.map(a => a[0])), y1 = Math.max(...all.map(a => a[1]));
-    n.pts.forEach(p => { p.x = p.x * kx - x0; p.y = p.y * ky - y0; if (p.ox != null) { p.ox = p.ox * kx - x0; p.oy = p.oy * ky - y0; p.ix = p.ix * kx - x0; p.iy = p.iy * ky - y0; } });
-    n.x += x0; n.y += y0; n.w = n.bw = Math.max(1, x1 - x0); n.h = n.bh = Math.max(1, y1 - y0);
+    cs.forEach(c => c.pts.forEach(p => { p.x = p.x * kx - x0; p.y = p.y * ky - y0; if (p.ox != null) { p.ox = p.ox * kx - x0; p.oy = p.oy * ky - y0; } if (p.ix != null) { p.ix = p.ix * kx - x0; p.iy = p.iy * ky - y0; } }));
+    // keep the shape in place for rotated paths: shift by the rotated offset
+    if (n.r) { const a = n.r * Math.PI / 180, ow = n.w, oh = n.h, nw = Math.max(1, x1 - x0), nh = Math.max(1, y1 - y0); const cx0 = ow / 2, cy0 = oh / 2, cx1 = x0 + nw / 2, cy1 = y0 + nh / 2; const dx = cx1 - cx0, dy = cy1 - cy0; n.x += cx0 + dx * Math.cos(a) - dy * Math.sin(a) - nw / 2; n.y += cy0 + dx * Math.sin(a) + dy * Math.cos(a) - nh / 2; }
+    else { n.x += x0; n.y += y0; }
+    n.w = n.bw = Math.max(1, x1 - x0); n.h = n.bh = Math.max(1, y1 - y0);
   };
 
   /* ----- prototype mode pointer ----- */
@@ -845,7 +953,7 @@
       case 'rotate': ED.commit('Rotate'); break;
       case 'create': createFromDrag(d); break;
       case 'pen': ED.redraw(); break;
-      case 'pathpt': ED.normalizePath(d.n); ED.commit('Edit path'); break;
+      case 'pathpt': if (d.moved || d.added) { ED.normalizePath(d.n); ED.commit(d.added ? 'Add point' : 'Edit path'); } else ED.redraw(); break;
       case 'wire': {
         if (d.target) {
           const n = d.n; const ps = (ED.isClone(n) ? JSON.parse(JSON.stringify(n.proto || [])) : n.proto = n.proto || []);
@@ -905,12 +1013,13 @@
     if (ED.mode !== 'design') return;
     const { sx, sy } = localPt(e), w = ED.s2w(sx, sy);
     if (ED.tool === 'pen' && ED.penPts) { ED.penPts.pop(); finishPen(false); return; }
+    if (ED.pathEdit) { const ph = pathPointAt(sx, sy); if (ph && !ph.key) { ED.convertPathPoint(ph.n, ph.ci, ph.i); ED.normalizePath(ph.n); ED.commit('Convert point'); } return; }
     const tnode = titleAt(sx, sy);
     if (tnode) { ED.renameNode?.(tnode); return; }
     const chain = ED.hitChain(w.x, w.y); if (!chain) return;
     const cur = ED.selNodes()[0];
     if (cur && cur.type === 'text' && chain.includes(cur)) { ED.startTextEdit(cur); return; }
-    if (cur && cur.type === 'path' && cur.pts?.length && !cur.d && chain.includes(cur) && !ED.isClone(cur)) { ED.pathEdit = cur.id; ED.redraw(); Aero.toast('Drag points or handles. Press Esc when done.'); return; }
+    if (cur && cur.type === 'path' && chain.includes(cur) && !ED.isClone(cur)) { ED.enterPathEdit(cur); return; }
     // drill one level deeper
     const c = chain.slice().reverse();
     const i = cur ? c.indexOf(cur) : -1;
@@ -918,39 +1027,202 @@
     if (next) { ED.select([next.id]); if (next.type === 'text' && i >= 0 && i === c.length - 2) ED.startTextEdit(next); }
   }
 
-  /* ======================= text editing ======================= */
+  /* ======================= text editing (in place, mixed styles) =======================
+     A contenteditable mirror of the text layer: one <span data-r> per style run, <br> for line breaks.
+     The document model (text + runs) is the source of truth; the DOM is parsed back after every input. */
+  const BLOCK = /^(DIV|P|LI|H\d)$/;
+  function edLeaves(el) {
+    const out = [];
+    const walk = node => {
+      for (const c of node.childNodes) {
+        if (c.nodeType === 3) { if (c.data.length) out.push({ t: c }); }
+        else if (c.nodeName === 'BR') out.push({ br: c });
+        else if (c.nodeType === 1) {
+          if (BLOCK.test(c.nodeName) && out.length && !(out[out.length - 1].br || out[out.length - 1].nl)) out.push({ nl: c });
+          walk(c);
+        }
+      }
+    };
+    walk(el);
+    if (out.length && out[out.length - 1].br) out.pop(); // trailing placeholder <br>
+    return out;
+  }
+  const leafLen = l => l.t ? l.t.data.length : 1;
+  const leafStyle = (l, prev) => { const node = l.t || l.br || l.nl; const sp = (node.nodeType === 1 ? node : node.parentNode).closest?.('[data-r]'); return sp ? sp.dataset.st : prev; };
+  function parseEditor(el) {
+    let text = ''; const segs = []; let prev = '{}';
+    edLeaves(el).forEach(l => {
+      const stj = leafStyle(l, prev); prev = stj;
+      const str = l.t ? l.t.data.replace(/ /g, ' ').replace(/​/g, '') : '\n'; if (!str) return;
+      const s = text.length; text += str;
+      const last = segs[segs.length - 1];
+      if (last && last.stj === stj) last.e = text.length; else segs.push({ s, e: text.length, stj });
+    });
+    let runs = null;
+    try { runs = LP.compactRuns(segs.map(g => ({ s: g.s, e: g.e, st: JSON.parse(g.stj) }))); } catch (e) { runs = null; }
+    return { text, runs };
+  }
+  function offsetOf(el, node, off) {
+    const pt = document.createRange(); pt.setStart(node, off);
+    let count = 0;
+    for (const l of edLeaves(el)) {
+      if (l.t) {
+        if (l.t === node) return count + off;
+        if (pt.comparePoint(l.t, l.t.data.length) <= 0) count += l.t.data.length; else return count;
+      } else {
+        const nd = l.br || l.nl, par = l.br ? nd.parentNode : nd, idx = l.br ? [...par.childNodes].indexOf(nd) + 1 : 0;
+        if (pt.comparePoint(par, idx) <= 0) count += 1; else return count;
+      }
+    }
+    return count;
+  }
+  function pointAt(el, c) {
+    const leaves = edLeaves(el);
+    for (const l of leaves) {
+      if (l.t) { if (c <= l.t.data.length) return [l.t, c]; c -= l.t.data.length; }
+      else { const nd = l.br || l.nl; if (c === 0) return l.br ? [nd.parentNode, [...nd.parentNode.childNodes].indexOf(nd)] : [nd, 0]; c -= 1; }
+    }
+    const last = leaves[leaves.length - 1];
+    if (last && last.t) return [last.t, last.t.data.length];
+    if (last && last.br) return [last.br.parentNode, [...last.br.parentNode.childNodes].indexOf(last.br) + 1];
+    return [el, el.childNodes.length];
+  }
+  function renderEditor(el, n) {
+    const doc = ED.doc, v = ED.scene.view(n), base = LP.textProps(v, doc);
+    const text = String(n.text ?? ''), segs = LP.normRuns(n.runs, text.length);
+    el.innerHTML = '';
+    segs.forEach(g => {
+      if (g.e <= g.s) return;
+      const st = LP.runStyle(base, g.st, doc), own = {};
+      LP.RUN_KEYS.forEach(k => { if (g.st[k] !== undefined && g.st[k] !== null) own[k] = g.st[k]; });
+      const sp = document.createElement('span'); sp.dataset.r = '1'; sp.dataset.st = JSON.stringify(own);
+      sp.style.font = LP.fontString(st); sp.style.letterSpacing = (st.ls || 0) + 'px'; sp.style.lineHeight = LP.lineHeight(st) + 'px';
+      if (st.color) sp.style.color = LP.rgba(st.color, st.a ?? 1);
+      sp.style.textDecoration = st.deco === 'underline' ? 'underline' : st.deco === 'strike' ? 'line-through' : 'none';
+      text.slice(g.s, g.e).split('\n').forEach((p, i) => { if (i) sp.appendChild(document.createElement('br')); if (p) sp.appendChild(document.createTextNode(p)); });
+      el.appendChild(sp);
+    });
+    if (!text.length || text.endsWith('\n')) el.appendChild(document.createElement('br'));
+  }
+  ED.textSel = () => {
+    const ed = ED.editing; if (!ed) return null; const n = ED.get(ed.id); if (!n) return null;
+    const s = ed.cur(); if (!s) return null;
+    return { n, s: Math.min(s.s, s.e), e: Math.max(s.s, s.e) };
+  };
+  // apply a style patch to the selected range of the text being edited; returns false if nothing is selected
+  // caret only: the style is remembered and applied to the next characters typed (pending style)
+  ED.setPendingStyle = patch => {
+    const ed = ED.editing, ts = ED.textSel(); if (!ed || !ts) return false;
+    ed.pending = Object.assign({}, ed.pendingAt === ts.s ? ed.pending : null, patch); ed.pendingAt = ts.s;
+    ed.setSel(ts.s, ts.s); emit('textsel'); return true;
+  };
+  ED.pendingStyle = () => { const ed = ED.editing, ts = ED.textSel(); return ed && ts && ed.pending && ed.pendingAt === ts.s && ts.e === ts.s ? ed.pending : null; };
+  ED.applyRangeStyle = (patch) => {
+    const ts = ED.textSel(); if (!ts) return false;
+    if (ts.e <= ts.s) return ED.setPendingStyle(patch);
+    const ed = ED.editing; ed.snapshot();
+    const runs = LP.applyRunStyle(ts.n, ts.s, ts.e, patch);
+    ED.setProp(ts.n, 'runs', runs); ts.n.runs = runs; if (!runs) delete ts.n.runs;
+    ed.refresh({ s: ts.s, e: ts.e });
+    return true;
+  };
   ED.startTextEdit = (n, fresh) => {
     if (n.locked) return;
     if (ED.isClone(n) && !LP.OVERRIDABLE.has('text')) return;
     ED.endTextEdit();
-    const ta = document.createElement('textarea'); ta.className = 'lp-textedit'; ta.spellcheck = false;
-    ta.value = n.text || '';
-    ED.stage.appendChild(ta);
-    ED.editing = { id: n.id, ta, fresh, orig: n.text };
+    if (!ED.sel.includes(n.id) || ED.sel.length !== 1) { ED.sel = [n.id]; emit('sel'); }
+    const el = document.createElement('div'); el.className = 'lp-textedit'; el.contentEditable = 'true'; el.spellcheck = false;
+    ED.stage.appendChild(el);
+    const ed = ED.editing = { id: n.id, el, fresh, orig: JSON.stringify(n), sel: null, undo: [], redo: [] };
+    const node = () => ED.get(ed.id) || n;
     const sync = () => {
-      const t = LP.textProps(ED.scene.view(n), ED.doc), z = ED.view.z;
-      const m = ED.worldMatrix(n);
-      const fill = (n.fills || []).find(f => f.type === 'solid' && f.on !== false);
-      Object.assign(ta.style, {
-        left: '0px', top: '0px', width: (n.auto === 'width' ? Math.max(n.w, 4) + t.size : n.w) + 'px', height: Math.max(n.h, LP.lineHeight(t)) + 'px',
-        transform: `matrix(${m[0] * z},${m[1] * z},${m[2] * z},${m[3] * z},${m[4] * z + ED.view.x},${m[5] * z + ED.view.y})`,
-        font: LP.fontString(t), lineHeight: LP.lineHeight(t) + 'px', letterSpacing: (t.ls || 0) + 'px', textAlign: n.align === 'justify' ? 'justify' : n.align,
-        color: fill ? LP.rgba(LP.fillColor(fill, ED.doc).color, 1) : '#000', whiteSpace: n.auto === 'width' ? 'pre' : 'pre-wrap', textTransform: n.tcase === 'upper' ? 'uppercase' : n.tcase === 'lower' ? 'lowercase' : 'none'
+      const nn = node(), v = ED.scene.view(nn), t = LP.textProps(v, ED.doc), z = ED.view.z, m = ED.worldMatrix(nn);
+      const r = ED.scene.text.get(nn); const th = r ? r.h : nn.h;
+      const offY = v.valign === 'middle' ? (nn.h - th) / 2 : v.valign === 'bottom' ? nn.h - th : 0;
+      ED.doc._mode = LP.modeOf(ED.scene, nn);
+      const fill = (v.fills || []).find(f => f.on !== false && (f.type === 'solid' || f.stops));
+      const col = !fill ? '#000' : fill.type === 'solid' ? LP.rgba(LP.fillColor(fill, ED.doc).color, 1) : LP.rgba(fill.stops[0].color, 1);
+      Object.assign(el.style, {
+        left: '0px', top: '0px', width: nn.auto === 'width' ? 'max-content' : nn.w + 'px', minWidth: '4px', minHeight: Math.max(1, Math.min(nn.h, th || nn.h)) + 'px',
+        transform: `matrix(${m[0] * z},${m[1] * z},${m[2] * z},${m[3] * z},${m[4] * z + ED.view.x},${m[5] * z + ED.view.y}) translate(0px,${offY}px)`,
+        font: LP.fontString(t), lineHeight: LP.lineHeight(t) + 'px', letterSpacing: (t.ls || 0) + 'px', textAlign: nn.align === 'justify' ? 'justify' : nn.align || 'left',
+        color: col, caretColor: col, whiteSpace: nn.auto === 'width' ? 'pre' : 'pre-wrap', textTransform: nn.tcase === 'upper' ? 'uppercase' : nn.tcase === 'lower' ? 'lowercase' : 'none',
+        textDecoration: (v.deco === 'underline' ? 'underline' : v.deco === 'strike' ? 'line-through' : 'none')
       });
     };
-    ta.addEventListener('input', () => { ED.setProp(n, 'text', ta.value); n.text = ta.value; ED.update(); const nn = ED.get(n.id); if (nn) n = nn; ED.editing.node = n; sync(); ED.redraw(); });
-    ta.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Escape' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) { e.preventDefault(); ED.endTextEdit(); } });
-    ta.addEventListener('blur', () => setTimeout(() => { if (ED.editing && ED.editing.ta === ta) ED.endTextEdit(); }, 0));
-    ED.update(); sync(); ED.redraw();
-    setTimeout(() => { ta.focus(); if (!fresh) ta.select(); }, 0);
-    ED.editing.sync = sync;
+    ed.cur = () => { const sel = getSelection(); if (sel.rangeCount && el.contains(sel.anchorNode) && el.contains(sel.focusNode)) { const a = offsetOf(el, sel.anchorNode, sel.anchorOffset), b = offsetOf(el, sel.focusNode, sel.focusOffset); ed.sel = { s: a, e: b }; ed.lastCaret = a === b ? a : null; } return ed.sel; };
+    ed.setSel = (s, e, focus = true) => {
+      ed.lastCaret = s === e ? s : null;
+      try {
+        if (focus && document.activeElement !== el) el.focus({ preventScroll: true });
+        const a = pointAt(el, s), b = pointAt(el, e), r = document.createRange(); r.setStart(a[0], a[1]); r.setEnd(b[0], b[1]);
+        const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); ed.sel = { s, e };
+      } catch (err) { }
+    };
+    ed.state = () => ({ t: node().text, r: node().runs ? JSON.parse(JSON.stringify(node().runs)) : null, sel: ed.sel ? Object.assign({}, ed.sel) : null });
+    ed.snapshot = () => { ed.undo.push(ed.state()); if (ed.undo.length > 200) ed.undo.shift(); ed.redo = []; };
+    const setModel = (text, runs) => { const nn = node(); ED.setProp(nn, 'text', text); nn.text = text; ED.setProp(nn, 'runs', runs); if (runs) nn.runs = runs; else delete nn.runs; };
+    ed.refresh = (sel) => { ED.update(); renderEditor(el, node()); sync(); ED.redraw(); ed.len = String(node().text || '').length; if (sel) ed.setSel(sel.s, sel.e); emit('textsel'); };
+    const restoreState = st => { setModel(st.t, st.r); ed.refresh(st.sel || { s: String(st.t || '').length, e: String(st.t || '').length }); };
+    let typingT = 0;
+    el.addEventListener('beforeinput', e => {
+      if (e.inputType === 'insertParagraph') { e.preventDefault(); document.execCommand('insertLineBreak'); return; }
+      if (/^format/.test(e.inputType)) { e.preventDefault(); return; }
+      if (!ed._typing) ed.snapshot();
+      ed._typing = true; clearTimeout(typingT); typingT = setTimeout(() => { ed._typing = false; }, 800);
+    });
+    el.addEventListener('input', () => {
+      let { text, runs } = parseEditor(el);
+      // pending style at the caret (also covers programmatic insertText, which fires no beforeinput)
+      const ins = ed.pending && ed.lastCaret != null && ed.pendingAt === ed.lastCaret ? { at: ed.lastCaret, len: ed.len ?? 0, style: ed.pending } : null;
+      if (ins && text.length > ins.len) {
+        // typed with a pending style: style exactly the inserted characters, keep the style for continued typing
+        const n2 = { text, runs }, end = ins.at + text.length - ins.len;
+        runs = LP.applyRunStyle(n2, ins.at, end, ins.style);
+        setModel(text, runs); ED.update(); renderEditor(el, node()); sync(); ED.redraw(); ed.setSel(end, end);
+        ed.pending = ins.style; ed.pendingAt = end; ed.len = text.length; ed.lastCaret = end; return;
+      }
+      setModel(text, runs);
+      ED.update(); sync(); ED.redraw();
+      ed.cur(); ed.len = text.length;
+    });
+    el.addEventListener('paste', e => { e.preventDefault(); const t = (e.clipboardData?.getData('text/plain') || '').replace(/\r\n?/g, '\n'); if (t) document.execCommand('insertText', false, t); });
+    el.addEventListener('drop', e => e.preventDefault());
+    el.addEventListener('keydown', e => {
+      e.stopPropagation();
+      const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+      if (e.key === 'Escape' || (e.key === 'Enter' && mod)) { e.preventDefault(); ED.endTextEdit(); return; }
+      if (mod && k === 'z' && !e.shiftKey) { e.preventDefault(); const st = ed.undo.pop(); if (st) { ed.redo.push(ed.state()); restoreState(st); } return; }
+      if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); const st = ed.redo.pop(); if (st) { ed.undo.push(ed.state()); restoreState(st); } return; }
+      if (mod && (k === 'b' || k === 'i' || k === 'u')) {
+        e.preventDefault();
+        const nn = node(), ts = ED.textSel(); const s = ts ? ts.s : 0, en = ts ? ts.e : String(nn.text || '').length;
+        const key = k === 'b' ? 'weight' : k === 'i' ? 'italic' : 'deco';
+        const pd = ED.pendingStyle(); const cur = pd && pd[key] != null ? pd[key] : LP.rangeValue(nn, ED.doc, s, en, key);
+        const val = k === 'b' ? (cur >= 600 ? 400 : 700) : k === 'i' ? !cur : (cur === 'underline' ? 'none' : 'underline');
+        if (!ED.applyRangeStyle({ [key]: val })) { ed.snapshot(); const runs = LP.applyRunStyle(nn, 0, String(nn.text || '').length, { [key]: val }); ED.setProp(nn, 'runs', runs); if (runs) nn.runs = runs; else delete nn.runs; ed.refresh(ed.sel); }
+        return;
+      }
+    });
+    const onSelChange = () => { if (ED.editing !== ed || !el.contains(getSelection().anchorNode)) return; const before = JSON.stringify(ed.sel); ed.cur(); if (JSON.stringify(ed.sel) !== before) { clearTimeout(ed._st); ed._st = setTimeout(() => emit('textsel'), 60); } };
+    document.addEventListener('selectionchange', onSelChange);
+    // leaving the editor ends editing, except when focus moves into the inspector / assets (range styling)
+    const keepFocus = t => !!(t && t.closest && t.closest('#insp, #assets, .aero-modal, .aero-dropdown, .lp-textedit'));
+    el.addEventListener('blur', () => setTimeout(() => { if (ED.editing === ed && !keepFocus(document.activeElement)) ED.endTextEdit(); }, 0));
+    const outside = e => { if (ED.editing === ed && !keepFocus(e.target) && e.target !== ED.canvas) ED.endTextEdit(); };
+    addEventListener('pointerdown', outside, true);
+    ed.cleanup = () => { document.removeEventListener('selectionchange', onSelChange); removeEventListener('pointerdown', outside, true); };
+    ED.update(); renderEditor(el, node()); sync(); ED.redraw(); ed.len = String(node().text || '').length;
+    setTimeout(() => { el.focus({ preventScroll: true }); const L = String(node().text || '').length; if (fresh) ed.setSel(L, L); else ed.setSel(0, L); emit('textsel'); }, 0);
+    ed.sync = sync;
   };
+  ED.listeners.textsel = [];
   ED.endTextEdit = () => {
     const ed = ED.editing; if (!ed) return;
-    ED.editing = null; ed.ta.remove();
+    ED.editing = null; ed.cleanup?.(); ed.el.remove();
     const n = ED.get(ed.id);
     if (n && !String(n.text || '').trim() && ed.fresh && !ED.isClone(n)) { ED.removeNode(n); ED.sel = []; ED.update(); emit('sel'); ED.redraw(); return; }
-    if (n && n.text !== ed.orig) ED.commit('Edit text'); else ED.redraw();
+    if (n && JSON.stringify(n) !== ed.orig) ED.commit('Edit text'); else { ED.redraw(); emit('sel'); }
   };
   on('view', () => ED.editing?.sync?.());
 })();

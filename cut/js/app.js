@@ -19,11 +19,12 @@
   LC.redo = () => { LC.stop(); restore(hist.redo()); };
 
   /* ---------- refresh ---------- */
-  LC.refresh = () => { tl.renderHeads(); tl.draw(); LC.bin.render(); LC.props.render(); renderMarkers(); LC.requestRender(); LC.status(); updateTitles(); };
+  LC.refresh = () => { tl.renderHeads(); tl.draw(); LC.bin.render(); LC.props.render(); LC.mixer.render(); LC.src.unloadIfGone(); LC.renderSeqTabs(); renderMarkers(); LC.requestRender(); LC.status(); updateTitles(); };
   LC.onSelection = () => { LC.props.render(); tl.draw(); LC.requestRender(); LC.status(); };
   function updateTitles() {
     const S = LC.project.settings;
-    $('#montitle').textContent = 'Program: ' + LC.project.name; $('#tltitle').textContent = 'Timeline: ' + LC.project.name;
+    const sn = LC.activeSeq()?.name || LC.project.name;
+    $('#montitle').textContent = 'Program: ' + sn; $('#tltitle').textContent = 'Timeline:';
     $('#moninfo').textContent = `${S.w}×${S.h} · ${S.fps} fps`;
   }
   let msgT = null;
@@ -93,7 +94,7 @@
   LC.save = async (as) => {
     LC.stop();
     const name = (LC.project.name || 'Untitled').replace(/[\\/:*?"<>|]/g, '_') + '.lcut';
-    const p = await Aero.saveFile({ name, data: JSON.stringify(LC.project, null, 1), filters: [{ name: 'Lumen Cut project', extensions: ['lcut'] }], path: as ? null : docPath });
+    const p = await Aero.saveFile({ name, data: LC.serialize(), filters: [{ name: 'Lumen Cut project', extensions: ['lcut'] }], path: as ? null : docPath });
     if (!p) return false;
     if (Aero.native) docPath = p;
     const nm = Aero.baseName(p); if (!LC.project.name || LC.project.name === 'Untitled') LC.project.name = nm;
@@ -144,6 +145,9 @@
     const span = Math.max(...clipboard.clips.map(c => c.start + c.dur)) - clipboard.t0;
     const trackFor = c => { const tr = LC.track(c.track); if (tr && !tr.lock) return tr.id; const k = clipboard.clips.find(x => x.id === c.id) && c.type === 'audio' ? 'audio' : 'video'; return (k === 'audio' ? LC.audioTracks() : LC.videoTracks()).find(x => !x.lock)?.id; };
     if (insert) { const tids = new Set(clipboard.clips.map(trackFor)); for (const tid of tids) { LC.clipsOn(tid).filter(c => c.start < t && c.start + c.dur > t).forEach(c => LC.splitClip(c, t)); LC.rippleShift(tid, t, span); } }
+    const before = clipboard.clips.length; clipboard.clips = clipboard.clips.filter(c => c.type !== 'nest' || LC.canNest(c.seq));
+    if (clipboard.clips.length < before) Aero.toast('Skipped nested clips that would make a sequence contain itself');
+    if (!clipboard.clips.length) return;
     for (const src of clipboard.clips) {
       const c = JSON.parse(JSON.stringify(src)); c.id = 'c' + Aero.uid(); idMap.set(src.id, c.id);
       c.track = trackFor(src); if (!c.track) continue;
@@ -167,7 +171,7 @@
   };
   LC.resetEffects = () => {
     const s = tl.selected(); if (!s.length) return; const d = LC.defaultProps();
-    s.forEach(c => { const keep = { speed: c.props.speed, volume: c.props.volume, fadeIn: c.props.fadeIn, fadeOut: c.props.fadeOut }; c.props = Object.assign(d, keep); c.kf = {}; });
+    s.forEach(c => { const keep = { speed: c.props.speed, volume: c.props.volume, fadeIn: c.props.fadeIn, fadeOut: c.props.fadeOut }; c.props = Object.assign(LC.defaultProps(), keep); const kf = {}; ['speed', 'volume'].forEach(k => { if (c.kf?.[k]) kf[k] = c.kf[k]; }); c.kf = kf; delete c.key; delete c.curves; delete c.lut; delete c.afx; });
     LC.commit('Reset effects'); LC.refresh();
   };
   LC.speedDialog = () => {
@@ -211,8 +215,20 @@
     const x = LC.addTransition(best[0], best[1], type, 1);
     if (x) { tl.sel.clear(); tl.selTr = x.id; LC.commit('Add ' + LC.TRANSITIONS.find(q => q.id === type).name); LC.refresh(); }
   };
+  LC.applyAudioCrossfade = (type = 'cpower') => {
+    const t = LC.playhead, eps = .5 / LC.fps(); let best = null, bd = 1;
+    for (const tr of LC.audioTracks()) { if (tr.lock) continue; for (const c of LC.clipsOn(tr.id)) { const ds = Math.abs(c.start - t), de = Math.abs(c.start + c.dur - t); if (ds < bd - eps) { bd = ds; best = [c, 'in']; } if (de < bd - eps) { bd = de; best = [c, 'out']; } } }
+    if (!best) { const c = tl.selected().find(c => c.type === 'audio'); if (c) best = [c, 'out']; }
+    if (!best) return Aero.toast('Move the playhead near an audio cut (or select an audio clip) to add a crossfade');
+    const x = LC.addTransition(best[0], best[1], type, 1);
+    if (x) { tl.sel.clear(); tl.selTr = x.id; LC.commit('Add ' + LC.trName(type)); LC.refresh(); }
+    return x;
+  };
   LC.editToTimeline = (mode) => {
-    const ids = [...LC.bin.sel].filter(id => LC.rt.media.get(id)?.status === 'ok'); if (!ids.length) return Aero.toast('Select media in the Project panel first');
+    let ids = [...LC.bin.sel].filter(id => LC.rt.media.get(id)?.status === 'ok');
+    if (!ids.length && LC.src.media) ids = [LC.src.media];
+    if (!ids.length) return Aero.toast('Select media in the Project panel first');
+    if (ids.length === 1) return LC.threePointEdit(ids[0], mode);
     const made = LC.placeMedia(ids, LC.playhead, null, mode);
     if (made.length) LC.setPlayhead(Math.max(...made.map(c => c.start + c.dur)));
   };
@@ -247,8 +263,10 @@
   LC.editMarker = mk => Aero.dialog({ title: 'Marker', instruction: 'Marker at ' + LC.tc(mk.t), fields: [{ key: 'name', label: 'Name', type: 'text', value: mk.name }, { key: 'color', label: 'Color', type: 'select', value: mk.color, options: MCOLORS }, { key: 'del', label: 'Delete this marker', type: 'checkbox', value: false }],
     onOK: v => { if (v.del) LC.project.markers = LC.project.markers.filter(m => m !== mk); else { mk.name = String(v.name).slice(0, 200); mk.color = v.color; } LC.commit(v.del ? 'Delete marker' : 'Edit marker'); LC.refresh(); } });
   LC.gotoMarker = dir => { const t = LC.playhead, ms = LC.project.markers.map(m => m.t).sort((a, b) => a - b); const n = dir > 0 ? ms.find(x => x > t + 1e-6) : ms.reverse().find(x => x < t - 1e-6); if (n != null) LC.setPlayhead(n); };
-  LC.markIn = () => { const P = LC.project; P.inPoint = LC.fr(LC.playhead); if (P.outPoint != null && P.outPoint <= P.inPoint) P.outPoint = null; LC.commit('Mark in'); LC.refresh(); };
-  LC.markOut = () => { const P = LC.project; P.outPoint = LC.fr(LC.playhead); if (P.inPoint != null && P.inPoint >= P.outPoint) P.inPoint = null; LC.commit('Mark out'); LC.refresh(); };
+  const srcFocus = () => LC.focusMon === 'source' && LC.src.media;
+  LC.srcFocus = srcFocus;
+  LC.markIn = () => { if (srcFocus()) return LC.src.markIn(); const P = LC.project; P.inPoint = LC.fr(LC.playhead); if (P.outPoint != null && P.outPoint <= P.inPoint) P.outPoint = null; LC.commit('Mark in'); LC.refresh(); };
+  LC.markOut = () => { if (srcFocus()) return LC.src.markOut(); const P = LC.project; P.outPoint = LC.fr(LC.playhead); if (P.inPoint != null && P.inPoint >= P.outPoint) P.inPoint = null; LC.commit('Mark out'); LC.refresh(); };
   LC.clearIO = () => { LC.project.inPoint = LC.project.outPoint = null; LC.commit('Clear in/out'); LC.refresh(); };
   let mkSel = null;
   function renderMarkers() {
@@ -278,7 +296,7 @@
         P.name = String(v.name || 'Untitled').slice(0, 120);
         P.settings = { w: Math.max(16, Math.round(v.w / 2) * 2), h: Math.max(16, Math.round(v.h / 2) * 2), fps, preset: v.preset, bg: v.bg };
         const fr = t => Math.round(t * fps) / fps;
-        P.clips.forEach(c => { c.start = fr(c.start); c.dur = Math.max(1 / fps, fr(c.dur)); }); P.markers.forEach(m => m.t = fr(m.t));
+        LC.syncSeq(); for (const s of P.sequences) LC.withSeq(s.id, () => { P.clips.forEach(c => { c.start = fr(c.start); c.dur = Math.max(1 / fps, fr(c.dur)); }); P.markers.forEach(m => m.t = fr(m.t)); LC.cleanTransitions(); });
         LC.playhead = fr(LC.playhead); LC.cleanTransitions();
         LC.commit('Sequence settings'); LC.mon.layout(); LC.refresh(); Aero.setDoc(P.name, true);
       } });
@@ -289,12 +307,15 @@
     ['File', [['Ctrl+N', 'New project'], ['Ctrl+O', 'Open project'], ['Ctrl+S / Ctrl+Shift+S', 'Save / Save As'], ['Ctrl+I', 'Import media'], ['Ctrl+M', 'Export video'], ['Ctrl+Shift+E', 'Export frame (PNG)']]],
     ['Playback', [['Space', 'Play / pause'], ['J / K / L', 'Shuttle reverse / stop / forward (press again for 2×, 4×, 8×)'], ['← / →', 'Step one frame'], ['Shift+← / →', 'Step five frames'], ['↑ / ↓', 'Previous / next edit point'], ['Home / End', 'Start / end of sequence']]],
     ['Marking', [['I / O', 'Mark in / out'], ['Shift+I / Shift+O', 'Go to in / out'], ['Ctrl+Shift+X', 'Clear in and out'], ['M', 'Add marker'], ['Shift+M / Ctrl+Shift+M', 'Next / previous marker']]],
+    ['Source monitor', [['Double-click media', 'Open in the Source monitor'], ['I / O', 'Mark source In / Out (when the Source monitor is active)'], ['Space, ← / →', 'Play / step the source (when active)'], [', / .', 'Insert / overwrite the marked range at the playhead (or sequence In)']]],
+    ['Effects & keyframes', [['Right-click a keyframe', 'Interpolation: linear, hold, ease in/out, bezier'], ['Drag a keyframe', 'Move it in time (timeline, selected clip)'], ['Ctrl+click volume line', 'Add a track volume keyframe'], ['Ctrl+Alt+D', 'Apply audio crossfade (constant power)'], ['Ctrl+Shift+H', 'Add frame hold'], ['Ctrl+Alt+A', 'New adjustment layer']]],
+    ['Sequences', [['Ctrl+Alt+N', 'Nest selected clips'], ['Double-click nested clip', 'Open its sequence'], ['Click a tab', 'Switch sequence (double-click renames)'], ['Drag tab / bin sequence', 'Add it as a nested clip']]],
     ['Editing', [['Ctrl+K', 'Split at playhead'], ['Ctrl+Shift+K', 'Split all tracks'], ['Delete', 'Delete (lift)'], ['Shift+Delete', 'Ripple delete'], ['Ctrl+C / X / V', 'Copy / cut / paste (overwrite)'], ['Ctrl+Shift+V', 'Paste insert'], ['Ctrl+A', 'Select all'], ['Ctrl+D', 'Apply cross dissolve at playhead'], ['Ctrl+T', 'New title'], ['Ctrl+R', 'Speed / duration'], ['Ctrl+L', 'Link / unlink'], ['Shift+E', 'Enable / disable clip'], [', / .', 'Insert / overwrite bin selection at playhead'], ['Ctrl+Z / Ctrl+Y', 'Undo / redo']]],
     ['Tools', [['V', 'Selection'], ['A', 'Track select forward'], ['B', 'Ripple edit'], ['C', 'Razor'], ['Y', 'Slip'], ['H', 'Hand'], ['Z', 'Zoom'], ['T', 'Type']]],
     ['Timeline', [['S', 'Toggle snapping'], ['= / -', 'Zoom in / out'], ['\\', 'Zoom to sequence'], ['Ctrl+wheel', 'Zoom at pointer'], ['Shift+wheel', 'Scroll horizontally'], ['Alt+drag', 'Move/trim one side of a linked clip'], ['Ctrl+drag', 'Insert (ripple) instead of overwrite'], ['Esc', 'Cancel drag']]]
   ];
   LC.shortcutsDialog = () => Aero.dialog({ title: 'Keyboard Shortcuts', noCancel: true, width: 640, html: '<div class="kbwrap">' + SHORTCUTS.map(([h, rows]) => `<table class="kbtable"><tr><th colspan="2">${h}</th></tr>${rows.map(([k, d]) => `<tr><td>${esc(k)}</td><td>${esc(d)}</td></tr>`).join('')}</table>`).join('') + '</div>' });
-  LC.aboutDialog = () => Aero.dialog({ title: 'About Lumen Cut', noCancel: true, html: `<div class="about"><img src="../kit/icons/cut.png" alt=""><div><div class="aero-instr" style="margin:0">Lumen Cut</div><div>Multitrack video editor · part of Lumen Studio</div><p class="dnote">WebGL2 compositor, WebAudio mixing, frame-accurate WebCodecs export.<br>Bundled: mp4-muxer 5.2.2 (MIT), webm-muxer 5.1.4 (MIT), mp4box.js 2.4.1 (BSD-3-Clause).</p></div></div>` });
+  LC.aboutDialog = () => Aero.dialog({ title: 'About Lumen Cut', noCancel: true, html: `<div class="about"><img src="../kit/icons/cut.png" alt=""><div><div class="aero-instr" style="margin:0">Lumen Cut</div><div>Multitrack video editor · part of Lumen Studio</div><p class="dnote">WebGL2 compositor, WebAudio mixing, frame-accurate WebCodecs export.<br>Chroma key, Lumetri-style grading with .cube LUTs, blend modes, audio mixer &amp; effects, 3-point editing, speed ramps.<br>Bundled: mp4-muxer 5.2.2 (MIT), webm-muxer 5.1.4 (MIT), mp4box.js 2.4.1 (BSD-3-Clause).</p></div></div>` });
 
   /* ---------- context menu ---------- */
   LC.ctxMenu = (x, y, items) => {
@@ -326,7 +347,8 @@
   const menus = {
     File: [['New Project', 'Ctrl+N', () => LC.newProject_()], ['Open Project…', 'Ctrl+O', () => LC.openProject()], ['Open Sample', '', () => LC.openSample()], '-',
       ['Save', 'Ctrl+S', () => LC.save(false)], ['Save As…', 'Ctrl+Shift+S', () => LC.save(true)], '-',
-      ['Import Media…', 'Ctrl+I', () => LC.importDialog()], ['Relink Media…', '', () => LC.relinkDialog()], '-',
+      ['Import Media…', 'Ctrl+I', () => LC.importDialog()], ['Import LUT (.cube)…', '', () => importLutCmd()], ['Relink Media…', '', () => LC.relinkDialog()],
+      chk('Detect Scene Cuts on Import', '', () => { LC.prefs.sceneOnImport = !LC.prefs.sceneOnImport; Aero.toast('Scene detection on import ' + (LC.prefs.sceneOnImport ? 'on' : 'off')); }, () => LC.prefs.sceneOnImport), '-',
       ['Export Video…', 'Ctrl+M', () => LC.exportDialog()], ['Export Frame as PNG…', 'Ctrl+Shift+E', () => LC.exportFrame()], '-',
       ['Sequence Settings…', '', () => LC.settingsDialog()]],
     Edit: [['Undo', 'Ctrl+Z', () => LC.undo()], ['Redo', 'Ctrl+Y/Ctrl+Shift+Z', () => LC.redo()], '-',
@@ -336,15 +358,20 @@
     Clip: [['Split at Playhead', 'Ctrl+K', () => LC.splitSelected()], ['Split All Tracks', 'Ctrl+Shift+K', () => LC.splitAt(LC.playhead, null)], '-',
       ['Speed / Duration…', 'Ctrl+R', () => LC.speedDialog()], { label: 'Enable', key: 'Shift+E', fn: () => LC.toggleEnable(), checked: () => tl.selected().length > 0 && !tl.selected()[0].disabled },
       ['Link / Unlink', 'Ctrl+L', () => LC.toggleLink()], ['Reset Effects', '', () => LC.resetEffects()], '-',
-      '#Transitions', ['Apply Cross Dissolve', 'Ctrl+D', () => LC.applyDefaultTransition('dissolve')], ['Apply Dip to Black', 'Ctrl+Shift+D', () => LC.applyDefaultTransition('dipblack')], '-',
+      '#Time', ['Add Frame Hold', 'Ctrl+Shift+H', () => LC.frameHold(false)], ['Insert Frame Hold Segment', '', () => LC.frameHold(true)], '-',
+      '#Scenes', ['Detect Scene Cuts', '', () => LC.detectScenesCmd()], ['Split at Scene Cuts', '', () => LC.splitAtScenes()], '-',
+      '#Picture in picture', ['PiP Top Left', '', () => LC.pip('tl')], ['PiP Top Right', '', () => LC.pip('tr')], ['PiP Bottom Left', '', () => LC.pip('bl')], ['PiP Bottom Right', '', () => LC.pip('br')], ['Fill Frame', '', () => LC.pip('fill')], ['Reset to Full Frame', '', () => LC.pip('full')], '-',
+      '#Transitions', ['Apply Cross Dissolve', 'Ctrl+D', () => LC.applyDefaultTransition('dissolve')], ['Apply Dip to Black', 'Ctrl+Shift+D', () => LC.applyDefaultTransition('dipblack')], ['Apply Audio Crossfade', 'Ctrl+Alt+D', () => LC.applyAudioCrossfade('cpower')], '-',
+      '#Layers', ['New Adjustment Layer', 'Ctrl+Alt+A', () => LC.addAdjustment({})], '-',
       '#Titles', ['New Title', 'Ctrl+T', () => LC.addTitle({})], ['New Lower Third', '', () => LC.addTitle({ preset: 'lower' })], '-',
       ['Insert Selected Media', ',', () => LC.editToTimeline('insert')], ['Overwrite Selected Media', '.', () => LC.editToTimeline('overwrite')]],
-    Sequence: [['Add Video Track', '', () => LC.addTrack('video')], ['Add Audio Track', '', () => LC.addTrack('audio')], ['Remove Empty Tracks', '', () => LC.removeEmptyTracks()], '-',
+    Sequence: [['New Sequence…', '', () => LC.newSequence()], ['Nest Selected Clips…', 'Ctrl+Alt+N', () => LC.nestSelection()], ['Open Nested Sequence', '', () => { const c = tl.selected().find(x => x.type === 'nest'); c ? LC.openNest(c) : Aero.toast('Select a nested clip'); }], ['Rename Sequence…', '', () => LC.renameSeq()], ['Delete Sequence…', '', () => LC.deleteSeq()], '-',
+      ['Add Video Track', '', () => LC.addTrack('video')], ['Add Audio Track', '', () => LC.addTrack('audio')], ['Remove Empty Tracks', '', () => LC.removeEmptyTracks()], '-',
       ['Add Marker', 'M', () => LC.addMarker()], ['Go to Next Marker', 'Shift+M', () => LC.gotoMarker(1)], ['Go to Previous Marker', 'Ctrl+Shift+M', () => LC.gotoMarker(-1)], '-',
       ['Mark In', 'I', () => LC.markIn()], ['Mark Out', 'O', () => LC.markOut()], ['Go to In', 'Shift+I', () => LC.setPlayhead(LC.project.inPoint ?? 0)], ['Go to Out', 'Shift+O', () => LC.setPlayhead(LC.project.outPoint ?? LC.seqDuration())], ['Clear In and Out', 'Ctrl+Shift+X', () => LC.clearIO()], '-',
       chk('Snapping', 'S', () => toggleSnap(), () => tl.snap), chk('Ripple Trim Mode', '', () => toggleRipple(), () => tl.ripple), chk('Linked Selection', '', () => toggleLinked(), () => tl.linkedSel), '-',
-      ['Sequence Settings…', '', () => LC.settingsDialog()]],
-    Playback: [['Play / Pause', 'Space', () => LC.togglePlay()], ['Shuttle Reverse', 'J', () => LC.shuttle(-1)], ['Stop', 'K', () => LC.shuttle(0)], ['Shuttle Forward', 'L', () => LC.shuttle(1)], '-',
+      ['Auto Reframe Sequence…', '', () => LC.autoReframeDialog()], ['Sequence Settings…', '', () => LC.settingsDialog()]],
+    Playback: [['Play / Pause', 'Space', () => srcFocus() ? LC.src.toggle() : LC.togglePlay()], ['Shuttle Reverse', 'J', () => LC.shuttle(-1)], ['Stop', 'K', () => LC.shuttle(0)], ['Shuttle Forward', 'L', () => LC.shuttle(1)], '-',
       { label: 'Step Back', key: '←', fn: () => LC.step(-1), noShortcut: true }, { label: 'Step Forward', key: '→', fn: () => LC.step(1), noShortcut: true },
       { label: 'Previous Edit', key: '↑', fn: () => LC.nextEdit(-1), noShortcut: true }, { label: 'Next Edit', key: '↓', fn: () => LC.nextEdit(1), noShortcut: true },
       ['Go to Start', 'Home', () => LC.setPlayhead(0)], ['Go to End', 'End', () => LC.setPlayhead(LC.seqDuration())], '-',
@@ -353,6 +380,7 @@
       '#Program monitor', chk('Fit', 'Shift+Z', () => LC.mon.setZoom('fit'), () => LC.mon.zoom === 'fit'), chk('50%', '', () => LC.mon.setZoom(.5), () => LC.mon.zoom === .5), chk('100%', '', () => LC.mon.setZoom(1), () => LC.mon.zoom === 1),
       chk('Full Resolution', '', () => setRes(1), () => LC.mon.res === 1), chk('1/2 Resolution', '', () => setRes(2), () => LC.mon.res === 2), chk('1/4 Resolution', '', () => setRes(4), () => LC.mon.res === 4),
       chk('Safe Margins', '', () => toggleSafe(), () => LC.mon.safe), '-',
+      '#Panels', chk('Source Monitor', '', () => LC.toggleSource(), () => LC.layoutSource()), ['Audio Track Mixer', '', () => showRightTab('mixer')], ['Effect Controls', '', () => showRightTab('props')], '-',
       '#Tracks', ['Small Tracks', '', () => LC.trackHeight(42)], ['Medium Tracks', '', () => LC.trackHeight(58)], ['Large Tracks', '', () => LC.trackHeight(90)]],
     Help: [['Keyboard Shortcuts', 'F1', () => LC.shortcutsDialog()], ['About Lumen Cut', '', () => LC.aboutDialog()]]
   };
@@ -369,8 +397,9 @@
     Aero.init({ name: 'Lumen Cut', icon: '../kit/icons/cut.png', doc: 'Untitled', menus, onSave: () => LC.save(false) });
     toolbox = Aero.toolbox($('#tools'), TOOLS, setTool); toolbox.set('select');
     // extra shortcuts not shown in menus
-    Aero.shortcut('ArrowLeft', () => LC.step(-1)); Aero.shortcut('ArrowRight', () => LC.step(1));
-    Aero.shortcut('Shift+ArrowLeft', () => LC.step(-5)); Aero.shortcut('Shift+ArrowRight', () => LC.step(5));
+    const stepR = n => srcFocus() ? LC.src.step(n) : LC.step(n);
+    Aero.shortcut('ArrowLeft', () => stepR(-1)); Aero.shortcut('ArrowRight', () => stepR(1));
+    Aero.shortcut('Shift+ArrowLeft', () => stepR(-5)); Aero.shortcut('Shift+ArrowRight', () => stepR(5));
     Aero.shortcut('ArrowUp', () => LC.nextEdit(-1)); Aero.shortcut('ArrowDown', () => LC.nextEdit(1));
     Aero.shortcut('Escape', () => { if (!tl.op) tl.clearSel(); });
     // command bar
@@ -411,13 +440,20 @@
       if (proj) { if (Aero.dirty && !(await Aero.confirm('Open Project', 'Discard unsaved changes to the current project?', 'Discard'))) return; return openProjectData(proj.name, await proj.text(), Aero.native?.pathForFile?.(proj) || null); }
       LC.importBlobs(files.map(f => ({ name: f.name, blob: f, path: Aero.native?.pathForFile?.(f) || null })));
     });
-    LC.tl.init(); LC.mon.init(); LC.mon.startMeter();
+    $('#rtabs').onclick = e => { const t = e.target.dataset.tab; if (t) showRightTab(t); };
+    const sync0 = LC.props.syncTime; LC.props.syncTime = () => { sync0(); LC.mixer.update(); };
+    LC.tl.init(); LC.mon.init(); LC.src.init(); LC.mon.startMeter();
     LC.project = LC.newProject('1080p', 30);
     loadProject(LC.project, 'Untitled');
     // desktop: project passed on launch
     if (Aero.native?.launchFile) Aero.native.launchFile().then(f => { if (f && /\.lcut$/i.test(f.name)) openProjectData(f.name, new TextDecoder().decode(f.data), f.path); }).catch(() => { });
     Aero.native?.onOpenFile?.(async p => { try { const f = await Aero.native.readFile(p); if (/\.lcut$/i.test(f.name)) openProjectData(f.name, new TextDecoder().decode(f.data), f.path); } catch (e) { } });
   }
+  function showRightTab(t) { document.querySelectorAll('#rtabs .aero-tab').forEach(x => x.classList.toggle('on', x.dataset.tab === t)); document.querySelectorAll('.rtab').forEach(x => x.hidden = x.id !== 'rtab-' + t); if (t === 'mixer') LC.mixer.render(); }
+  LC.showRightTab = showRightTab;
+  LC.layoutSource = () => !$('#work').classList.contains('nosrc');
+  LC.toggleSource = (on = !LC.layoutSource()) => { $('#work').classList.toggle('nosrc', !on); if (!on) { LC.src.pause(); LC.src.focus('program'); } setTimeout(() => { LC.mon.layout(); LC.src.draw(); tl.draw(); }, 0); };
+  async function importLutCmd() { const l = await LC.importLut(); if (!l) return; const s = tl.selected().filter(c => LC.isVisual(c)); s.forEach(c => c.lut = { id: l.id, amt: 100 }); LC.commit('Import LUT'); LC.refresh(); if (s.length) Aero.toast(`Applied ${l.name} to ${s.length} clip${s.length > 1 ? 's' : ''}`); }
   function buildEffects() {
     const box = $('#fxlist'); box.innerHTML = '';
     const ico = {
@@ -427,6 +463,8 @@
       wipe: '<svg viewBox="0 0 22 16"><rect x="1" y="2" width="20" height="12" fill="#4a7fc4" stroke="#1d4f8a"/><rect x="1" y="2" width="10" height="12" fill="#d39b3f"/><path d="M11 2v12" stroke="#fff" stroke-width="1.5"/></svg>',
       slide: '<svg viewBox="0 0 22 16"><rect x="1" y="2" width="20" height="12" fill="#4a7fc4" stroke="#1d4f8a"/><rect x="9" y="2" width="12" height="12" fill="#d39b3f" stroke="#8a5a0a"/><path d="M5 8h3M6.5 6.5 8 8 6.5 9.5" stroke="#fff" fill="none"/></svg>',
       push: '<svg viewBox="0 0 22 16"><rect x="1" y="2" width="9" height="12" fill="#4a7fc4" stroke="#1d4f8a"/><rect x="11" y="2" width="10" height="12" fill="#d39b3f" stroke="#8a5a0a"/></svg>',
+      afade: '<svg viewBox="0 0 22 16"><rect x="1" y="2" width="20" height="12" rx="1.5" fill="#45a656" stroke="#2a7238"/><path d="M2 4q8 0 18 9M2 13q8-1 18-9" stroke="#fff" stroke-width="1.3" fill="none"/></svg>',
+      adjust: '<svg viewBox="0 0 22 16"><rect x="1" y="1.5" width="20" height="13" rx="1.5" fill="#8fa1b3" stroke="#5c6e80"/><path d="M5 5h12M5 8h12M5 11h12" stroke="#fff" stroke-width="1.2"/><circle cx="9" cy="5" r="1.6" fill="#ffcf33"/><circle cx="14" cy="8" r="1.6" fill="#ffcf33"/><circle cx="7" cy="11" r="1.6" fill="#ffcf33"/></svg>',
       title: '<svg viewBox="0 0 22 16"><rect x="1" y="1.5" width="20" height="13" rx="1.5" fill="#a965c9" stroke="#5a2a7a"/><path d="M6 5h10M11 5v7" stroke="#fff" stroke-width="1.6"/></svg>'
     };
     const head = t => box.appendChild(Aero.el('div', 'aero-mhead', esc(t)));
@@ -439,6 +477,10 @@
     };
     head('Video Transitions');
     LC.TRANSITIONS.forEach(t => item('transition:' + t.id, t.name, ico[t.id], () => LC.applyDefaultTransition(t.id)));
+    head('Audio Transitions');
+    LC.ATRANSITIONS.forEach(t => item('atransition:' + t.id, t.name, ico.afade, () => LC.applyAudioCrossfade(t.id)));
+    head('Layers');
+    item('adjust:layer', 'Adjustment Layer', ico.adjust, () => LC.addAdjustment({}));
     head('Titles');
     [['center', 'Basic Title'], ['lower', 'Lower Third'], ['top', 'Caption (top)'], ['big', 'Big Impact Title'], ['credits', 'Credits']].forEach(([k, n]) => item('title:' + k, n, ico.title, () => LC.addTitle({ preset: k })));
   }

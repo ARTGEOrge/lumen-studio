@@ -17,7 +17,7 @@ const Model = (() => {
       vignette: { amount: 0, mid: 50, round: 0, feather: 50 }, grain: { amount: 0, size: 25, rough: 50 },
       crop: { x: 0, y: 0, w: 1, h: 1, angle: 0, rot: 0, flipH: false, flipV: false, aspect: 'original' },
       lens: { dist: 0, vig: 0, vigMid: 50, caR: 0, caB: 0, fringeP: 0, fringeG: 0 },
-      upright: { vert: 0, horiz: 0, rotate: 0, aspect: 0, scale: 100, x: 0, y: 0, constrain: true },
+      upright: { vert: 0, horiz: 0, rotate: 0, aspect: 0, scale: 100, x: 0, y: 0, f: 1, constrain: true },
       spots: [], masks: []
     };
   }
@@ -114,7 +114,7 @@ const Model = (() => {
     const L = s.lens || {};
     r.lens = { dist: num(L.dist, -100, 100, 0), vig: num(L.vig, -100, 100, 0), vigMid: num(L.vigMid, 0, 100, 50), caR: num(L.caR, -100, 100, 0), caB: num(L.caB, -100, 100, 0), fringeP: num(L.fringeP, 0, 20, 0), fringeG: num(L.fringeG, 0, 20, 0) };
     const U = s.upright || {};
-    r.upright = { vert: num(U.vert, -100, 100, 0), horiz: num(U.horiz, -100, 100, 0), rotate: num(U.rotate, -10, 10, 0), aspect: num(U.aspect, -100, 100, 0), scale: num(U.scale, 50, 150, 100), x: num(U.x, -100, 100, 0), y: num(U.y, -100, 100, 0), constrain: U.constrain !== false };
+    r.upright = { vert: num(U.vert, -100, 100, 0), horiz: num(U.horiz, -100, 100, 0), rotate: num(U.rotate, -10, 10, 0), aspect: num(U.aspect, -100, 100, 0), scale: num(U.scale, 50, 150, 100), x: num(U.x, -100, 100, 0), y: num(U.y, -100, 100, 0), f: num(U.f, .3, 4, 1), constrain: U.constrain !== false };
     r.spots = Array.isArray(s.spots) ? s.spots.slice(0, MAX_SPOTS).map(sanitizeSpot).filter(Boolean) : [];
     r.masks = Array.isArray(s.masks) ? s.masks.slice(0, MAX_MASKS).map(sanitizeMask).filter(Boolean) : [];
     return r;
@@ -123,7 +123,8 @@ const Model = (() => {
   function sanitizeSpot(o) {
     if (!o || typeof o !== 'object') return null;
     return { id: sid(o.id), mode: o.mode === 'clone' ? 'clone' : 'heal', x: q4(num(o.x, 0, 1, .5)), y: q4(num(o.y, 0, 1, .5)), sx: q4(num(o.sx, -1, 2, .6)), sy: q4(num(o.sy, -1, 2, .5)),
-      r: num(o.r, .002, .25, .02), feather: num(o.feather, 0, 100, 50), opacity: num(o.opacity, 0, 100, 100) };
+      r: num(o.r, .002, .25, .02), feather: num(o.feather, 0, 100, 50), opacity: num(o.opacity, 0, 100, 100),
+      ...(Array.isArray(o.pts) && o.pts.length > 1 ? { pts: o.pts.slice(0, 300).map(p => [q4(num(p?.[0], -1, 2, 0)), q4(num(p?.[1], -1, 2, 0))]) } : {}) };
   }
   function sanitizeStroke(o) {
     if (!o || typeof o !== 'object' || !Array.isArray(o.pts) || !o.pts.length) return null;
@@ -155,7 +156,7 @@ const Model = (() => {
     const o = {
       id: str(p.id, 40), fileId: str(p.fileId || p.id, 40), name: str(p.name, 260) || 'Untitled', ext: str(p.ext, 10).toLowerCase(), mime: str(p.mime, 60), size: num(p.size, 0, 1e12, 0),
       w: Math.round(num(p.w, 1, 1e6, 1)), h: Math.round(num(p.h, 1, 1e6, 1)), raw: !!p.raw, added: num(p.added, 0, 1e14, Date.now()), seq: num(p.seq, 0, 1e9, 0),
-      importId: str(p.importId, 40), rating: Math.round(num(p.rating, 0, 5, 0)), flag: Math.round(flag), label: LABELS[p.label] ? p.label : '',
+      importId: str(p.importId, 40), rating: Math.round(num(p.rating, 0, 5, 0)), flag: Math.round(flag), label: typeof p.label === 'string' && Object.hasOwn(LABELS, p.label) ? p.label : '',
       keywords: Array.isArray(p.keywords) ? [...new Set(p.keywords.map(k => str(k, 60).trim()).filter(Boolean))].slice(0, 100) : [],
       exif: sanitizeExif(p.exif), copyName: str(p.copyName, 60), settings: sanitizeSettings(p.settings), edited: num(p.edited, 0, 1e14, 0),
       history: [], hi: 0
@@ -167,14 +168,44 @@ const Model = (() => {
   }
   function sanitizePreset(p) {
     if (!p || typeof p !== 'object') return null;
-    const groups = Array.isArray(p.groups) ? p.groups.filter(g => GROUPS[g]) : [];
+    const groups = Array.isArray(p.groups) ? p.groups.filter(g => typeof g === 'string' && Object.hasOwn(GROUPS, g)) : [];
     const part = {}; const full = sanitizeSettings(p.part || {});
     groups.forEach(g => GROUPS[g].keys.forEach(k => part[k] = full[k]));
     return { id: str(p.id, 40) || Aero.uid(), name: str(p.name, 80) || 'Preset', group: 'User', groups, part };
   }
+  // smart collection rules: field → allowed operators (values are validated per field type)
+  const SMART = {
+    rating: { label: 'Rating', ops: ['>=', '<=', '='], type: 'num', min: 0, max: 5 },
+    flag: { label: 'Flag', ops: ['is', 'is not'], type: 'enum', values: [['pick', 'Picked'], ['none', 'Unflagged'], ['reject', 'Rejected']] },
+    label: { label: 'Color label', ops: ['is', 'is not'], type: 'enum', values: [['red', 'Red'], ['yellow', 'Yellow'], ['green', 'Green'], ['blue', 'Blue'], ['purple', 'Purple'], ['', 'None']] },
+    keyword: { label: 'Keyword', ops: ['contains', 'is', 'does not contain'], type: 'text' },
+    text: { label: 'Any text', ops: ['contains', 'does not contain'], type: 'text' },
+    camera: { label: 'Camera', ops: ['contains', 'does not contain'], type: 'text' },
+    lens: { label: 'Lens', ops: ['contains', 'does not contain'], type: 'text' },
+    iso: { label: 'ISO', ops: ['>=', '<='], type: 'num', min: 0, max: 1e7 },
+    focal: { label: 'Focal length (mm)', ops: ['>=', '<='], type: 'num', min: 0, max: 1e5 },
+    aperture: { label: 'Aperture (ƒ)', ops: ['>=', '<='], type: 'num', min: 0, max: 1000 },
+    date: { label: 'Capture date', ops: ['is after', 'is before', 'in the last (days)'], type: 'date' },
+    edited: { label: 'Edited', ops: ['is'], type: 'enum', values: [['yes', 'Yes'], ['no', 'No']] },
+    local: { label: 'Has masks or spots', ops: ['is'], type: 'enum', values: [['yes', 'Yes'], ['no', 'No']] },
+    filetype: { label: 'File type', ops: ['is', 'is not'], type: 'enum', values: [['raw', 'Camera RAW'], ['jpeg', 'JPEG'], ['png', 'PNG'], ['other', 'Other']] },
+    copy: { label: 'Virtual copy', ops: ['is'], type: 'enum', values: [['yes', 'Yes'], ['no', 'No']] }
+  };
+  function sanitizeRule(r) {
+    if (!r || typeof r !== 'object' || typeof r.f !== 'string' || !Object.hasOwn(SMART, r.f)) return null;
+    const d = SMART[r.f], op = d.ops.includes(r.op) ? r.op : d.ops[0];
+    let v = r.v;
+    if (d.type === 'num' || (d.type === 'date' && op === 'in the last (days)')) v = num(v, 0, d.max ?? 1e5, 0);
+    else if (d.type === 'enum') v = d.values.some(x => x[0] === v) ? v : d.values[0][0];
+    else if (d.type === 'date') v = /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '2000-01-01';
+    else v = str(v, 80);
+    return { f: r.f, op, v };
+  }
   function sanitizeCollection(c) {
     if (!c || typeof c !== 'object') return null;
-    return { id: str(c.id, 40) || Aero.uid(), name: str(c.name, 80) || 'Collection', ids: Array.isArray(c.ids) ? [...new Set(c.ids.filter(x => typeof x === 'string').map(x => x.slice(0, 40)))] : [], created: num(c.created, 0, 1e14, Date.now()) };
+    const o = { id: str(c.id, 40) || Aero.uid(), name: str(c.name, 80) || 'Collection', ids: Array.isArray(c.ids) ? [...new Set(c.ids.filter(x => typeof x === 'string').map(x => x.slice(0, 40)))] : [], created: num(c.created, 0, 1e14, Date.now()) };
+    if (c.smart && typeof c.smart === 'object') { o.ids = []; o.smart = { match: c.smart.match === 'any' ? 'any' : 'all', rules: (Array.isArray(c.smart.rules) ? c.smart.rules : []).slice(0, 20).map(sanitizeRule).filter(Boolean) }; }
+    return o;
   }
 
   // a human label for what changed between two settings objects (history entries)
@@ -186,5 +217,5 @@ const Model = (() => {
     return ch.map(k => { const v = b[k]; return typeof v === 'number' ? `${NAMES[k]} ${v > 0 ? '+' : ''}${k === 'exposure' ? v.toFixed(2) : Math.round(v)}` : NAMES[k]; }).join(', ');
   }
 
-  return { LOCAL, MAX_MASKS, MAX_SPOTS, newMask, sanitizeMask, sanitizeSpot, BANDS, BAND_COLORS, LABELS, GROUPS, BUILTIN, defaults, clone, isDefault, isCropDefault, pick, applyPartial, presetApply, sanitizeSettings, sanitizePhoto, sanitizePreset, sanitizeCollection, sanitizeExif, diffLabel };
+  return { SMART, LOCAL, MAX_MASKS, MAX_SPOTS, newMask, sanitizeMask, sanitizeSpot, BANDS, BAND_COLORS, LABELS, GROUPS, BUILTIN, defaults, clone, isDefault, isCropDefault, pick, applyPartial, presetApply, sanitizeSettings, sanitizePhoto, sanitizePreset, sanitizeCollection, sanitizeExif, diffLabel };
 })();

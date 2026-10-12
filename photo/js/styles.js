@@ -73,10 +73,18 @@ function edt(src, w, h) {
 function covCanvas(cov, w, h, color) {   // Float32 coverage (0..1) -> canvas filled with color
   const img = new ImageData(w, h), d = img.data, [r, g, b] = hexToRgb(color);
   for (let i = 0, j = 0; i < cov.length; i++, j += 4) { const a = cov[i]; if (a <= 0) continue; d[j] = r; d[j + 1] = g; d[j + 2] = b; d[j + 3] = a >= 1 ? 255 : a * 255; }
-  const c = mk(w, h); cx(c).putImageData(img, 0, 0); return c;
+  const c = mkR(w, h); cx(c).putImageData(img, 0, 0); return c;
 }
 function tint(src, color) { const o = clone(src), c = cx(o); c.globalCompositeOperation = 'source-in'; c.fillStyle = color; c.fillRect(0, 0, o.width, o.height); return o; }
-function blurred(src, r) { if (r <= 0.3) return clone(src); const o = mk(src.width, src.height), c = cx(o); c.filter = `blur(${r}px)`; c.drawImage(src, 0, 0); return o; }
+function blurred(src, r) {
+  if (r <= 0.3) return clone(src);
+  const o = mk(src.width, src.height), c = cx(o);
+  if (r <= 6) { c.filter = `blur(${r}px)`; c.drawImage(src, 0, 0); return o; }
+  // large radius: blur a downscaled copy (much faster, visually identical for soft shadows/glows)
+  const f = Math.min(8, r / 3), sw = Math.max(1, Math.round(src.width / f)), sh = Math.max(1, Math.round(src.height / f)), sm = mk(sw, sh), smc = cx(sm);
+  smc.filter = `blur(${r / f}px)`; smc.drawImage(src, 0, 0, sw, sh);
+  c.imageSmoothingQuality = 'high'; c.drawImage(sm, 0, 0, src.width, src.height); return o;
+}
 function inverseOf(shape) { const o = mk(shape.width, shape.height), c = cx(o); c.fillStyle = '#fff'; c.fillRect(0, 0, o.width, o.height); c.globalCompositeOperation = 'destination-out'; c.drawImage(shape, 0, 0); return o; }
 function shifted(src, dx, dy, fillOutside) {
   const o = mk(src.width, src.height), c = cx(o);
@@ -97,7 +105,7 @@ const smoothstep = t => t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
    `body` = fill pixels + overlays + inner effects + stroke, drawn with the layer's blend mode. */
 function buildStyled(L, img, s) {
   const P = stylePad(s), W = img.width + 2 * P, H = img.height + 2 * P, N = W * H;
-  const shape = mk(W, H); cx(shape).drawImage(img, P, P);
+  const shape = mkR(W, H); cx(shape).drawImage(img, P, P);
   let A = null, dIn = null, dOut = null;
   const alpha = () => { if (!A) { const d = cx(shape).getImageData(0, 0, W, H).data; A = new Float32Array(N); for (let i = 0; i < N; i++) A[i] = d[i * 4 + 3] / 255; } return A; };
   const distOut = () => { if (!dOut) { const a = alpha(), m = new Uint8Array(N); for (let i = 0; i < N; i++) m[i] = a[i] >= 0.5; dOut = edt(m, W, H); } return dOut; };
@@ -124,10 +132,15 @@ function buildStyled(L, img, s) {
   const onBody = (cv, opacity, blend) => { bc.globalAlpha = opacity; bc.globalCompositeOperation = blend; bc.drawImage(cv, 0, 0); reset(bc); };
   const clipToShape = cv => { const c = cx(cv); c.globalCompositeOperation = 'destination-in'; c.drawImage(shape, 0, 0); reset(c); return cv; };
   if (s.gradientOverlay.on) {
-    const e = s.gradientOverlay, g = mk(W, H), c = cx(g), a = rad(e.angle), cxp = W / 2, cyp = H / 2;
-    const dir = { x: Math.cos(a), y: -Math.sin(a) }, half = (Math.abs(img.width * dir.x) + Math.abs(img.height * dir.y)) / 2 * e.scale / 100;
+    const e = s.gradientOverlay, g = mk(W, H), c = cx(g), a = rad(e.angle); let cxp, cyp;
+    // align to the layer's content bounds (not its canvas, which may be larger)
+    const al = alpha(); let x0 = W, y0 = H, x1 = -1, y1 = -1;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (al[y * W + x] > 0.02) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 < 0) { x0 = 0; y0 = 0; x1 = W - 1; y1 = H - 1; }
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1; cxp = x0 + bw / 2; cyp = y0 + bh / 2;
+    const dir = { x: Math.cos(a), y: -Math.sin(a) }, half = (Math.abs(bw * dir.x) + Math.abs(bh * dir.y)) / 2 * e.scale / 100;
     let p0, p1;
-    if (e.type === 'radial' || e.type === 'angle') { p0 = { x: cxp, y: cyp }; p1 = { x: cxp + dir.x * Math.max(img.width, img.height) / 2 * e.scale / 100, y: cyp + dir.y * Math.max(img.width, img.height) / 2 * e.scale / 100 }; }
+    if (e.type === 'radial' || e.type === 'angle') { p0 = { x: cxp, y: cyp }; p1 = { x: cxp + dir.x * Math.max(bw, bh) / 2 * e.scale / 100, y: cyp + dir.y * Math.max(bw, bh) / 2 * e.scale / 100 }; }
     else if (e.type === 'reflected') { p0 = { x: cxp, y: cyp }; p1 = { x: cxp + dir.x * half, y: cyp + dir.y * half }; }
     else { p0 = { x: cxp - dir.x * half, y: cyp - dir.y * half }; p1 = { x: cxp + dir.x * half, y: cyp + dir.y * half }; }
     c.fillStyle = makeGradient(c, e.type, p0, p1, e.stops, e.reverse); c.fillRect(0, 0, W, H);
@@ -137,9 +150,10 @@ function buildStyled(L, img, s) {
   if (s.innerGlow.on) {
     const e = s.innerGlow; let gl;
     if (e.source === 'center') { const a = alpha(), d = distIn(), ch = e.size * e.choke / 100, c = new Float32Array(N); for (let i = 0; i < N; i++) c[i] = a[i] * smoothstep((d[i] - ch) / Math.max(1, e.size - ch)); gl = covCanvas(c, W, H, e.color); }
-    else {
-      const ch = e.size * e.choke / 100, inv = ch >= 0.5 ? covCanvas(eroded(ch).map(v => 1 - v), W, H, '#ffffff') : inverseOf(shape);
-      gl = clipToShape(tint(blurred(inv, (e.size - ch) / 2), e.color));
+    else {   // edge: full strength at the edge, fading inwards over `size` (choke keeps it solid longer)
+      const a = alpha(), d = distIn(), ch = e.size * e.choke / 100, c = new Float32Array(N), span = Math.max(1, e.size - ch);
+      for (let i = 0; i < N; i++) if (a[i] > 0) c[i] = a[i] * (1 - smoothstep((d[i] - 0.5 - ch) / span));
+      gl = covCanvas(c, W, H, e.color);
     }
     onBody(gl, e.opacity, e.blend);
   }

@@ -30,6 +30,8 @@
     (fx.extra || []).forEach(e => { if (on(e) && e.kind === 'stroke') m = Math.max(m, (+e.width || 0) / 2); });
     if (on(fx.shadow)) m = Math.max(m, Math.max(Math.abs(fx.shadow.x), Math.abs(fx.shadow.y)) + fx.shadow.blur * 1.5 + 2);
     if (on(fx.outerGlow)) m = Math.max(m, fx.outerGlow.blur * 1.5 + 2);
+    if (on(fx.innerGlow)) m = Math.max(m, fx.innerGlow.blur * 1.5 + 2);
+    if (on(fx.feather)) m = Math.max(m, fx.feather.radius * 1.5 + 2);
     if (on(fx.blur)) m = Math.max(m, fx.blur.radius * 3 + 2);
     return m + 2;
   };

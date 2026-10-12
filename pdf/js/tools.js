@@ -34,6 +34,13 @@ export const TOOLS = [
   { id: 'redact', title: 'Redact: mark area', key: 'D', icon: '<rect x="3" y="6.5" width="18" height="11" rx="1"/><path d="M6.5 12h11" stroke-width="4"/>' },
   { id: 'crop', title: 'Crop pages', key: 'O', icon: '<path d="M6 2v16h16M2 6h16v16"/>' },
 ];
+// Tools contributed by other modules (edit text, form fields…): {id, title, key, icon, hint, controls(), down(e, i, pvEl, p0)}
+export const EXT_TOOLS = {};
+export function registerTool(id, def, before = 'redact') {
+  EXT_TOOLS[id] = def; DRAW_TOOLS.add(id);
+  const k = TOOLS.findIndex(t => t && t.id === before);
+  TOOLS.splice(k < 0 ? TOOLS.length : k, 0, { id, title: def.title, key: def.key || '', icon: def.icon });
+}
 const DRAW_TOOLS = new Set(['note', 'freetext', 'ink', 'rect', 'ellipse', 'line', 'arrow', 'stamp', 'filltext', 'sign', 'date', 'check', 'edittext', 'image', 'redact', 'crop']);
 export const isMarkupTool = t => MARKUP.has(t);
 
@@ -189,6 +196,7 @@ function startDraw(e, i, pvEl) {
   const d = App.doc; if (d.readOnly) { Aero.toast('This document is read-only'); return; }
   const t = App.tool, o = App.opts[t] || {};
   const p0 = ptOf(i, e); const sp = [e.clientX, e.clientY];
+  if (EXT_TOOLS[t]) { try { e.target.setPointerCapture(e.pointerId); } catch (err) { /* synthetic */ } EXT_TOOLS[t].down(e, i, pvEl, p0); return; }
   const inter = e.target; try { inter.setPointerCapture(e.pointerId); } catch (err) { /* synthetic */ }
   const rot = d.info[i].rotate;
   if (t === 'ink') {

@@ -16,7 +16,7 @@ const Cat = (() => {
     ps.map(Model.sanitizePhoto).filter(Boolean).forEach(p => { photos.set(p.id, p); seq = Math.max(seq, p.seq); });
     collections = cs.map(Model.sanitizeCollection).filter(Boolean).sort((a, b) => a.created - b.created);
     userPresets = prs.map(Model.sanitizePreset).filter(Boolean);
-    await Promise.all([...photos.values()].map(async p => { const b = await DB.getBlob('thumb:' + p.id); if (b) thumbURL.set(p.id, URL.createObjectURL(b)); else queueThumb(p.id); }));
+    thumbPending.clear(); thumbMissing.clear();   // thumbnails are loaded lazily, when a cell becomes visible (see thumb())
     emit('load');
   }
 
@@ -53,6 +53,25 @@ const Cat = (() => {
     return d.img;
   }
 
+  /* ---------- lazy thumbnail loading: visible cells ask for their thumbnail; requests are batched ---------- */
+  const thumbPending = new Set(), thumbMissing = new Set(); let thumbBatch = null;
+  function thumb(id) {
+    const u = thumbURL.get(id); if (u) return u;
+    if (!thumbPending.has(id) && !thumbMissing.has(id) && photos.has(id)) {
+      thumbPending.add(id);
+      if (!thumbBatch) { thumbBatch = new Set(); queueMicrotask(flushThumbBatch); }
+      thumbBatch.add(id);
+    }
+    return null;
+  }
+  async function flushThumbBatch() {
+    const ids = [...thumbBatch]; thumbBatch = null;
+    try {
+      const m = await DB.getBlobs(ids.map(id => 'thumb:' + id));
+      ids.forEach(id => { thumbPending.delete(id); const b = m.get('thumb:' + id); if (!photos.has(id)) return; if (b) { if (!thumbURL.has(id)) thumbURL.set(id, URL.createObjectURL(b)); emit('thumb', id); } else { thumbMissing.add(id); queueThumb(id); } });
+    } catch (e) { ids.forEach(id => thumbPending.delete(id)); console.warn('thumbnail load failed', e); }
+  }
+
   /* ---------- thumbnails (rendered through the develop engine) ---------- */
   const thumbQ = new Set(); let thumbBusy = false, thumbTimer = null;
   function queueThumb(id, delay = 60) { thumbQ.add(id); clearTimeout(thumbTimer); thumbTimer = setTimeout(pumpThumbs, delay); }
@@ -60,7 +79,9 @@ const Cat = (() => {
     if (thumbBusy) return; thumbBusy = true;
     try {
       while (thumbQ.size) {
-        const id = thumbQ.values().next().value; thumbQ.delete(id);
+        // visible cells first (the library sets thumbPriority), then oldest request
+        let id = null; if (api.thumbPriority) { for (const q of thumbQ) if (api.thumbPriority(q)) { id = q; break; } }
+        if (id == null) id = thumbQ.values().next().value; thumbQ.delete(id);
         const p = photos.get(id); if (!p) continue;
         try { await renderThumb(p); } catch (e) { console.warn('thumb failed', p.name, e); }
         await new Promise(r => setTimeout(r, 0));
@@ -69,8 +90,10 @@ const Cat = (() => {
   }
   async function renderPreviewCanvas(p, settings, maxEdge) {
     const img = await smallImage(p), key = 'small:' + p.fileId;
+    const st = settings || p.settings;
+    if (Masks.needsRef(st)) await Masks.ensureRef(p);
     if (!Engine.hasSource(key)) Engine.setSource(key, img);
-    const st = settings || p.settings, cs = Engine.cropSize(img.width, img.height, st.crop);
+    const cs = Engine.cropSize(img.width, img.height, st.crop);
     const s = maxEdge / Math.max(cs.w, cs.h);
     Engine.render(key, st, { outW: cs.w * s, outH: cs.h * s, slot: 't' });
     const data = Engine.readOut('t'), c = Decode.mkCanvas(data.width, data.height); c.getContext('2d').putImageData(data, 0, 0);
@@ -80,7 +103,7 @@ const Cat = (() => {
     const c = await renderPreviewCanvas(p, null, 420);
     const blob = await Decode.toBlob(c, 'image/jpeg', .86);
     await DB.putBlob('thumb:' + p.id, blob);
-    const old = thumbURL.get(p.id); thumbURL.set(p.id, URL.createObjectURL(blob)); if (old) setTimeout(() => URL.revokeObjectURL(old), 3000);
+    const old = thumbURL.get(p.id); thumbURL.set(p.id, URL.createObjectURL(blob)); thumbMissing.delete(p.id); if (old) setTimeout(() => URL.revokeObjectURL(old), 3000);
     emit('thumb', p.id);
   }
 
@@ -241,6 +264,8 @@ const Cat = (() => {
     saveCollections();
     pushUndo({ label, undo: () => { collections = Model.clone(before); return saveCollections(); }, redo: () => { collections = Model.clone(after); return saveCollections(); } });
   }
+  function newSmartCollection(name, smart) { const c = Model.sanitizeCollection({ id: Aero.uid(), name, ids: [], smart, created: Date.now() }); collectionsOp('New smart collection', () => collections.push(c)); return c; }
+  function updateSmartCollection(id, name, smart) { collectionsOp('Edit smart collection', () => { const c = collections.find(x => x.id === id); if (c) { const n = Model.sanitizeCollection({ ...c, name, smart }); c.name = n.name; c.smart = n.smart; } }); }
   function newCollection(name, ids = []) { const c = { id: Aero.uid(), name, ids: [...new Set(ids)], created: Date.now() }; collectionsOp('New collection', () => collections.push(c)); return c; }
   function renameCollection(id, name) { collectionsOp('Rename collection', () => { const c = collections.find(x => x.id === id); if (c) c.name = name; }); }
   function deleteCollection(id) { collectionsOp('Delete collection', () => { collections = collections.filter(x => x.id !== id); }); }
@@ -262,11 +287,12 @@ const Cat = (() => {
   function keywords() { const m = new Map(); photos.forEach(p => p.keywords.forEach(k => m.set(k, (m.get(k) || 0) + 1))); return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])); }
   const displayName = p => p.copyName ? `${p.name} (${p.copyName})` : p.name;
 
-  return {
-    photos, thumbURL, get collections() { return collections; }, get userPresets() { return userPresets; }, on: fn => listeners.add(fn), emit,
+  const api = {
+    photos, thumbURL, thumb, newSmartCollection, updateSmartCollection, thumbPriority: null, get collections() { return collections; }, get userPresets() { return userPresets; }, on: fn => listeners.add(fn), emit,
     load, importFiles, workImage, smallImage, fullImage, fileBytes, renderPreviewCanvas, queueThumb, renderThumb,
     pushUndo, undo, redo, canUndo, canRedo, undoLabel, redoLabel, changeMeta, setSettings, historyGo, applyToMany, virtualCopy, remove,
     newCollection, renameCollection, deleteCollection, addToCollection, removeFromCollection, savePreset, deletePreset, clear, keywords, displayName,
     nextSeq: () => ++seq, setCollections(c) { collections = c; }, setPresets(p) { userPresets = p; }
   };
+  return api;
 })();

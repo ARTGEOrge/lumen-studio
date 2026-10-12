@@ -35,7 +35,7 @@
     add(Lart, emblem);
     add(Ltype, text(new P.Point(400, 625), 'AURORA', { family: 'Montserrat', weight: 800, size: 94, tracking: 260 }, '#ffffff', 'Wordmark'));
     const tag = add(Ltype, text(new P.Point(400, 680), 'VECTOR  STUDIO', { family: 'Inter', weight: 600, size: 21, tracking: 520 }, '#ffd36e', 'Tagline'));
-    [tag.bounds.left - 96, tag.bounds.right + 22].forEach(a => { const l = new P.Path.Line({ from: [a, 673], to: [a + 74, 673], insert: false, name: 'Rule' }); paint(l, null, 'rgba(255,211,110,0.6)', 1.5); add(Ltype, l); });
+    [tag.bounds.left - 96, tag.bounds.right + 22].forEach(a => { const l = new P.Path.Line({ from: [a, 673], to: [a + 74, 673], insert: false, name: 'Rule' }); paint(l, null, 'rgba(255,211,110,0.7)', 2.5); LV.width.set(l, LV.width.PROFILES.taperBoth.pts); add(Ltype, l); });
 
     /* ---------- Artboard 2: poster ---------- */
     const X = 900;
@@ -76,6 +76,31 @@
     add(Ltype, text(new P.Point(X + 150, 104), 'AURORA STUDIO', { family: 'Montserrat', weight: 700, size: 22, tracking: 300, align: 'left' }, '#ffffff', 'Brand'));
     const rule = new P.Path.Line({ from: [X + 120, 1238], to: [X + 960, 1238], insert: false, name: 'Footer rule' }); paint(rule, null, 'rgba(255,255,255,0.55)', 1.5); rule.dashArray = [10, 6]; add(Ltype, rule);
     add(Ltype, text(new P.Point(X + 540, 1292), 'LAKESIDE PARK   ·   7 PM   ·   AURORA.STUDIO', { family: 'Inter', weight: 600, size: 20, tracking: 250 }, '#e9e4ff', 'Footer'));
+
+    /* ---------- v1.1 showcase: live effects, symbols, a blend, live shapes ---------- */
+    const fx = (it, o) => { it.data.fx = o; return it; };
+    fx(LV.paintTargets(Ltype.children.find(c => c.name === 'Title'))[0] || Ltype.children.find(c => c.name === 'Title'), { outerGlow: { on: true, blur: 26, color: '#7fe6ff', opacity: 0.55 } });
+    fx(badge, { shadow: { on: true, x: 6, y: 8, blur: 10, color: '#0b0a1f', opacity: 0.55 } });
+    fx(cut, { innerGlow: { on: true, blur: 18, color: '#fff4cf', opacity: 0.7 }, outerGlow: { on: true, blur: 30, color: '#ff8a5b', opacity: 0.45 } });
+    fx(Ltype.children.find(c => c.name === 'Wordmark'), { shadow: { on: true, x: 0, y: 6, blur: 12, color: '#000000', opacity: 0.45 } });
+    // sparkle symbol, reused across the poster sky
+    const spk = new P.Path.Star({ center: [0, 0], points: 4, radius1: 14, radius2: 3.2, insert: false }); spk.fillColor = '#ffffff';
+    const halo = new P.Path.Circle({ center: [0, 0], radius: 5, insert: false }); halo.fillColor = 'rgba(190,240,255,0.9)';
+    const symArt = new P.Group({ insert: false, children: [spk, halo] });
+    const sym = { id: 'sparkle', name: 'Sparkle', art: symArt.exportJSON({ asString: false }), v: 1 }; D.symbols = [sym];
+    const sg = new P.Group({ insert: false, name: 'Sparkles (symbol instances)' });
+    [[X + 120, 400, 1.3, 0], [X + 980, 210, 1, 20], [X + 300, 160, 0.8, 10], [X + 760, 110, 1.5, 0], [X + 860, 650, 0.7, 15], [X + 200, 640, 0.9, 30]].forEach(([x, y, s, r]) => sg.addChild(LV.sym.makeInstance(sym, new P.Matrix().translate(x, y).rotate(r).scale(s))));
+    add(Lbg, sg); sg.children.forEach(i => LV.uidOf(i));
+    // lake ripples: a live blend between two glowing strokes
+    const r1 = new P.Path({ segments: [[X + 330, 1150], [X + 540, 1138], [X + 750, 1150]], insert: false }); r1.smooth(); paint(r1, null, 'rgba(255,196,107,0.85)', 3); r1.strokeCap = 'round';
+    const r2 = new P.Path({ segments: [[X + 160, 1320], [X + 540, 1290], [X + 920, 1320]], insert: false }); r2.smooth(); paint(r2, null, 'rgba(120,110,255,0.15)', 1); r2.strokeCap = 'round';
+    const bl = new P.Group({ insert: false, name: 'Ripples (blend)', data: { kind: 'blend', blend: { mode: 'steps', steps: 9, dist: 20 } } });
+    [r1, r2].forEach(k => { k.data.role = 'blendKey'; bl.addChild(k); }); add(Lart, bl); LV.blend.regen(bl, true);
+    // live rounded "ticket" with a double stroke (Appearance) on the logo board
+    const ticket = LV.live.rect(new P.Rectangle(250, 712, 300, 44), 22); ticket.name = 'Ticket (live shape)';
+    paint(ticket, null, '#ffd36e', 1.5); ticket.data.fx = { extra: [{ kind: 'stroke', paint: 'rgba(255,211,110,0.25)', width: 9, opacity: 1, above: false, on: true }] };
+    add(Ltype, ticket);
+    add(Ltype, text(new P.Point(400, 740), 'EST. 2026', { family: 'Inter', weight: 700, size: 16, tracking: 400 }, '#ffd36e', 'Ticket text'));
 
     Ltype.activate();
     D.active = 1;

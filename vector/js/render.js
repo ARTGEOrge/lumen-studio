@@ -108,6 +108,11 @@
     } else if (item instanceof P.CompoundPath || (item instanceof P.Group && !item.data.kind)) item.children.forEach(c => LV.tracePath(ctx, c));
     else if (item.data && item.data.kind === 'areatext') LV.tracePath(ctx, item.children.find(c => c.data.role === 'frame'));
     else if (item.data && item.data.kind === 'pathtext') { LV.tracePath(ctx, item.children.find(c => c.data.role === 'guide')); }
+    else if (item.data && item.data.kind === 'blend') {
+      const keys = item.children.filter(c => c.data.role === 'blendKey'); keys.forEach(k => LV.tracePath(ctx, k));
+      const sp = item.children.find(c => c.data.role === 'blendSpine');
+      if (sp) LV.tracePath(ctx, sp); else keys.forEach((k, i) => { const p = LV.v(k.bounds.center); i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+    }
     else if (item.internalBounds) {
       const M = P.view.matrix.appended(item.globalMatrix), b = item.internalBounds;
       const q = [b.topLeft, b.topRight, b.bottomRight, b.bottomLeft].map(p => M.transform(p));
@@ -154,6 +159,7 @@
     LV.sel.forEach(it => { if (!it.parent) return; ctx.beginPath(); LV.tracePath(ctx, it); ctx.stroke(); });
     // area text overflow markers / text on path markers
     LV.sel.forEach(it => {
+      if (LV.kind(it) === 'areatext' && (it.data.next || it.data.prev) && LV.isThreaded(it)) return; // drawn by the thread overlay
       if (it.data.overflow) { const b = it.bounds, p = LV.v(b.bottomRight); ctx.fillStyle = '#fff'; ctx.strokeStyle = '#e0261b'; ctx.fillRect(p.x - 4, p.y - 4, 9, 9); ctx.strokeRect(p.x - 3.5, p.y - 3.5, 8, 8); ctx.beginPath(); ctx.moveTo(p.x - 2, p.y + .5); ctx.lineTo(p.x + 3, p.y + .5); ctx.moveTo(p.x + .5, p.y - 2); ctx.lineTo(p.x + .5, p.y + 3); ctx.stroke(); ctx.strokeStyle = SEL; }
     });
     // anchors (direct selection / pen)
@@ -167,6 +173,8 @@
         const c = LV.v(r.center); ctx.fillStyle = SEL; ctx.fillRect(Math.round(c.x) - 1, Math.round(c.y) - 1, 3, 3);
       }
     }
+    // feature overlays (live shape widgets, text threads, symbol editing, blend spines…)
+    (LV.overlays || []).forEach(f => { ctx.save(); try { f(ctx, tool); } catch (e) { console.error(e); } ctx.restore(); });
     // marquee
     if (LV.marquee) {
       const a = LV.v(LV.marquee.topLeft), b = LV.v(LV.marquee.bottomRight);
@@ -179,6 +187,14 @@
       LV.smartLines.forEach(l => {
         if (l.pt) { const p = LV.v(l.pt); ctx.beginPath(); ctx.moveTo(p.x - 4, p.y - 4); ctx.lineTo(p.x + 4, p.y + 4); ctx.moveTo(p.x + 4, p.y - 4); ctx.lineTo(p.x - 4, p.y + 4); ctx.stroke(); if (l.label) ctx.fillText(l.label, p.x + 6, p.y - 6); return; }
         const a = LV.v(l.a), b = LV.v(l.b); ctx.beginPath(); ctx.moveTo(Math.round(a.x) + .5, Math.round(a.y) + .5); ctx.lineTo(Math.round(b.x) + .5, Math.round(b.y) + .5); ctx.stroke();
+        if (l.gap) { // equal-spacing marker: end ticks + distance label
+          const d = b.subtract(a), n = d.length > 0 ? new P.Point(-d.y, d.x).normalize(4) : new P.Point(0, 4);
+          ctx.beginPath(); [a, b].forEach(p => { ctx.moveTo(p.x - n.x, p.y - n.y); ctx.lineTo(p.x + n.x, p.y + n.y); }); ctx.stroke();
+        }
+        if (l.label) {
+          const p = l.gap ? a.add(b).divide(2) : b, tw = ctx.measureText(l.label).width;
+          ctx.save(); ctx.fillStyle = SMART; ctx.fillRect(Math.round(p.x + (l.gap ? -tw / 2 - 3 : 6)), Math.round(p.y - (l.gap ? 16 : 7)), tw + 6, 14); ctx.fillStyle = '#fff'; ctx.fillText(l.label, Math.round(p.x + (l.gap ? -tw / 2 : 9)), Math.round(p.y - (l.gap ? 5 : -4))); ctx.restore();
+        }
       });
     }
     if (tool.overlay) { ctx.save(); tool.overlay(ctx); ctx.restore(); }

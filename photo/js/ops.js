@@ -77,6 +77,7 @@ function xformCanvas(src, sx, sy, rot, whiteFill) {
 }
 function transformDialog() {
   const L = layer();
+  if (L.type === 'group') return toast('Pick a layer inside the group to transform');
   const orig = { x: L.x, y: L.y, canvas: L.canvas, mask: L.mask?.canvas, text: L.text ? { ...L.text } : null, type: L.type };
   const r0 = lrect(L), c0 = { x: r0.x + r0.w / 2, y: r0.y + r0.h / 2 };
   const draw = v => {
@@ -110,23 +111,99 @@ function transformDialog() {
 }
 
 /* ---------- layers ---------- */
-function insertLayer(L) { doc.layers.splice(doc.active + 1, 0, L); doc.active++; updatePanels(); return L; }
+// New layers go above the active one, in the same group (or at the top of an open group that is active)
+function insertLayer(L) {
+  const A = doc.layers[doc.active];
+  if (A && A.type === 'group' && !A.collapsed) { L.parent = A.id; doc.layers.splice(doc.active, 0, L); }
+  else { L.parent = A ? A.parent : 0; doc.layers.splice(doc.active + 1, 0, L); doc.active++; }
+  updatePanels(); return L;
+}
+// Insert an already-linked list of layers (bottom-to-top, may contain groups) above the active layer
+function insertBlock(arr) {
+  if (!arr.length) return;
+  const A = doc.layers[doc.active], ids = new Set(arr.map(L => L.id)), base = A ? A.parent : 0;
+  arr.forEach(L => { if (!L.parent || !ids.has(L.parent)) L.parent = base; });
+  doc.layers.splice(doc.active + 1, 0, ...arr); doc.active += arr.length; updatePanels();
+}
 function newLayerCmd() { insertLayer(newLayer(`Layer ${layerCount++}`)); doc.editMask = false; pushHistory('New Layer'); }
-function dupLayer() {
-  const s = layer(), L = newLayer(s.name + ' copy', s.canvas ? clone(s.canvas) : null, s.x, s.y, s.type);
-  Object.assign(L, { opacity: s.opacity, blend: s.blend, visible: s.visible });
+function copyLayerObj(s, idMap) {
+  const L = newLayer(s.name, s.canvas ? clone(s.canvas) : null, s.x, s.y, s.type);
+  Object.assign(L, { opacity: s.opacity, blend: s.blend, visible: s.visible, collapsed: !!s.collapsed });
   if (s.mask) L.mask = { canvas: clone(s.mask.canvas), enabled: s.mask.enabled };
   if (s.text) L.text = { ...s.text };
   if (s.adjust) L.adjust = { kind: s.adjust.kind, params: { ...s.adjust.params } };
-  insertLayer(L); pushHistory('Duplicate Layer');
+  if (s.style) L.style = JSON.parse(JSON.stringify(s.style));
+  idMap?.set(s.id, L.id); L.parent = s.parent;
+  return L;
+}
+function dupLayer() {
+  const [a, b] = blockOf(doc.active), idMap = new Map();
+  const copies = doc.layers.slice(a, b + 1).map(s => copyLayerObj(s, idMap));
+  copies.forEach(L => { if (idMap.has(L.parent)) L.parent = idMap.get(L.parent); });
+  copies[copies.length - 1].name += ' copy';
+  doc.layers.splice(b + 1, 0, ...copies); doc.active = b + copies.length;
+  pushHistory(copies.length > 1 ? 'Duplicate Group' : 'Duplicate Layer');
 }
 function deleteLayer() {
-  if (doc.layers.length < 2) return toast('Cannot delete the only layer');
-  doc.layers.splice(doc.active, 1); doc.active = Math.max(0, doc.active - 1); doc.editMask = false; pushHistory('Delete Layer', 'none');
+  const [a, b] = blockOf(doc.active);
+  if (doc.layers.length - (b - a + 1) < 1) return toast('Cannot delete the only layer');
+  const wasGroup = layer().type === 'group';
+  doc.layers.splice(a, b - a + 1); doc.active = clamp(a - 1, 0, doc.layers.length - 1); doc.editMask = false;
+  pushHistory(wasGroup ? 'Delete Group' : 'Delete Layer', 'none');
+}
+// Move the block (layer or group + contents) at index i relative to anchor layer A: 'above' | 'below' | 'intoTop' | 'intoBottom'
+function moveBlock(i, anchorId, where) {
+  const [a, b] = blockOf(i), block = doc.layers.slice(a, b + 1), root = block[block.length - 1];
+  if (block.some(L => L.id === anchorId)) return false;
+  doc.layers.splice(a, block.length);
+  const k = doc.layers.findIndex(L => L.id === anchorId); if (k < 0) { doc.layers.splice(a, 0, ...block); return false; }
+  const A = doc.layers[k]; let at;
+  if (where === 'above') { at = k + 1; root.parent = A.parent; }
+  else if (where === 'below') { at = blockOf(k)[0]; root.parent = A.parent; }
+  else if (where === 'intoTop') { at = k; root.parent = A.id; }
+  else { at = blockOf(k)[0]; root.parent = A.id; }
+  doc.layers.splice(at, 0, ...block);
+  doc.active = at + block.length - 1;
+  return true;
 }
 function moveLayer(d) {
-  const i = doc.active, j = i + d; if (j < 0 || j >= doc.layers.length) return;
-  [doc.layers[i], doc.layers[j]] = [doc.layers[j], doc.layers[i]]; doc.active = j; pushHistory('Reorder Layer', 'none');
+  const i = doc.active, [s] = blockOf(i), L = doc.layers[i], P = L.parent;
+  let ok = false;
+  if (d > 0) {
+    const X = doc.layers[i + 1]; if (!X) return;
+    if (X.parent === P) ok = moveBlock(i, X.id, X.type === 'group' && !X.collapsed ? 'intoBottom' : 'above');
+    else if (P) ok = moveBlock(i, P, 'above');   // top of its group: step out above the group
+  } else {
+    const Y = doc.layers[s - 1]; if (!Y) { if (P) ok = moveBlock(i, P, 'below'); else return; }
+    else if (Y.parent === P) ok = moveBlock(i, Y.id, Y.type === 'group' && !Y.collapsed ? 'intoTop' : 'below');
+    else if (P) ok = moveBlock(i, P, 'below');   // bottom of its group: step out below the group
+  }
+  if (ok) pushHistory('Reorder Layer', 'none');
+}
+/* ---------- groups ---------- */
+function newGroup() { const G = newLayer('Group ' + (doc.layers.filter(L => L.type === 'group').length + 1), null, 0, 0, 'group'); insertLayer(G); doc.active = doc.layers.indexOf(G); doc.editMask = false; pushHistory('New Group', 'none'); }
+function groupLayers() {   // put the active layer (or group) into a new group
+  const [a, b] = blockOf(doc.active), R = doc.layers[b];
+  const G = newLayer('Group ' + (doc.layers.filter(L => L.type === 'group').length + 1), null, 0, 0, 'group');
+  G.parent = R.parent; R.parent = G.id;
+  doc.layers.splice(b + 1, 0, G); doc.active = b + 1; doc.editMask = false; pushHistory('Group Layers', 'none');
+}
+function ungroup() {
+  const G = layer(); if (G.type !== 'group') return toast('Select a group to ungroup');
+  const i = doc.active;
+  doc.layers.forEach(L => { if (L.parent === G.id) L.parent = G.parent; });
+  doc.layers.splice(i, 1); doc.active = clamp(i - 1, 0, doc.layers.length - 1); pushHistory('Ungroup Layers', 'none');
+}
+function toggleCollapse(G) { G.collapsed = !G.collapsed; if (G.collapsed && isDescendant(layer(), G.id)) doc.active = doc.layers.indexOf(G); updatePanels(); }
+// Merge Group: flatten a group's contents into one pixel layer (keeps group opacity / blend / mask)
+function mergeGroup() {
+  const G = layer(); if (G.type !== 'group') return;
+  const [a, b] = blockOf(doc.active), tree = buildTree(doc.layers.slice(a, b + 1));
+  const node = tree.find(n => n.L === G), buf = mk(doc.w, doc.h);
+  if (node) renderNodes(buf, node.kids, false);
+  const L = newLayer(G.name, buf, 0, 0); L.opacity = G.opacity; L.blend = G.blend === 'pass-through' ? 'source-over' : G.blend; L.visible = G.visible; L.parent = G.parent;
+  if (G.mask) { const m = mk(doc.w, doc.h), mc = cx(m); mc.fillStyle = '#fff'; mc.fillRect(0, 0, doc.w, doc.h); mc.drawImage(G.mask.canvas, G.x, G.y); L.mask = { canvas: m, enabled: G.mask.enabled }; }
+  doc.layers.splice(a, b - a + 1, L); doc.active = a; doc.editMask = false; pushHistory('Merge Group');
 }
 function bakeMask(L) { // apply a layer's mask into its pixels
   if (!L.mask || !L.canvas) return;
@@ -134,11 +211,17 @@ function bakeMask(L) { // apply a layer's mask into its pixels
   L.mask = null;
 }
 function mergeDown() {
+  if (layer().type === 'group') return mergeGroup();
   if (doc.active === 0) return toast('No layer below');
   const top = layer(), below = doc.layers[doc.active - 1];
+  if (below.parent !== top.parent) return toast('No layer below in this group');
+  if (below.type === 'group') return toast('Cannot merge into a group — use Merge Group on it first');
   if (below.type === 'adjust') return toast('Cannot merge into an adjustment layer');
-  rasterize(below); bakeMask(below);
-  if (top.visible) {
+  rasterize(below); if (below.style) rasterizeStyle(below, true); bakeMask(below);
+  if (top.visible && top.style && styleHasEffects(top.style) && top.type !== 'adjust') {
+    const b = bakeStyled(top); ensureCover(below, { x: b.x, y: b.y, w: b.canvas.width, h: b.canvas.height });
+    const c = cx(below.canvas); reset(c); c.globalAlpha = top.opacity; c.globalCompositeOperation = top.blend; c.drawImage(b.canvas, b.x - below.x, b.y - below.y); reset(c);
+  } else if (top.visible) {
     if (top.type === 'adjust') {
       const adj = FILTERS[top.adjust.kind].fn(below.canvas, top.adjust.params);
       lerpInto(below.canvas, adj, clone(maskK(top, top.mask?.enabled ? top.mask.canvas : null, lrect(below))), top.opacity);
@@ -153,10 +236,12 @@ function mergeDown() {
 }
 function flatten() {
   composite(); const c = clone(comp); doc.layers = [newLayer('Background', c)]; doc.active = 0; doc.editMask = false; pushHistory('Flatten Image', 'all');
+  recordStep({ type: 'flatten' });
 }
 function mergeVisible() {
   composite(); const c = clone(comp);
-  doc.layers = doc.layers.filter(L => !L.visible); doc.layers.push(newLayer('Merged', c)); doc.active = doc.layers.length - 1; doc.editMask = false;
+  doc.layers = doc.layers.filter(L => L.type !== 'group' && !effVisible(L)); doc.layers.forEach(L => L.parent = 0);
+  doc.layers.push(newLayer('Merged', c)); doc.active = doc.layers.length - 1; doc.editMask = false;
   pushHistory('Merge Visible', 'all');
 }
 function renameLayer() {
@@ -228,6 +313,7 @@ function rotateCanvas(deg) {
   });
   if (deg === 180) setDocSize(W, H); else setDocSize(H, W);
   pushHistory({ 90: 'Rotate 90° CW', '-90': 'Rotate 90° CCW', 180: 'Rotate 180°' }[deg], 'all'); fit();
+  recordStep({ type: 'rotate', deg });
 }
 function flipCanvas(hz) {
   const W = doc.w, H = doc.h; let rast = 0;
@@ -240,6 +326,7 @@ function flipCanvas(hz) {
   });
   if (rast) toast(`${rast} text layer${rast > 1 ? 's' : ''} rasterized`);
   pushHistory(hz ? 'Flip Canvas Horizontal' : 'Flip Canvas Vertical', 'all');
+  recordStep({ type: 'flip', h: hz });
 }
 function scaleCanvasData(src, sx, sy, white) {
   const o = mk(Math.max(1, Math.round(src.width * sx)), Math.max(1, Math.round(src.height * sy))), c = cx(o);
@@ -269,10 +356,12 @@ function imageSizeDialog() {
       { key: 'p', label: 'Or scale %', type: 'number', min: 1, value: 100 },
       { key: 'lock', label: 'Keep proportions', type: 'checkbox', value: true }],
     onOK: v => {
-      let w = v.w, h = v.h;
-      if (v.p !== 100) { w = doc.w * v.p / 100; h = doc.h * v.p / 100; }
-      else if (v.lock) { if (w !== doc.w) h = w / ar; else if (h !== doc.h) w = h * ar; }
+      let w = v.w, h = v.h, step;
+      if (v.p !== 100) { w = doc.w * v.p / 100; h = doc.h * v.p / 100; step = { p: v.p }; }
+      else if (v.lock) { if (w !== doc.w) { h = w / ar; step = { w: v.w }; } else if (h !== doc.h) { w = h * ar; step = { h: v.h }; } else step = { w: v.w }; }
+      else step = { w: v.w, h: v.h, lock: false };
       resizeImage(Math.round(clamp(w, 1, 20000)), Math.round(clamp(h, 1, 20000)));
+      recordStep({ type: 'imageSize', w: 0, h: 0, p: 100, lock: true, ...step });
     }
   });
 }
@@ -283,8 +372,12 @@ function canvasSizeDialog() {
       { key: 'h', label: 'Height (px)', type: 'number', min: 1, value: doc.h },
       { key: 'a', label: 'Anchor', type: 'select', value: '1,1', options: [['0,0', 'Top left'], ['1,0', 'Top'], ['2,0', 'Top right'], ['0,1', 'Left'], ['1,1', 'Center'], ['2,1', 'Right'], ['0,2', 'Bottom left'], ['1,2', 'Bottom'], ['2,2', 'Bottom right']] },
       { key: 'fill', label: 'Fill new area', type: 'select', value: 'none', options: [['none', 'Transparent'], ['bg', 'Background color'], ['white', 'White']] }],
-    onOK: v => {
-      const w = Math.round(clamp(v.w, 1, 20000)), h = Math.round(clamp(v.h, 1, 20000)), [ax, ay] = v.a.split(',').map(Number);
+    onOK: v => { applyCanvasSize(v); recordStep({ type: 'canvasSize', ...v }); }
+  });
+}
+function applyCanvasSize(v) {
+  {
+      const w = Math.round(clamp(v.w, 1, 20000)), h = Math.round(clamp(v.h, 1, 20000)), [ax, ay] = String(v.a).split(',').map(Number);
       const ox = Math.round((w - doc.w) * ax / 2), oy = Math.round((h - doc.h) * ay / 2), oldW = doc.w, oldH = doc.h;
       doc.layers.forEach(L => shiftLayer(L, ox, oy));
       setDocSize(w, h);
@@ -295,11 +388,11 @@ function canvasSizeDialog() {
         const c = tctx({ L: bottom, canvas: bottom.canvas }); c.globalCompositeOperation = 'destination-over'; c.drawImage(f, 0, 0); reset(c);
       }
       pushHistory('Canvas Size', 'all'); fit();
-    }
-  });
+  }
 }
 function cropToSelection() { if (!selection) return toast('Make a selection first'); const b = maskBounds(selection.mask); if (b) { cropRect = b; applyCrop(); } }
-function trimTransparent() { composite(); const b = maskBounds(comp); if (!b) return toast('Image is empty'); cropRect = b; applyCrop(); }
+function trimTransparent() { composite(); const b = maskBounds(comp); if (!b) return toast('Image is empty'); cropRect = b; applyCrop(); recordStep({ type: 'trim' }); }
+
 function revealAll() { // grow the canvas to show every layer's off-canvas pixels
   let r = docRect(); doc.layers.forEach(L => { if (L.canvas) r = unionRect(r, lrect(L)); });
   if (r.w === doc.w && r.h === doc.h) return toast('Nothing outside the canvas');

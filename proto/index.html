@@ -11,10 +11,11 @@
       <div class="aero-cmdbar" id="cmd"></div>
       <div class="aero-work" style="grid-template-columns:244px 1fr 288px">
         <div class="aero-side left">
-          <div class="aero-tabs" id="ltabs"><div class="aero-tab on" data-tab="layers">Layers</div><div class="aero-tab" data-tab="assets">Assets</div><div class="aero-tab" data-tab="history">History</div></div>
+          <div class="aero-tabs" id="ltabs"><div class="aero-tab on" data-tab="layers">Layers</div><div class="aero-tab" data-tab="assets">Assets</div><div class="aero-tab" data-tab="history">History</div><div class="aero-tab" data-tab="comments" title="Review comments">Comments</div></div>
           <div class="aero-list" id="layers"></div>
           <div class="aero-list" id="assets" hidden></div>
           <div class="aero-list" id="history" hidden></div>
+          <div class="aero-list" id="comments" hidden></div>
         </div>
         <div class="aero-stage" id="stage"></div>
         <div class="aero-side">
@@ -27,6 +28,7 @@
   </div>
 </div>
 <script src="vendor/fflate.min.js"></script>
+<script src="vendor/paper-core.min.js"></script>
 <script src="../kit/aero.js"></script>
 <script src="js/icons.js"></script>
 <script src="js/core.js"></script>
@@ -36,7 +38,10 @@
 <script src="js/actions.js"></script>
 <script src="js/codegen.js"></script>
 <script src="js/panels.js"></script>
+<script src="js/comments.js"></script>
 <script src="js/io.js"></script>
+<script src="js/ttf.js"></script>
+<script src="js/pdf.js"></script>
 <script src="js/sample.js"></script>
 <script src="js/app.js"></script>
 </body></html>

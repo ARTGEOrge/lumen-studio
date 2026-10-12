@@ -64,6 +64,10 @@
     [['primary', 'Primary', '#f2643d'], ['primaryHover', 'Primary / Hover', '#e0532d'], ['primaryPressed', 'Primary / Pressed', '#c4441f'], ['ink', 'Ink', '#16181d'], ['muted', 'Muted', '#6b7280'],
      ['sand', 'Sand', '#f6f2ec'], ['surface', 'Surface', '#ffffff'], ['line', 'Line', '#e7e2da'], ['teal', 'Teal', '#1f8a70'], ['gold', 'Gold', '#f5a524']]
       .forEach(([k, n, c]) => { C[k] = { id: 'cs_' + k, name: n, color: c, a: 1 }; doc.colorStyles.push(C[k]); });
+    const DARK = { sand: '#121418', surface: '#1d2027', line: '#2c313b', ink: '#f3f4f6', muted: '#9aa3af', primary: '#ff7a52' };
+    for (const k in DARK) C[k].modes = { dark: { color: DARK[k], a: 1 } };
+    // prototype variables
+    doc.vars = [{ id: 'v_saved', name: 'savedCount', type: 'num', value: 0 }];
     const fill = k => ({ type: 'solid', color: C[k].color, a: 1, style: C[k].id, on: true });
     // text styles
     const T = {};
@@ -105,8 +109,8 @@
     const like = (variant, on) => stack(`Like – ${variant}`, 'h', 0, [9, 9, 9, 9], { id: 'like' + variant, align: 'center', justify: 'center', fills: [{ type: 'solid', color: '#ffffff', a: on ? 1 : .32, on: true }], blur: { type: 'bg', r: 14, on: true }, radius: [22, 22, 22, 22], component: { set: 'Like', variant } },
       [Object.assign(icon('heart', on ? 'primary' : '#ffffff', 24, { name: 'Heart', sw: on ? 2.6 : 2 }), { id: 'likeIcon' + variant })]);
     const likeOff = place(like('Off', false), 16), likeOn = place(like('On', true));
-    likeOff.proto = [{ trigger: 'tap', action: 'changeTo', target: likeOn.id, trans: 'smart', ease: 'spring', dur: 450 }];
-    likeOn.proto = [{ trigger: 'tap', action: 'changeTo', target: likeOff.id, trans: 'smart', ease: 'ease-out', dur: 200 }];
+    likeOff.proto = [{ trigger: 'tap', action: 'changeTo', target: likeOn.id, trans: 'smart', ease: 'spring', dur: 450 }, { trigger: 'tap', action: 'setVar', v: 'v_saved', vop: 'add', val: 1, trans: 'instant' }];
+    likeOn.proto = [{ trigger: 'tap', action: 'changeTo', target: likeOff.id, trans: 'smart', ease: 'ease-out', dur: 200 }, { trigger: 'tap', action: 'setVar', v: 'v_saved', vop: 'sub', val: 1, trans: 'instant' }];
     // Destination card
     const card = place(stack('Destination card', 'v', 12, [12, 12, 16, 12], { id: 'card', w: 345, sizeH: 'fixed', sizeV: 'hug', fills: [fill('surface')], radius: [24, 24, 24, 24], shadows: [shadow(10, 28, .08), shadow(1, 3, .05)], component: { desc: 'Feed card' } }, [
       Object.assign(image(img.dolomites, 321, 190, { radius: [16, 16, 16, 16], sizeH: 'fill', name: 'Photo' }), { id: 'cardPhoto' }),
@@ -166,16 +170,20 @@
     const home = frame('Home', { id: 'scrHome', x: sx(2), y: 0, w: W, h: 1380, viewportH: H, fills: [fill('sand')] }, [
       stack('Header', 'h', 12, [0, 0, 0, 0], { id: 'homeHeader', x: 24, y: 58, w: 345, sizeH: 'fixed', align: 'center', justify: 'between' }, [
         stack('Greeting', 'v', 2, [0, 0, 0, 0], {}, [text('Good morning', 'caption', 'muted'), text('Hi, Alex', 'title', 'ink')]),
-        LP.node('ellipse', { name: 'Avatar', w: 44, h: 44, fills: [{ type: 'image', img: img.avatar, mode: 'fill', a: 1, on: true }], strokes: [{ color: '#ffffff', a: 1, w: 2, align: 'outside', on: true }], shadows: [shadow(4, 10, .15)] })]),
-      text('Where to next?', 'display', 'ink', { x: 24, y: 128, name: 'Title' }),
+        stack('Actions', 'h', 12, [0, 0, 0, 0], { align: 'center' }, [
+        Object.assign(stack('Theme', 'h', 0, [10, 10, 10, 10], { fills: [fill('surface')], strokes: [{ color: C.line.color, style: C.line.id, a: 1, w: 1, align: 'inside', on: true }], radius: [22, 22, 22, 22] }, [icon('moon', 'ink', 20)]), { id: 'homeTheme' }),
+        LP.node('ellipse', { name: 'Avatar', w: 44, h: 44, fills: [{ type: 'image', img: img.avatar, mode: 'fill', a: 1, on: true }], strokes: [{ color: '#ffffff', a: 1, w: 2, align: 'outside', on: true }], shadows: [shadow(4, 10, .15)] })])]),
+      text('Where to next?', 'display', 'ink', { x: 24, y: 128, name: 'Title', runs: [{ n: 9 }, { n: 5, cs: C.primary.id, italic: true }] }),
       inst(input, { name: 'Search', x: 24, y: 186 }, { inIcon: { icon: 'search', __: 'Icon' }, inText: { text: 'Search destinations', __: 'Placeholder' } }),
-      stack('Categories', 'h', 8, [0, 0, 0, 0], { x: 24, y: 260 }, [
+      frame('Chips scroller', { x: 0, y: 260, w: W, h: 38, clip: true, scroll: 'h' }, [stack('Categories', 'h', 8, [0, 24, 0, 24], { x: 0, y: 0 }, [
         inst(chipS, { name: 'All' }, { chipLabelSelected: { text: 'All', __: 'Label' } }), inst(chipD, { name: 'Mountains' }),
-        inst(chipD, { name: 'Beaches' }, { chipLabelDefault: { text: 'Beaches', __: 'Label' } }), inst(chipD, { name: 'Cities' }, { chipLabelDefault: { text: 'Cities', __: 'Label' } })]),
+        ...['Beaches', 'Cities', 'Lakes', 'Deserts', 'Islands', 'Forests'].map(t => inst(chipD, { name: t }, { chipLabelDefault: { text: t, __: 'Label' } }))])]),
       stack('Section', 'h', 8, [0, 0, 0, 0], { x: 24, y: 322, w: 345, sizeH: 'fixed', align: 'center', justify: 'between' }, [text('Popular destinations', 'headline', 'ink'), text('See all', 'caption', 'primary')]),
       feed,
       Object.assign(stack('Tab bar', 'h', 0, [14, 44, 30, 44], { x: 0, y: H - 84, w: W, h: 84, sizeH: 'fixed', sizeV: 'fixed', fixed: true, justify: 'between', align: 'start', fills: [{ type: 'solid', color: '#ffffff', a: .82, on: true }], blur: { type: 'bg', r: 18, on: true }, shadows: [{ x: 0, y: -1, blur: 0, spread: 0, color: '#000000', a: .06, on: true }] }, [
-        Object.assign(icon('house', 'primary', 24, { sw: 2.2 }), { id: 'tabHome' }), icon('compass', 'muted', 24), icon('heart', 'muted', 24), icon('user', 'muted', 24)]), { id: 'tabbar' })
+        Object.assign(icon('house', 'primary', 24, { sw: 2.2 }), { id: 'tabHome' }), icon('compass', 'muted', 24), Object.assign(icon('heart', 'muted', 24), { id: 'tabSaved' }), icon('user', 'muted', 24),
+        stack('Saved badge', 'h', 0, [1, 5, 1, 5], { absolute: true, x: 240, y: 6, minW: 18, align: 'center', justify: 'center', fills: [fill('primary')], radius: [9, 9, 9, 9], showIf: { v: 'v_saved', op: '>', val: 0 } },
+          [text('0', 'caption', 'surface', { name: 'Count', bindText: 'v_saved', size: 11, lh: 16, weight: 700, textStyleId: null })])]), { id: 'tabbar' })
     ]);
     // 4. Detail
     const detail = frame('Detail', { id: 'scrDetail', x: sx(3), y: 0, w: W, h: H, fills: [fill('sand')] }, [
@@ -205,6 +213,23 @@
       Object.assign(inst(bDef, { name: 'Done', sizeH: 'fill' }, { btnLabelDefault: { text: 'Done', __: 'Label' } }), { id: 'sheetDone' })
     ]);
 
+    // 5. Saved (grid + wrap auto layout, boolean ticket, mask, mixed-style text, variable binding)
+    const ticket = LP.node('bool', { name: 'Ticket shape', op: 'subtract', x: 0, y: 0, w: 345, h: 92, fills: [{ type: 'linear', angle: 100, a: 1, on: true, stops: [{ p: 0, color: '#ff8a5c', a: 1 }, { p: 1, color: '#f2643d', a: 1 }] }], shadows: [shadow(8, 20, .18)],
+      bd: '', children: [LP.node('rect', { name: 'Card', x: 0, y: 0, w: 345, h: 92, radius: [18, 18, 18, 18] }), LP.node('ellipse', { name: 'Notch L', x: -12, y: 34, w: 24, h: 24 }), LP.node('ellipse', { name: 'Notch R', x: 333, y: 34, w: 24, h: 24 })] });
+    const tile = (id, title, sub) => stack(title, 'v', 8, [0, 0, 0, 0], { sizeH: 'fill' }, [image(id, 160, 112, { radius: [16, 16, 16, 16], sizeH: 'fill', name: 'Photo' }), stack('Text', 'v', 2, [0, 2, 0, 2], { sizeH: 'fill' }, [text(title, 'headline', 'ink', { name: 'Title' }), text(sub, 'caption', 'muted', { name: 'Sub' })])]);
+    const tag = t => inst(chipD, { name: t }, { chipLabelDefault: { text: t, __: 'Label' } });
+    const saved = frame('Saved', { id: 'scrSaved', x: sx(5), y: 0, w: W, h: H, fills: [fill('sand')] }, [
+      Object.assign(stack('Back', 'h', 0, [11, 11, 11, 11], { x: 24, y: 56, align: 'center', justify: 'center', fills: [fill('surface')], strokes: [{ color: C.line.color, style: C.line.id, a: 1, w: 1, align: 'inside', on: true }], radius: [22, 22, 22, 22] }, [icon('arrow-left', 'ink', 20)]), { id: 'savedBack' }),
+      LP.node('group', { name: 'Avatar', x: 325, y: 56, w: 44, h: 44, children: [LP.node('ellipse', { name: 'Circle mask', x: 0, y: 0, w: 44, h: 44, mask: true, fills: [fill('ink')] }), LP.node('rect', { name: 'Photo', x: -8, y: -4, w: 60, h: 60, fills: [{ type: 'image', img: img.avatar, mode: 'fill', a: 1, on: true }] })] }),
+      text('Saved trips', 'display', 'ink', { x: 24, y: 120, name: 'Title', runs: [{ n: 6, cs: C.primary.id }, { n: 6 }] }),
+      stack('Count row', 'h', 4, [0, 0, 0, 0], { x: 24, y: 164, align: 'center' }, [text('0', 'caption', 'muted', { name: 'Count', bindText: 'v_saved' }), text('liked on Home · tap ♥ on a card', 'caption', 'muted', { name: 'Hint' })]),
+      Object.assign(frame('Pass', { x: 24, y: 196, w: 345, h: 92, clip: false }, [ticket,
+        text('TRIP PASS  ·  Summer 2026\nThree trips, one plan.', 'body', 'surface', { name: 'Pass text', x: 26, y: 22, w: 300, auto: 'height', runs: [{ n: 10, weight: 700, ls: 1.2, size: 12 }, { n: 15, size: 12, a: .8, color: '#ffffff' }, { n: 22, weight: 700, size: 19 }] })]), { id: 'savedPass' }),
+      stack('Tags', 'h', 8, [0, 0, 0, 0], { x: 24, y: 306, w: 345, sizeH: 'fixed', layout: { mode: 'h', wrap: true, gap: 8, gapY: 8, pad: [0, 0, 0, 0], align: 'start', justify: 'start' } }, ['Hiking', 'Beaches', 'Food', 'Islands', 'Photography', 'Snow', 'Road trips'].map(tag)),
+      stack('Grid', 'v', 0, [0, 0, 0, 0], { x: 24, y: 400, w: 345, sizeH: 'fixed', layout: { mode: 'grid', cols: 2, gap: 14, gapY: 18, pad: [0, 0, 0, 0], align: 'start', justify: 'start' } }, [
+        tile(img.dolomites, 'Dolomites', 'Italy · 6 days'), tile(img.santorini, 'Santorini', 'Greece · 4 days'), tile(img.patagonia, 'Patagonia', 'Chile · 9 days'), tile(img.onboarding, 'Amalfi', 'Italy · 5 days')])
+    ]);
+
     /* ---------- interactions ---------- */
     const I = (trigger, action, target, trans, dur = 350, ease = 'ease-out', extra = {}) => Object.assign({ trigger, action, target, trans, dur, ease }, extra);
     const find = (root, id) => { let r = null; LP.walk(root, n => { if (n.id === id) r = n; }); return r; };
@@ -215,15 +240,24 @@
     find(login, 'loginGuest').proto = [I('tap', 'navigate', home.id, 'pushUp', 400)];
     ['card1', 'card2', 'card3'].forEach(id => find(home, id).proto = [I('tap', 'navigate', detail.id, 'pushLeft', 380, 'ease-in-out')]);
     find(detail, 'detBack').proto = [I('tap', 'back', null, 'pushRight', 380, 'ease-in-out')];
-    detail.proto = [I('key', 'back', null, 'pushRight', 380, 'ease-in-out', { key: 'ArrowLeft' })];
+    detail.proto = [I('key', 'back', null, 'pushRight', 380, 'ease-in-out', { key: 'ArrowLeft' }), I('swipe', 'back', null, 'pushRight', 380, 'ease-in-out', { dir: 'right' })];
     find(home, 'tabHome').proto = [I('tap', 'scrollTo', 'homeHeader', 'smart', 450, 'ease-in-out', { offset: 58 })];
+    find(home, 'homeTheme').proto = [I('tap', 'setMode', null, 'dissolve', 300, 'ease-in-out', { mode: 'toggle' })];
+    find(home, 'tabSaved').proto = [I('tap', 'navigate', saved.id, 'dissolve', 250)];
+    find(saved, 'savedBack').proto = [I('tap', 'back', null, 'dissolve', 250)];
+    onb.proto = [I('swipe', 'navigate', login.id, 'slideLeft', 350, 'ease-out', { dir: 'left' })];
+    detail.proto = detail.proto || [];
     find(detail, 'detBook').proto = [I('tap', 'overlay', sheet.id, 'slideUp', 320, 'ease-out', { overlayPos: 'bottom', dim: true })];
     find(sheet, 'sheetDone').proto = [I('tap', 'back', null, 'dissolve', 200)];
 
     // export marks (for dev handoff demo)
     onb.exports = [{ scale: 2, fmt: 'png' }]; card.exports = [{ scale: 1, fmt: 'png' }, { scale: 1, fmt: 'svg' }];
     // components label frame (a light backdrop behind main components)
-    doc.children.push(...comps, splash, onb, login, home, detail, sheet);
+    doc.children.push(...comps, splash, onb, login, home, detail, sheet, saved);
+    // review comments
+    doc.comments = [
+      { id: 'cm1', ab: home.id, x: 300, y: 196, author: 'Maya (PM)', text: 'Should search stay pinned while the feed scrolls?', ts: Date.UTC(2026, 9, 8, 9, 30), resolved: false, replies: [{ author: 'Alex (Design)', text: 'Trying a sticky variant next sprint.', ts: Date.UTC(2026, 9, 8, 10, 5) }] },
+      { id: 'cm2', ab: saved.id, x: 330, y: 420, author: 'Sam (Eng)', text: 'Grid could go to 3 columns on tablet.', ts: Date.UTC(2026, 9, 9, 14, 0), resolved: false, replies: [] }];
     return doc;
   };
 })();

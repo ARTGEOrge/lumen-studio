@@ -6,7 +6,47 @@ const IO = (() => {
   let backupPath = null, backupName = 'Darkroom Catalog';
   const FMT = { jpeg: ['image/jpeg', 'jpg'], png: ['image/png', 'png'], webp: ['image/webp', 'webp'] };
   const SHARP = { none: 0, low: 15, standard: 30, high: 50 };
-  let lastOpts = { fmt: 'jpeg', quality: 88, resize: true, long: 2048, sharpen: 'standard', template: '{name}', pack: 'zip' };
+  const WM_POS = [['br', 'Bottom right'], ['bl', 'Bottom left'], ['tr', 'Top right'], ['tl', 'Top left'], ['c', 'Centre'], ['bc', 'Bottom centre']];
+  const DEFAULT_OPTS = { fmt: 'jpeg', quality: 88, resize: true, long: 2048, sharpen: 'standard', template: '{name}', pack: 'zip', wm: false, wmText: '© ' + new Date().getFullYear(), wmPos: 'br', wmSize: 3, wmOpacity: 70, wmColor: '#ffffff' };
+  let lastOpts = { ...DEFAULT_OPTS };
+  const BUILTIN_EXPORT = [
+    { id: 'x-web', name: 'Web — JPEG 2048 px', builtin: true, opts: { fmt: 'jpeg', quality: 85, resize: true, long: 2048, sharpen: 'standard' } },
+    { id: 'x-social', name: 'Social — JPEG 1080 px', builtin: true, opts: { fmt: 'jpeg', quality: 90, resize: true, long: 1080, sharpen: 'high' } },
+    { id: 'x-full', name: 'Full size — JPEG 100 %', builtin: true, opts: { fmt: 'jpeg', quality: 100, resize: false, sharpen: 'none' } },
+    { id: 'x-png', name: 'Archive — PNG, full size', builtin: true, opts: { fmt: 'png', resize: false, sharpen: 'none' } },
+    { id: 'x-proof', name: 'Client proof — 1600 px, watermarked', builtin: true, opts: { fmt: 'jpeg', quality: 80, resize: true, long: 1600, sharpen: 'standard', wm: true, wmText: 'PROOF', wmPos: 'c', wmSize: 8, wmOpacity: 35, wmColor: '#ffffff' } }
+  ];
+  let userExport = [];
+  const n = (v, lo, hi, d) => { v = +v; return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d; };
+  function sanitizeOpts(o) {
+    o = o && typeof o === 'object' ? o : {}; const d = DEFAULT_OPTS;
+    return { fmt: Object.hasOwn(FMT, o.fmt) ? o.fmt : d.fmt, quality: n(o.quality, 10, 100, d.quality), resize: o.resize == null ? d.resize : !!o.resize, long: Math.round(n(o.long, 64, 16384, d.long)),
+      sharpen: Object.hasOwn(SHARP, o.sharpen) ? o.sharpen : d.sharpen, template: typeof o.template === 'string' ? o.template.slice(0, 120) : d.template, pack: o.pack === 'files' ? 'files' : 'zip',
+      wm: !!o.wm, wmText: typeof o.wmText === 'string' ? o.wmText.slice(0, 120) : d.wmText, wmPos: WM_POS.some(x => x[0] === o.wmPos) ? o.wmPos : d.wmPos,
+      wmSize: n(o.wmSize, 1, 20, d.wmSize), wmOpacity: n(o.wmOpacity, 5, 100, d.wmOpacity), wmColor: /^#[0-9a-f]{6}$/i.test(o.wmColor) ? o.wmColor : d.wmColor };
+  }
+  const sanitizeExportPreset = p => p && typeof p === 'object' ? { id: typeof p.id === 'string' && /^[\w-]{1,40}$/.test(p.id) ? p.id : Aero.uid(), name: (typeof p.name === 'string' ? p.name.slice(0, 80) : '') || 'Export preset', opts: sanitizeOpts(p.opts) } : null;
+  async function loadExportPresets() {
+    try {
+      const m = await DB.get('meta', 'exportPresets'); userExport = (Array.isArray(m?.list) ? m.list : []).slice(0, 100).map(sanitizeExportPreset).filter(Boolean);
+      const l = await DB.get('meta', 'exportLast'); if (l?.opts) lastOpts = sanitizeOpts(l.opts);
+    } catch (e) { console.warn(e); }
+  }
+  const saveExportPresets = () => DB.put('meta', { key: 'exportPresets', list: userExport });
+  async function addExportPreset(name, opts) { const pr = sanitizeExportPreset({ id: Aero.uid(), name, opts }); userExport.push(pr); await saveExportPresets(); return pr; }
+  async function deleteExportPreset(id) { userExport = userExport.filter(p => p.id !== id); await saveExportPresets(); }
+
+  // text watermark, scaled to the image (size = % of the long edge)
+  function drawWatermark(ctx, w, h, o) {
+    if (!o.wm || !o.wmText.trim()) return;
+    const px = Math.max(8, Math.round(Math.max(w, h) * o.wmSize / 100)), m = Math.round(px * .6);
+    ctx.save(); ctx.globalAlpha = o.wmOpacity / 100; ctx.font = `600 ${px}px "Segoe UI", Arial, sans-serif`; ctx.fillStyle = o.wmColor;
+    const dark = parseInt(o.wmColor.slice(1, 3), 16) * .3 + parseInt(o.wmColor.slice(3, 5), 16) * .59 + parseInt(o.wmColor.slice(5, 7), 16) * .11 < 128;
+    ctx.shadowColor = dark ? 'rgba(255,255,255,.45)' : 'rgba(0,0,0,.5)'; ctx.shadowBlur = px * .12; ctx.shadowOffsetY = px * .03;
+    const p = o.wmPos; ctx.textAlign = p === 'c' || p === 'bc' ? 'center' : p[1] === 'r' ? 'right' : 'left'; ctx.textBaseline = p === 'c' ? 'middle' : p[0] === 't' ? 'top' : 'bottom';
+    const x = ctx.textAlign === 'center' ? w / 2 : ctx.textAlign === 'right' ? w - m : m, y = p === 'c' ? h / 2 : p[0] === 't' ? m : h - m;
+    ctx.fillText(o.wmText, x, y); ctx.restore();
+  }
 
   function fileName(tpl, p, i) {
     const d = new Date(p.exif.date || p.added), pad = n => String(n).padStart(2, '0');
@@ -25,6 +65,7 @@ const IO = (() => {
     const img = await Cat.fullImage(p), key = 'x:' + p.fileId + ':' + Aero.uid();
     Engine.setSource(key, img);
     try {
+      if (Masks.needsRef(p.settings)) await Masks.ensureRef(p);
       const sz = Engine.sourceSize(key), cs = Engine.cropSize(sz.w, sz.h, p.settings.crop);
       // the texture may have been downscaled to MAX_TEXTURE_SIZE; scale back to the true size
       const trueScale = img.width / sz.w;
@@ -47,6 +88,7 @@ const IO = (() => {
           await new Promise(r => setTimeout(r, 0));
         }
       }
+      drawWatermark(cx, w, h, o);
       const [mime] = FMT[o.fmt];
       return await Decode.toBlob(c, mime, mime === 'image/png' ? undefined : o.quality / 100);
     } finally { Engine.dropSource(key); Engine.freeBig(); }
@@ -84,22 +126,48 @@ const IO = (() => {
 
   function exportDialog() {
     const ids = selectedIds(); if (!ids.length) return Aero.toast('Select photos to export');
-    const o = lastOpts;
-    Aero.dialog({
-      title: `Export ${ids.length} Photo${ids.length > 1 ? 's' : ''}`, ok: 'Export', width: 470,
+    const o = lastOpts, all = () => [...BUILTIN_EXPORT, ...userExport];
+    const presetOptions = () => [['', 'Last used settings'], ...BUILTIN_EXPORT.map(p => [p.id, p.name]), ...userExport.map(p => [p.id, '★ ' + p.name])];
+    const fieldKeys = ['fmt', 'quality', 'resize', 'long', 'sharpen', 'template', 'wm', 'wmText', 'wmPos', 'wmSize', 'wmOpacity', 'wmColor'];
+    const dlg = Aero.dialog({
+      title: `Export ${ids.length} Photo${ids.length > 1 ? 's' : ''}`, ok: 'Export', width: 500,
       instruction: ids.length > 1 ? `Export ${ids.length} selected photos with their develop settings.` : `Export “${Cat.displayName(Cat.photos.get(ids[0]))}” with its develop settings.`,
       fields: [
+        { key: 'preset', label: 'Preset', type: 'select', value: '', options: presetOptions() },
         { key: 'fmt', label: 'Format', type: 'select', value: o.fmt, options: [['jpeg', 'JPEG'], ['png', 'PNG (lossless)'], ['webp', 'WebP']] },
         { key: 'quality', label: 'Quality', type: 'range', min: 10, max: 100, step: 1, value: o.quality, fmt: v => v + '%' },
         { key: 'resize', label: 'Resize to fit', type: 'checkbox', value: o.resize },
         { key: 'long', label: 'Long edge (px)', type: 'number', min: 64, max: 16384, step: 1, value: o.long },
         { key: 'sharpen', label: 'Sharpen for screen', type: 'select', value: o.sharpen, options: [['none', 'None'], ['low', 'Low'], ['standard', 'Standard'], ['high', 'High']] },
         { key: 'template', label: 'File name', type: 'text', value: o.template },
-        ...(ids.length > 1 ? [{ key: 'pack', label: 'Save as', type: 'select', value: o.pack, options: [['zip', 'One ZIP archive'], ['files', Aero.isDesktop ? 'Individual files (a save dialog per photo)' : 'Individual downloads']] }] : [])
+        ...(ids.length > 1 ? [{ key: 'pack', label: 'Save as', type: 'select', value: o.pack, options: [['zip', 'One ZIP archive'], ['files', Aero.isDesktop ? 'Individual files (a save dialog per photo)' : 'Individual downloads']] }] : []),
+        { key: 'wm', label: 'Watermark', type: 'checkbox', value: o.wm },
+        { key: 'wmText', label: 'Watermark text', type: 'text', value: o.wmText },
+        { key: 'wmPos', label: 'Position', type: 'select', value: o.wmPos, options: WM_POS },
+        { key: 'wmSize', label: 'Size (% of long edge)', type: 'range', min: 1, max: 20, step: .5, value: o.wmSize, fmt: v => v + '%' },
+        { key: 'wmOpacity', label: 'Opacity', type: 'range', min: 5, max: 100, step: 1, value: o.wmOpacity, fmt: v => v + '%' },
+        { key: 'wmColor', label: 'Colour', type: 'color', value: o.wmColor }
       ],
-      html: '<p class="dnote">File name tokens: {name} {seq} {date} {rating} {camera} {copy}. Exports render from the original file at full resolution (camera RAW is re-developed at full size).</p>',
-      onOK: v => { lastOpts = { ...o, ...v, long: Math.max(64, Math.min(16384, Math.round(+v.long || 2048))), pack: v.pack || o.pack }; runExport(ids, lastOpts); }
+      html: '<div class="btnrow" style="margin-top:6px"><button class="aero-btn small" id="xp-save">Save as preset…</button><button class="aero-btn small" id="xp-del" disabled>Delete preset</button></div><p class="dnote">File name tokens: {name} {seq} {date} {rating} {camera} {copy}. Exports render from the original file at full resolution (camera RAW is re-developed at full size), including masks, spots and lens corrections.</p>',
+      onInput: (k, v, set) => {
+        if (k !== 'preset') { return; }
+        const pr = all().find(p => p.id === v.preset); dlg?.el.querySelector('#xp-del')?.toggleAttribute('disabled', !pr || pr.builtin);
+        const src = pr ? sanitizeOpts({ ...DEFAULT_OPTS, ...pr.opts }) : lastOpts;
+        fieldKeys.forEach(f => set(f, src[f]));
+      },
+      onOK: v => { const { preset, ...rest } = v; lastOpts = sanitizeOpts({ ...o, ...rest, pack: v.pack || o.pack }); DB.put('meta', { key: 'exportLast', opts: lastOpts }).catch(() => { }); runExport(ids, lastOpts); }
     });
+    const sel = dlg.el.querySelector('select');
+    dlg.el.querySelector('#xp-save').onclick = async () => {
+      const name = await Aero.prompt('Save Export Preset', 'Preset name', 'My export'); if (!name || !name.trim()) return;
+      const { preset, ...rest } = dlg.values; const pr = await addExportPreset(name.trim(), rest);
+      sel.add(new Option('★ ' + pr.name, pr.id)); sel.value = pr.id; dlg.values.preset = pr.id; dlg.el.querySelector('#xp-del').disabled = false; Aero.toast(`Saved export preset “${pr.name}”`);
+    };
+    dlg.el.querySelector('#xp-del').onclick = async () => {
+      const pr = userExport.find(p => p.id === sel.value); if (!pr) return;
+      await deleteExportPreset(pr.id); sel.querySelector(`option[value="${pr.id}"]`)?.remove(); sel.value = ''; dlg.values.preset = ''; dlg.el.querySelector('#xp-del').disabled = true; Aero.toast(`Deleted export preset “${pr.name}”`);
+    };
+    return dlg;
   }
   function exportPrevious() { const ids = selectedIds(); if (!ids.length) return Aero.toast('Select photos to export'); runExport(ids, lastOpts); }
 
@@ -107,7 +175,7 @@ const IO = (() => {
   async function buildBackup() {
     await DB.flush();
     const photos = [...Cat.photos.values()];
-    const manifest = { app: 'lumen-darkroom', version: 1, created: Date.now(), photos, collections: Cat.collections, presets: Cat.userPresets };
+    const manifest = { app: 'lumen-darkroom', version: 2, created: Date.now(), photos, collections: Cat.collections, presets: Cat.userPresets, exportPresets: userExport };
     const entries = { 'manifest.json': [new TextEncoder().encode(JSON.stringify(manifest)), { level: 6 }] };
     const fileIds = [...new Set(photos.map(p => p.fileId))];
     for (let i = 0; i < fileIds.length; i++) {
@@ -142,7 +210,7 @@ const IO = (() => {
     let man;
     try { man = JSON.parse(new TextDecoder().decode(files['manifest.json'] || new Uint8Array())); } catch (e) { man = null; }
     if (!man || man.app !== 'lumen-darkroom' || !Array.isArray(man.photos)) return Aero.alert('Cannot open backup', 'The file has no Lumen Darkroom catalog manifest.');
-    if (man.version > 1) Aero.toast('This backup was made by a newer version; some settings may be ignored');
+    if (man.version > 2) Aero.toast('This backup was made by a newer version; some settings may be ignored');
     const photos = man.photos.slice(0, 100000).map(Model.sanitizePhoto).filter(p => p && files['files/' + p.fileId]);
     const dropped = man.photos.length - photos.length;
     let mode = 'replace';
@@ -154,7 +222,7 @@ const IO = (() => {
     }
     Aero.busy('Restoring catalog…');
     try {
-      if (mode === 'replace') await Cat.clear();
+      if (mode === 'replace') { await Cat.clear(); await saveExportPresets().catch(() => { }); }
       const existing = new Set(Cat.photos.keys()), existingFiles = new Set([...Cat.photos.values()].map(p => p.fileId));
       let n = 0;
       for (const p of photos) {
@@ -175,6 +243,8 @@ const IO = (() => {
       const prs = (Array.isArray(man.presets) ? man.presets : []).map(Model.sanitizePreset).filter(Boolean);
       const existingPr = new Set(Cat.userPresets.map(p => p.id));
       await DB.putMany('presets', prs.filter(p => !existingPr.has(p.id)));
+      const xps = (Array.isArray(man.exportPresets) ? man.exportPresets : []).slice(0, 100).map(sanitizeExportPreset).filter(Boolean), have = new Set(userExport.map(p => p.id));
+      if (xps.length) { userExport = userExport.concat(xps.filter(p => !have.has(p.id))); await saveExportPresets(); }
       await Cat.load();
       backupName = Aero.baseName(name); Aero.setDoc(backupName, false);
       S.source = { type: 'all' }; S.sel.clear(); S.active = null; refreshList(false); renderLeft();
@@ -184,9 +254,10 @@ const IO = (() => {
   }
   async function newCatalog() {
     if (Cat.photos.size && !await Aero.confirm('New Catalog', `Start a new, empty catalog? The current catalog (${Cat.photos.size} photos) will be deleted from this browser. Save a backup first (File ▸ Save Catalog Backup) if you want to keep it.`, 'Delete and start new')) return;
-    await Cat.clear(); backupPath = null; backupName = 'Darkroom Catalog'; Aero.setDoc('Catalog', false);
+    await Cat.clear(); await saveExportPresets().catch(() => { }); backupPath = null; backupName = 'Darkroom Catalog'; Aero.setDoc('Catalog', false);
     S.source = { type: 'all' }; S.sel.clear(); S.active = null; if (S.module !== 'library') setModule('library'); refreshList(false); renderLeft();
   }
 
-  return { exportDialog, exportPrevious, runExport, renderExport, saveBackup, buildBackup, openBackup, loadBackup, newCatalog, fileName, get lastOpts() { return lastOpts; } };
+  return { exportDialog, exportPrevious, runExport, renderExport, saveBackup, buildBackup, openBackup, loadBackup, newCatalog, fileName, drawWatermark, sanitizeOpts, loadExportPresets, addExportPreset, deleteExportPreset,
+    get lastOpts() { return lastOpts; }, get exportPresets() { return userExport; }, BUILTIN_EXPORT };
 })();

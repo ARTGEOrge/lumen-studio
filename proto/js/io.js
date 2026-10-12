@@ -18,7 +18,7 @@
     const out = {}; ids.forEach(id => { if (doc.images[id]) out[id] = doc.images[id]; });
     return out;
   }
-  IO.serialize = () => JSON.stringify(Object.assign({}, ED.doc, { images: usedImages(ED.doc), format: 'lproto', version: 1 }), (k, v) => k[0] === '_' ? undefined : v);
+  IO.serialize = () => JSON.stringify(Object.assign({}, ED.doc, { images: usedImages(ED.doc), format: 'lproto', version: LP.FORMAT_VERSION }), (k, v) => k[0] === '_' ? undefined : v);
   IO.save = async (as) => {
     const name = safeName(ED.doc.name || 'Untitled') + '.lproto';
     const p = await Aero.saveFile({ name, data: IO.serialize(), filters: [{ name: 'Lumen Proto', extensions: ['lproto'] }], path: as ? null : ED.filePath });
@@ -34,8 +34,14 @@
     const doc = Object.assign(LP.newDoc(), { name: String(d.name || 'Untitled').slice(0, 200), bg: typeof d.bg === 'string' ? d.bg : '#e8ecf1' });
     doc.children = d.children;
     const num = (v, def, lo = -1e6, hi = 1e6) => { v = Number(v); return isFinite(v) ? Math.max(lo, Math.min(hi, v)) : def; };
-    doc.colorStyles = (Array.isArray(d.colorStyles) ? d.colorStyles : []).filter(s => s && typeof s.id === 'string').map(s => ({ id: s.id, name: String(s.name || 'Color').slice(0, 100), color: LP.toHex(String(s.color || '#000')), a: num(s.a, 1, 0, 1) }));
-    doc.textStyles = (Array.isArray(d.textStyles) ? d.textStyles : []).filter(s => s && typeof s.id === 'string').map(s => ({ id: s.id, name: String(s.name || 'Text').slice(0, 100), font: String(s.font || 'Inter').replace(/["\;{}<>]/g, '').slice(0, 60), size: num(s.size, 16, 1, 1000), weight: num(s.weight, 400, 100, 900), italic: !!s.italic, lh: num(s.lh, 0, 0, 2000), ls: num(s.ls, 0, -100, 100) }));
+    doc.colorStyles = (Array.isArray(d.colorStyles) ? d.colorStyles : []).filter(s => s && typeof s.id === 'string').map(s => { const o = { id: s.id, name: String(s.name || 'Color').slice(0, 100), color: LP.toHex(String(s.color || '#000')), a: num(s.a, 1, 0, 1) }; if (plain(s.dark) && s.dark.color != null) o.modes = { dark: { color: LP.toHex(String(s.dark.color)), a: num(s.dark.a, 1, 0, 1) } }; if (plain(s.modes)) { o.modes = o.modes || {}; for (const k in s.modes) { const v = s.modes[k]; if (/^[\w-]{1,40}$/.test(k) && plain(v) && v.color != null) o.modes[k] = { color: LP.toHex(String(v.color)), a: num(v.a, 1, 0, 1) }; } } if (s.lib) o.lib = String(s.lib).slice(0, 100); return o; });
+    if (typeof d.uid === 'string' && /^[\w-]{4,64}$/.test(d.uid)) doc.uid = d.uid;
+    doc.version = LP.FORMAT_VERSION;
+    doc.vars = IO.cleanVars(d.vars);
+    doc.modes = IO.cleanModes(d.modes);
+    doc.colorStyles.forEach(cs => { if (cs.modes) for (const k in cs.modes) if (!doc.modes.some(m => m.id === k)) delete cs.modes[k]; });
+    doc.comments = IO.cleanComments(d.comments);
+    doc.textStyles = (Array.isArray(d.textStyles) ? d.textStyles : []).filter(s => s && typeof s.id === 'string').map(s => ({ id: s.id, name: String(s.name || 'Text').slice(0, 100), font: String(s.font || 'Inter').replace(/["\;{}<>]/g, '').slice(0, 60), size: num(s.size, 16, 1, 1000), weight: num(s.weight, 400, 100, 900), italic: !!s.italic, lh: num(s.lh, 0, 0, 2000), ls: num(s.ls, 0, -100, 100), ...(s.lib ? { lib: String(s.lib).slice(0, 100) } : {}) }));
     doc.images = {};
     for (const k in (d.images || {})) { const v = d.images[k]; if (typeof v === 'string' && /^data:image\/(png|jpeg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(v)) doc.images[k] = v; }
     // structural sanity: unique string ids, numeric geometry
@@ -44,8 +50,9 @@
       if (!n || typeof n !== 'object') return false;
       if (typeof n.id !== 'string' || seen.has(n.id) || n.id.includes('/')) n.id = LP.newId(); seen.add(n.id);
       ['x', 'y', 'w', 'h', 'r', 'opacity'].forEach(k => { if (typeof n[k] !== 'number' || !isFinite(n[k])) n[k] = k === 'opacity' ? 1 : k === 'w' || k === 'h' ? 100 : 0; });
-      if (!['frame', 'group', 'rect', 'ellipse', 'path', 'text', 'icon', 'instance'].includes(n.type)) return false;
-      if (n.type === 'path' && n.d != null && (typeof n.d !== 'string' || !/^[\sMmLlHhVvCcSsQqTtAaZz0-9.,eE+-]*$/.test(n.d))) n.d = '';
+      if (!['frame', 'group', 'rect', 'ellipse', 'path', 'text', 'icon', 'instance', 'bool'].includes(n.type)) return false;
+      if (n.type === 'path' && n.d != null && (typeof n.d !== 'string' || !PATH_RE.test(n.d))) n.d = '';
+      if (n.bd != null && (typeof n.bd !== 'string' || !PATH_RE.test(n.bd))) n.bd = '';
       sanitizeNode(n);
       if (n.children) { if (!Array.isArray(n.children)) n.children = []; n.children = n.children.filter(fix); }
       return true;
@@ -54,22 +61,59 @@
     return doc;
   };
   // coerce every field of an untrusted node into the shape the app expects
-  const STR_KEYS = ['name', 'text', 'font', 'icon', 'componentId', 'blend', 'align', 'valign', 'auto', 'deco', 'tcase', 'sizeH', 'sizeV', 'flowStart', 'color', 'rule', 'textStyleId'];
-  const ARR_KEYS = ['fills', 'strokes', 'shadows', 'pts', 'proto', 'exports', 'grids', 'radius'];
+  const PATH_RE = /^[\sMmLlHhVvCcSsQqTtAaZz0-9.,eE+-]*$/;
+  const STR_KEYS = ['name', 'text', 'font', 'icon', 'componentId', 'blend', 'align', 'valign', 'auto', 'deco', 'tcase', 'sizeH', 'sizeV', 'flowStart', 'color', 'rule', 'textStyleId', 'op', 'scroll', 'cmode', 'bindText', 'maskType'];
+  const ARR_KEYS = ['fills', 'strokes', 'shadows', 'pts', 'proto', 'exports', 'grids', 'radius', 'runs', 'cont'];
+  const ENUMS = { op: ['union', 'subtract', 'intersect', 'exclude'], scroll: ['v', 'h', 'both'] };
   const str = v => typeof v === 'string' ? v : typeof v === 'number' && isFinite(v) ? String(v) : null;
   const plain = o => o && typeof o === 'object' && !Array.isArray(o);
   const cleanObj = o => { if (!plain(o)) return null; const r = {}; for (const k in o) { const v = o[k]; if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue; if (typeof v === 'number') r[k] = isFinite(v) ? v : 0; else if (typeof v === 'boolean' || v === null) r[k] = v; else if (typeof v === 'string') r[k] = v; else if (Array.isArray(v)) r[k] = v.map(x => typeof x === 'object' ? cleanObj(x) : (typeof x === 'number' || typeof x === 'string' || typeof x === 'boolean') ? x : null).filter(x => x !== null); else if (plain(v)) r[k] = cleanObj(v); } return r; };
   function sanitizeNode(n) {
     STR_KEYS.forEach(k => { if (n[k] != null) { const v = str(n[k]); if (v == null) delete n[k]; else n[k] = v; } });
     ARR_KEYS.forEach(k => { if (n[k] != null) n[k] = Array.isArray(n[k]) ? n[k].map(x => k === 'radius' ? (Number(x) || 0) : cleanObj(x)).filter(x => x !== null) : []; });
-    ['cons', 'layout', 'blur', 'component'].forEach(k => { if (n[k] != null) n[k] = cleanObj(n[k]); });
+    ['cons', 'layout', 'blur', 'component', 'showIf'].forEach(k => { if (n[k] != null) n[k] = cleanObj(n[k]); });
+    for (const k in ENUMS) if (n[k] != null && !ENUMS[k].includes(n[k])) delete n[k];
+    if (n.mask != null) n.mask = !!n.mask;
+    if (n.cmode != null && !/^[\w-]{1,40}$/.test(n.cmode)) delete n.cmode;
+    if (n.maskType != null && !['alpha', 'luminance', 'vector'].includes(n.maskType)) delete n.maskType;
+    ['minW', 'maxW', 'minH', 'maxH', 'viewportW'].forEach(k => { if (n[k] != null) { const v = Number(n[k]); if (isFinite(v) && v > 0) n[k] = Math.min(1e5, v); else delete n[k]; } });
+    if (n.runs) n.runs = IO.cleanRuns(n.runs);
+    if (!n.runs) delete n.runs;
+    if (n.cont) n.cont = n.cont.filter(c => c && Array.isArray(c.pts)).map(c => ({ pts: c.pts.filter(q => q && typeof q === 'object').map(q => { const o = {}; ['x', 'y', 'ox', 'oy', 'ix', 'iy'].forEach(k => { if (q[k] != null && isFinite(Number(q[k]))) o[k] = Number(q[k]); }); o.x = o.x || 0; o.y = o.y || 0; return o; }), closed: !!c.closed }));
     if (n.overrides != null) { const o = {}; if (plain(n.overrides)) for (const k in n.overrides) { const v = cleanObj(n.overrides[k]); if (v && k !== '__proto__') o[k] = v; } n.overrides = o; }
     if (n.type === 'text') { n.text = n.text ?? ''; n.size = Number(n.size) || 16; n.weight = Number(n.weight) || 400; n.lh = Number(n.lh) || 0; n.ls = Number(n.ls) || 0; if (n.font != null) n.font = n.font.replace(/["\;{}<>]/g, '').slice(0, 60); }
     const cc = p => { if (p && p.color != null) p.color = str(p.color) || '#000000'; (p?.stops || []).forEach(cc); };
     ['fills', 'strokes', 'shadows'].forEach(k => (n[k] || []).forEach(cc));
     Object.values(n.overrides || {}).forEach(o => ['fills', 'strokes', 'shadows'].forEach(k => { if (o[k] != null && !Array.isArray(o[k])) delete o[k]; (o[k] || []).forEach(cc); }));
+    Object.values(n.overrides || {}).forEach(o => { if (o.runs != null) { o.runs = Array.isArray(o.runs) ? IO.cleanRuns(o.runs) : null; if (!o.runs) delete o.runs; } });
     ['bw', 'bh', 'viewportH', 'sw'].forEach(k => { if (n[k] != null && !isFinite(Number(n[k]))) delete n[k]; else if (n[k] != null) n[k] = Number(n[k]); });
   }
+  const RUN_ENUM = { deco: ['none', 'underline', 'strike'] };
+  // mixed-style text runs from a file: only known keys with the right types
+  IO.cleanRuns = runs => {
+    if (!Array.isArray(runs)) return null;
+    const out = runs.filter(r => r && typeof r === 'object').slice(0, 5000).map(r => {
+      const o = { n: Math.max(0, Math.min(1e7, Math.floor(Number(r.n) || 0))) };
+      if (typeof r.font === 'string') o.font = r.font.replace(/["\\;{}<>]/g, '').slice(0, 60);
+      ['size', 'weight', 'ls', 'lh', 'a'].forEach(k => { if (r[k] != null && isFinite(Number(r[k]))) o[k] = Number(r[k]); });
+      if (o.size != null) o.size = Math.max(1, Math.min(1000, o.size)); if (o.weight != null) o.weight = Math.max(100, Math.min(900, o.weight)); if (o.a != null) o.a = Math.max(0, Math.min(1, o.a));
+      if (r.italic != null) o.italic = !!r.italic;
+      if (r.deco != null && RUN_ENUM.deco.includes(r.deco)) o.deco = r.deco;
+      if (typeof r.color === 'string') o.color = LP.toHex(r.color);
+      ['cs', 'ts'].forEach(k => { if (typeof r[k] === 'string') o[k] = r[k].slice(0, 80); });
+      return o;
+    }).filter(r => r.n > 0);
+    return out.length ? out : null;
+  };
+  IO.cleanModes = ms => { const out = []; (Array.isArray(ms) ? ms : []).forEach(m => { if (m && typeof m.id === 'string' && /^[\w-]{1,40}$/.test(m.id) && !out.some(x => x.id === m.id)) out.push({ id: m.id, name: String(m.name || m.id).slice(0, 60) }); }); return out.length ? out.slice(0, 32) : LP.DEFAULT_MODES(); };
+  IO.cleanVars = vars => (Array.isArray(vars) ? vars : []).filter(v => v && typeof v.id === 'string' && ['bool', 'num', 'str'].includes(v.type)).slice(0, 500)
+    .map(v => ({ id: v.id.slice(0, 64), name: String(v.name || 'variable').slice(0, 80), type: v.type, value: LP.coerceVar(v.type, typeof v.value === 'object' ? '' : v.value) }));
+  IO.cleanComments = cs => (Array.isArray(cs) ? cs : []).filter(c => c && typeof c === 'object').slice(0, 5000).map(c => ({
+    id: typeof c.id === 'string' ? c.id.slice(0, 64) : LP.newId(), ab: typeof c.ab === 'string' ? c.ab.slice(0, 64) : null,
+    x: Number(c.x) || 0, y: Number(c.y) || 0, author: String(c.author || 'Anonymous').slice(0, 80), text: String(c.text || '').slice(0, 5000),
+    ts: Number(c.ts) || 0, resolved: !!c.resolved,
+    replies: (Array.isArray(c.replies) ? c.replies : []).filter(r => r && typeof r === 'object').slice(0, 500).map(r => ({ author: String(r.author || 'Anonymous').slice(0, 80), text: String(r.text || '').slice(0, 5000), ts: Number(r.ts) || 0 }))
+  }));
   IO.loadText = (text, name, path) => {
     const doc = IO.parseDoc(text);
     if (name) doc.name = Aero.baseName(name);
@@ -79,13 +123,15 @@
     setTimeout(() => ED.zoomFit(), 0);
   };
   IO.open = async () => {
-    const files = await Aero.openFile({ accept: '.lproto,.json,.svg,.png,.jpg,.jpeg,.gif,.webp', filters: [{ name: 'Lumen Proto & images', extensions: ['lproto', 'svg', 'png', 'jpg', 'jpeg'] }] });
+    const files = await Aero.openFile({ accept: '.lproto,.lplib,.json,.svg,.png,.jpg,.jpeg,.gif,.webp', filters: [{ name: 'Lumen Proto, libraries & images', extensions: ['lproto', 'lplib', 'svg', 'png', 'jpg', 'jpeg'] }] });
     if (files[0]) IO.handleFiles(files);
   };
   IO.handleFiles = async (files, at) => {
     for (const f of files) {
       const e = ext(f.name);
       try {
+        if (e === 'lplib') { IO.importLibrary(new TextDecoder().decode(f.data), f.name); continue; }
+        if (e === 'json') { const t = new TextDecoder().decode(f.data); if (/"format"\s*:\s*"lproto-comments"/.test(t.slice(0, 200))) { IO.importReviewComments(t); continue; } }
         if (e === 'lproto' || e === 'json') { if (Aero.dirty && !(await Aero.confirm('Open file', 'Discard unsaved changes to the current document?'))) return; IO.loadText(new TextDecoder().decode(f.data), f.name, f.path); }
         else if (e === 'svg') IO.importSVG(new TextDecoder().decode(f.data), f.name, at);
         else if (MIME[e]) await IO.importImage(f, at);
@@ -119,59 +165,9 @@
     }
     return m;
   }
-  // parse path data into absolute segments [{c:'M'|'L'|'C'|'Z', p:[...]}]
-  function parsePath(d) {
-    const toks = String(d).match(/[a-zA-Z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g) || [];
-    const out = []; let i = 0, cmd = '', x = 0, y = 0, sx = 0, sy = 0, lcx = 0, lcy = 0, lq = null;
-    const num = () => parseFloat(toks[i++]);
-    while (i < toks.length) {
-      if (/[a-zA-Z]/.test(toks[i])) cmd = toks[i++];
-      const rel = cmd === cmd.toLowerCase(), C = cmd.toUpperCase();
-      const ox = rel ? x : 0, oy = rel ? y : 0;
-      if (C === 'Z') { out.push({ c: 'Z' }); x = sx; y = sy; lq = null; lcx = x; lcy = y; continue; }
-      if (i >= toks.length || /[a-zA-Z]/.test(toks[i])) continue;
-      switch (C) {
-        case 'M': x = ox + num(); y = oy + num(); sx = x; sy = y; out.push({ c: 'M', p: [x, y] }); cmd = rel ? 'l' : 'L'; break;
-        case 'L': x = ox + num(); y = oy + num(); out.push({ c: 'L', p: [x, y] }); break;
-        case 'H': x = (rel ? x : 0) + num(); out.push({ c: 'L', p: [x, y] }); break;
-        case 'V': y = (rel ? y : 0) + num(); out.push({ c: 'L', p: [x, y] }); break;
-        case 'C': { const a = [ox + num(), oy + num(), ox + num(), oy + num(), ox + num(), oy + num()]; out.push({ c: 'C', p: a }); lcx = a[2]; lcy = a[3]; x = a[4]; y = a[5]; lq = null; continue; }
-        case 'S': { const c1 = out.length && out[out.length - 1].c === 'C' ? [2 * x - lcx, 2 * y - lcy] : [x, y]; const a = [ox + num(), oy + num(), ox + num(), oy + num()]; out.push({ c: 'C', p: [...c1, ...a] }); lcx = a[0]; lcy = a[1]; x = a[2]; y = a[3]; continue; }
-        case 'Q': { const q = [ox + num(), oy + num()], e = [ox + num(), oy + num()]; out.push({ c: 'C', p: [x + 2 / 3 * (q[0] - x), y + 2 / 3 * (q[1] - y), e[0] + 2 / 3 * (q[0] - e[0]), e[1] + 2 / 3 * (q[1] - e[1]), e[0], e[1]] }); lq = q; x = e[0]; y = e[1]; continue; }
-        case 'T': { const q = lq ? [2 * x - lq[0], 2 * y - lq[1]] : [x, y]; const e = [ox + num(), oy + num()]; out.push({ c: 'C', p: [x + 2 / 3 * (q[0] - x), y + 2 / 3 * (q[1] - y), e[0] + 2 / 3 * (q[0] - e[0]), e[1] + 2 / 3 * (q[1] - e[1]), e[0], e[1]] }); lq = q; x = e[0]; y = e[1]; continue; }
-        case 'A': { const rx = num(), ry = num(), rot = num(), la = num(), sw = num(), ex = ox + num(), ey = oy + num(); arcToCubic(x, y, rx, ry, rot, la, sw, ex, ey).forEach(c => out.push({ c: 'C', p: c })); x = ex; y = ey; break; }
-        default: i++;
-      }
-      lq = null; if (C !== 'C' && C !== 'S') { lcx = x; lcy = y; }
-    }
-    return out;
-  }
+  const parsePath = LP.parsePath, segsToD = LP.segsToD, segsTransform = LP.segsTransform;
   IO.parsePath = parsePath;
-  IO.transformD = (d, m) => segsToD(segsTransform(parsePath(d), m), 0, 0);
-  function arcToCubic(x1, y1, rx, ry, phi, fa, fs, x2, y2) {
-    if (!rx || !ry) return [[x1, y1, x2, y2, x2, y2]];
-    rx = Math.abs(rx); ry = Math.abs(ry); phi = phi * Math.PI / 180;
-    const cp = Math.cos(phi), sp = Math.sin(phi);
-    const dx = (x1 - x2) / 2, dy = (y1 - y2) / 2, x1p = cp * dx + sp * dy, y1p = -sp * dx + cp * dy;
-    let lam = x1p * x1p / (rx * rx) + y1p * y1p / (ry * ry); if (lam > 1) { rx *= Math.sqrt(lam); ry *= Math.sqrt(lam); }
-    let s = Math.sqrt(Math.max(0, (rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p) / (rx * rx * y1p * y1p + ry * ry * x1p * x1p))); if (fa === fs) s = -s;
-    const cxp = s * rx * y1p / ry, cyp = -s * ry * x1p / rx;
-    const cx = cp * cxp - sp * cyp + (x1 + x2) / 2, cy = sp * cxp + cp * cyp + (y1 + y2) / 2;
-    const ang = (ux, uy, vx, vy) => Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
-    let t1 = ang(1, 0, (x1p - cxp) / rx, (y1p - cyp) / ry), dt = ang((x1p - cxp) / rx, (y1p - cyp) / ry, (-x1p - cxp) / rx, (-y1p - cyp) / ry);
-    if (!fs && dt > 0) dt -= 2 * Math.PI; else if (fs && dt < 0) dt += 2 * Math.PI;
-    const n = Math.ceil(Math.abs(dt) / (Math.PI / 2)), seg = dt / n, k = 4 / 3 * Math.tan(seg / 4), out = [];
-    for (let i = 0; i < n; i++) {
-      const a1 = t1 + i * seg, a2 = a1 + seg;
-      const P = a => [cx + rx * Math.cos(a) * cp - ry * Math.sin(a) * sp, cy + rx * Math.cos(a) * sp + ry * Math.sin(a) * cp];
-      const D = a => [-rx * Math.sin(a) * cp - ry * Math.cos(a) * sp, -rx * Math.sin(a) * sp + ry * Math.cos(a) * cp];
-      const p1 = P(a1), p2 = P(a2), d1 = D(a1), d2 = D(a2);
-      out.push([p1[0] + k * d1[0], p1[1] + k * d1[1], p2[0] - k * d2[0], p2[1] - k * d2[1], p2[0], p2[1]]);
-    }
-    return out;
-  }
-  const segsToD = (segs, ox, oy) => segs.map(s => s.c === 'Z' ? 'Z' : s.c + s.p.map((v, i) => +(v - (i % 2 ? oy : ox)).toFixed(3)).join(' ')).join('');
-  function segsTransform(segs, m) { return segs.map(s => s.c === 'Z' ? s : { c: s.c, p: s.p.map((v, i, a) => i % 2 ? null : M.ap(m, a[i], a[i + 1])).filter(Boolean).flatMap(q => [q.x, q.y]) }); }
+  IO.transformD = (d, m) => LP.transformD(d, m);
   function segBounds(segs) { const xs = [], ys = []; segs.forEach(s => s.p && s.p.forEach((v, i) => (i % 2 ? ys : xs).push(v))); return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }; }
 
   IO.importSVG = (text, name, at) => {
@@ -300,15 +296,9 @@
     const rrPath = (w, h, r, g = 0) => { const x = -g, y = -g, W = w + 2 * g, H = h + 2 * g; const rr = LP.clampR(r.map(q => q > 0 ? q + g : 0), W, H); const [a, bb, c, d] = rr; return `M${x + a} ${y}H${x + W - bb}${bb ? `A${bb} ${bb} 0 0 1 ${x + W} ${y + bb}` : ''}V${y + H - c}${c ? `A${c} ${c} 0 0 1 ${x + W - c} ${y + H}` : ''}H${x + d}${d ? `A${d} ${d} 0 0 1 ${x} ${y + H - d}` : ''}V${y + a}${a ? `A${a} ${a} 0 0 1 ${x + a} ${y}` : ''}Z`; };
     const ptsD = (v, w, h) => {
       if (v.d) { const sx = v.bw ? w / v.bw : 1, sy = v.bh ? h / v.bh : 1; return segsToD(segsTransform(parsePath(v.d), [sx, 0, 0, sy, 0, 0]), 0, 0); }
-      const pts = v.pts || []; if (!pts.length) return '';
-      const sx = v.bw ? w / v.bw : 1, sy = v.bh ? h / v.bh : 1, f = n => +n.toFixed(3);
-      let d = `M${f(pts[0].x * sx)} ${f(pts[0].y * sy)}`;
-      const seg = (a, c) => { if (a.ox == null && c.ix == null) d += `L${f(c.x * sx)} ${f(c.y * sy)}`; else d += `C${f((a.ox ?? a.x) * sx)} ${f((a.oy ?? a.y) * sy)} ${f((c.ix ?? c.x) * sx)} ${f((c.iy ?? c.y) * sy)} ${f(c.x * sx)} ${f(c.y * sy)}`; };
-      for (let i = 1; i < pts.length; i++) seg(pts[i - 1], pts[i]);
-      if (v.closed) { seg(pts[pts.length - 1], pts[0]); d += 'Z'; }
-      return d;
+      return LP.contoursD(LP.contoursOf(v), v.bw ? w / v.bw : 1, v.bh ? h / v.bh : 1);
     };
-    const shapeD = (v, w, h, grow = 0) => { const t = v.mainType || v.type; if (t === 'ellipse') return `M${-grow} ${h / 2}A${w / 2 + grow} ${h / 2 + grow} 0 1 0 ${w + grow} ${h / 2}A${w / 2 + grow} ${h / 2 + grow} 0 1 0 ${-grow} ${h / 2}Z`; if (t === 'path') return ptsD(v, w, h); return rrPath(w, h, v.radius || [0, 0, 0, 0], grow); };
+    const shapeD = (v, w, h, grow = 0) => { const t = v.mainType || v.type; if (t === 'ellipse') return `M${-grow} ${h / 2}A${w / 2 + grow} ${h / 2 + grow} 0 1 0 ${w + grow} ${h / 2}A${w / 2 + grow} ${h / 2 + grow} 0 1 0 ${-grow} ${h / 2}Z`; if (t === 'path') return ptsD(v, w, h); if (t === 'bool') return v.bd || ''; if (t === 'group') return ''; return rrPath(w, h, v.radius || [0, 0, 0, 0], grow); };
     const paintAttr = (f, w, h) => {
       if (f.type === 'solid') { const c = LP.fillColor(f, ED.doc); const p = LP.parseColor(c.color); return `fill="${LP.toHex(c.color)}"${c.a * p[3] < 1 ? ` fill-opacity="${+(c.a * p[3]).toFixed(3)}"` : ''}`; }
       const gid = id('g');
@@ -317,10 +307,32 @@
       else defs.push(`<radialGradient id="${gid}" cx="${f.cx ?? .5}" cy="${f.cy ?? .5}" r=".5" gradientTransform="translate(${f.cx ?? .5} ${f.cy ?? .5}) scale(1.414) translate(${-(f.cx ?? .5)} ${-(f.cy ?? .5)})">${stops}</radialGradient>`);
       return `fill="url(#${gid})"`;
     };
+    ED.doc._mode = LP.modeOf(scene, node);
+    const xf = n => `translate(${+(n.x - (n === node ? b.x : 0)).toFixed(3)} ${+(n.y - (n === node ? b.y : 0)).toFixed(3)})${n.r ? ` rotate(${n.r} ${n.w / 2} ${n.h / 2})` : ''}`;
+    // children in order; a mask sibling clips everything above it
+    const emitKids = kids => {
+      let out = '', open = 0;
+      kids.forEach(k => {
+        if (k.mask) {
+          if (!scene.isVis(k)) return;
+          const kv = scene.view(k), kt = kv.mainType || k.type, cid = id('m');
+          const kind = LP.maskKind(scene, k);
+          if (kind !== 'vector') { // alpha / luminance mask: the mask layer is rendered inside <mask>
+            defs.push(`<mask id="${cid}" maskUnits="userSpaceOnUse" x="-100000" y="-100000" width="200000" height="200000" style="mask-type:${kind}">${emit(k)}</mask>`);
+            out += `<g mask="url(#${cid})">`; open++; return;
+          }
+          const md =kt === 'group' ? scene.kids(k).map(c => `<path transform="${xf(c)}" d="${shapeD(scene.view(c), c.w, c.h)}"/>`).join('') : `<path d="${shapeD(kv, k.w, k.h)}"${kv.rule === 'evenodd' ? ' clip-rule="evenodd"' : ''}/>`;
+          defs.push(`<clipPath id="${cid}"><g transform="${xf(k)}">${md}</g></clipPath>`);
+          out += `<g clip-path="url(#${cid})">`; open++; return;
+        }
+        out += emit(k);
+      });
+      return out + '</g>'.repeat(open);
+    };
     const emit = (n) => {
-      const v = scene.view(n); if (v.visible === false) return '';
+      const v = scene.view(n); if (!scene.isVis(n)) return '';
       const t = v.mainType || n.type, w = n.w, h = n.h;
-      let tr = `translate(${+n.x.toFixed(3)} ${+n.y.toFixed(3)})`; if (n.r) tr += ` rotate(${n.r} ${w / 2} ${h / 2})`;
+      const tr = xf(n);
       const attrs = [`transform="${tr}"`];
       if ((v.opacity ?? 1) < 1) attrs.push(`opacity="${v.opacity}"`);
       if (v.blend && v.blend !== 'normal') attrs.push(`style="mix-blend-mode:${v.blend}"`);
@@ -343,11 +355,14 @@
         const L = LP.textLines(ctx, scene, n);
         const f = (v.fills || []).find(x => x.on !== false);
         const fa = f ? paintAttr(f, w, h) : 'fill="#000"';
-        body = `<text font-family="${xmlEsc(T.font)}, sans-serif" font-size="${T.size}" font-weight="${T.weight}"${T.italic ? ' font-style="italic"' : ''}${T.ls ? ` letter-spacing="${T.ls}"` : ''}${v.deco === 'underline' ? ' text-decoration="underline"' : v.deco === 'strike' ? ' text-decoration="line-through"' : ''} ${fa} xml:space="preserve">${L.lines.map(l => `<tspan x="${+l.x.toFixed(2)}" y="${+l.y.toFixed(2)}">${xmlEsc(LP.caseText(l.t, v.tcase))}</tspan>`).join('')}</text>`;
+        if (L.rich) {
+          const deco = d => d === 'underline' ? ' text-decoration="underline"' : d === 'strike' ? ' text-decoration="line-through"' : '';
+          body = `<text ${fa} xml:space="preserve">${L.lines.map(l => { let x = l.x; return l.pieces.map(p => { const st = p.st, cx = x; x += p.w; return `<tspan x="${+cx.toFixed(2)}" y="${+l.y.toFixed(2)}" font-family="${xmlEsc(st.font)}, sans-serif" font-size="${st.size}" font-weight="${st.weight}"${st.italic ? ' font-style="italic"' : ''}${st.ls ? ` letter-spacing="${st.ls}"` : ''}${deco(st.deco)}${st.color ? ` fill="${LP.toHex(st.color)}"${(st.a ?? 1) < 1 ? ` fill-opacity="${st.a}"` : ''}` : ''}>${xmlEsc(p.t)}</tspan>`; }).join(''); }).join('')}</text>`;
+        } else body = `<text font-family="${xmlEsc(T.font)}, sans-serif" font-size="${T.size}" font-weight="${T.weight}"${T.italic ? ' font-style="italic"' : ''}${T.ls ? ` letter-spacing="${T.ls}"` : ''}${v.deco === 'underline' ? ' text-decoration="underline"' : v.deco === 'strike' ? ' text-decoration="line-through"' : ''} ${fa} xml:space="preserve">${L.lines.map(l => `<tspan x="${+l.x.toFixed(2)}" y="${+l.y.toFixed(2)}">${xmlEsc(LP.caseText(l.t, v.tcase))}</tspan>`).join('')}</text>`;
       } else if (t === 'icon') {
         body = `<path transform="scale(${w / 24} ${h / 24})" d="${(window.LP_ICONS[v.icon] || '')}" fill="none" stroke="${LP.toHex(v.color || '#000')}" stroke-width="${v.sw || 2}" stroke-linecap="round" stroke-linejoin="round"/>`;
       } else {
-        const d = t === 'group' ? '' : shapeD(v, w, h);
+        const d = shapeD(v, w, h);
         if (t !== 'group') (v.fills || []).filter(f => f.on !== false).forEach(f => {
           if (f.type === 'image') {
             const src = ED.doc.images[f.img]; if (!src) return;
@@ -355,22 +370,22 @@
             body += `<image href="${src}" width="${w}" height="${h}" preserveAspectRatio="${f.mode === 'fit' ? 'xMidYMid meet' : 'xMidYMid slice'}" clip-path="url(#${cid})"${(f.a ?? 1) < 1 ? ` opacity="${f.a}"` : ''}/>`;
           } else body += `<path d="${d}" ${paintAttr(f, w, h)}${v.rule === 'evenodd' ? ' fill-rule="evenodd"' : ''}/>`;
         });
-        const kids = scene.kids(n);
+        const kids = t === 'bool' ? [] : scene.kids(n);
         if (kids.length) {
-          let inner = kids.map(emit).join('');
+          let inner = emitKids(kids);
           if (v.clip && t !== 'group') { const cid = id('c'); defs.push(`<clipPath id="${cid}"><path d="${d}"/></clipPath>`); inner = `<g clip-path="url(#${cid})">${inner}</g>`; }
           body += inner;
         }
         if (t !== 'group') (v.strokes || []).filter(s => s.on !== false && s.w > 0).forEach(s => {
-          const c = LP.fillColor(s, ED.doc), open = t === 'path' && !v.closed;
-          const al = open || t === 'path' ? 'center' : s.align || 'inside';
+          const c = LP.fillColor(s, ED.doc), open = t === 'path' && (v.d ? !v.closed : !LP.contoursOf(v).every(q => q.closed));
+          const al = open || t === 'path' || t === 'bool' ? 'center' : s.align || 'inside';
           const g = al === 'inside' ? -s.w / 2 : al === 'outside' ? s.w / 2 : 0;
           body += `<path d="${g ? shapeD(v, w, h, g) : d}" fill="none" stroke="${LP.toHex(c.color)}"${c.a < 1 ? ` stroke-opacity="${c.a}"` : ''} stroke-width="${s.w}"${s.dash ? ` stroke-dasharray="${s.dash.join(' ')}"` : ''}${s.cap ? ` stroke-linecap="${s.cap}"` : ''}${s.join ? ` stroke-linejoin="${s.join}"` : ''}/>`;
         });
       }
       return `<g${nm} ${attrs.join(' ')}>${body}</g>`;
     };
-    const content = emit(Object.assign(Object.create(Object.getPrototypeOf(node)), node, { x: node.x - b.x, y: node.y - b.y }));
+    const content = emit(node);
     return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${+b.w.toFixed(2)}" height="${+b.h.toFixed(2)}" viewBox="0 0 ${+b.w.toFixed(2)} ${+b.h.toFixed(2)}">\n<defs>${defs.join('')}</defs>\n${content}\n</svg>\n`;
   };
 
@@ -407,7 +422,7 @@
   async function fileFor(n, e) {
     const base = safeName(n.name) + (e.scale !== 1 ? `@${e.scale}x` : '');
     if (e.fmt === 'svg') return { name: safeName(n.name) + '.svg', data: new TextEncoder().encode(IO.toSVG(n)) };
-    if (e.fmt === 'pdf') return { name: safeName(n.name) + '.pdf', data: IO.pdfBytes([n], Math.max(1, e.scale)) };
+    if (e.fmt === 'pdf') return { name: safeName(n.name) + '.pdf', data: await IO.pdfBytes([n], Math.max(1, e.scale)) };
     if (e.fmt === 'jpg') return { name: base + '.jpg', data: new Uint8Array(await (await canvasBlob(IO.renderNode(n, e.scale, '#ffffff'), 'image/jpeg', .92)).arrayBuffer()) };
     return { name: base + '.png', data: await IO.pngBytes(n, e.scale) };
   }
@@ -440,15 +455,92 @@
     let ns = [...new Set(ED.selNodes().map(n => ED.scene.top(n)).filter(n => n && n.type === 'frame'))];
     if (!ns.length) ns = LP.artboards(ED.doc);
     if (!ns.length) { Aero.toast('Nothing to export'); return; }
-    if (fmt === 'pdf') { Aero.busy('Building PDF…'); try { const b = IO.pdfBytes(ns, Math.max(1, scale)); Aero.busy(); await Aero.saveFile({ name: safeName(ED.doc.name) + '.pdf', data: b, filters: [{ name: 'PDF', extensions: ['pdf'] }] }); } finally { Aero.busy(); } return; }
+    if (fmt === 'pdf') { Aero.busy('Building PDF…'); try { const b = await IO.pdfBytes(ns, Math.max(1, scale)); Aero.busy(); await Aero.saveFile({ name: safeName(ED.doc.name) + '.pdf', data: b, filters: [{ name: 'PDF', extensions: ['pdf'] }] }); } finally { Aero.busy(); } return; }
     Aero.busy('Exporting…');
     try { const files = []; for (const n of ns) files.push(await fileFor(n, { scale, fmt })); Aero.busy(); await deliver(files, safeName(ED.doc.name) + ` ${fmt.toUpperCase()}.zip`); } finally { Aero.busy(); }
   };
 
+
+  /* ---------------- design system libraries (.lplib): share styles + components between files ---------------- */
+  IO.libraryData = () => {
+    const comps = Object.values(ED.scene.byId).filter(n => n.component && !ED.isClone(n));
+    const lib = { format: 'lproto-lib', version: 2, name: ED.doc.name || 'Library', uid: ED.doc.uid, modes: LP.modesOf(ED.doc), colorStyles: ED.doc.colorStyles, textStyles: ED.doc.textStyles, components: comps, images: {} };
+    lib.images = usedImages(Object.assign({}, lib, { images: ED.doc.images }));
+    return JSON.stringify(lib, (k, v) => k[0] === '_' ? undefined : v);
+  };
+  IO.exportLibrary = async () => {
+    const comps = Object.values(ED.scene.byId).filter(n => n.component && !ED.isClone(n));
+    if (!comps.length && !ED.doc.colorStyles.length && !ED.doc.textStyles.length) { Aero.alert('Export library', 'This document has no components or styles to publish.'); return; }
+    await Aero.saveFile({ name: safeName(ED.doc.name) + '.lplib', data: IO.libraryData(), filters: [{ name: 'Lumen Proto library', extensions: ['lplib'] }] });
+    Aero.toast(`Library exported: ${comps.length} components, ${ED.doc.colorStyles.length} colors, ${ED.doc.textStyles.length} text styles`);
+  };
+  IO.importLibraryFile = async () => {
+    const f = await Aero.openFile({ accept: '.lplib,.lproto', filters: [{ name: 'Lumen Proto library or file', extensions: ['lplib', 'lproto'] }] });
+    if (f[0]) IO.importLibrary(new TextDecoder().decode(f[0].data), f[0].name);
+  };
+  // merge a library (or another .lproto's components and styles) into the open document; same ids update in place
+  IO.importLibrary = (text, fname) => {
+    const raw = JSON.parse(text);
+    if (!raw || (raw.format !== 'lproto-lib' && raw.format !== 'lproto')) throw new Error('Not a Lumen Proto library');
+    let comps = raw.format === 'lproto-lib' ? raw.components : [];
+    if (raw.format === 'lproto') { const all = []; const walk = n => { if (!n || typeof n !== 'object') return; if (n.component) { all.push(n); return; } (Array.isArray(n.children) ? n.children : []).forEach(walk); }; (raw.children || []).forEach(walk); comps = all; }
+    const clean = IO.parseDoc(JSON.stringify({ format: 'lproto', name: raw.name, children: Array.isArray(comps) ? comps : [], colorStyles: raw.colorStyles, textStyles: raw.textStyles, images: raw.images, modes: raw.modes || (raw.colorStyles || []).some(s => s && s.dark) ? raw.modes : null }));
+    ED.doc.modes = LP.modesOf(ED.doc).slice(); clean.modes.forEach(m => { if (!ED.doc.modes.some(x => x.id === m.id)) ED.doc.modes.push(m); });
+    const libName = String(raw.name || Aero.baseName(fname || 'Library')).slice(0, 100);
+    let nc = 0, uc = 0, ns = 0, us = 0;
+    clean.colorStyles.forEach(s => { s.lib = libName; const e = ED.doc.colorStyles.find(x => x.id === s.id); if (e) { Object.assign(e, s); us++; } else { ED.doc.colorStyles.push(s); ns++; } });
+    clean.textStyles.forEach(s => { s.lib = libName; const e = ED.doc.textStyles.find(x => x.id === s.id); if (e) { Object.assign(e, s); us++; } else { ED.doc.textStyles.push(s); ns++; } });
+    Object.assign(ED.doc.images, clean.images);
+    // components: ids that clash with non-component layers get fresh ids (references remapped)
+    const remap = {};
+    const exists = id => ED.scene.byId[id];
+    clean.children.forEach(c => { LP.walk(c, n => { const e = exists(n.id); if (e && !(n === c && e.component)) { const nid = LP.newId(); remap[n.id] = nid; } }); });
+    clean.children.forEach(c => LP.walk(c, n => { if (remap[n.id] && !(n === c && exists(c.id)?.component)) n.id = remap[n.id]; if (n.componentId && remap[n.componentId]) n.componentId = remap[n.componentId]; (n.proto || []).forEach(p => { if (remap[p.target]) p.target = remap[p.target]; }); }));
+    const placed = [];
+    let y0 = ED.doc.children.length ? Math.max(...ED.doc.children.map(k => k.y + k.h)) + 200 : 0, x = ED.doc.children.length ? Math.min(...ED.doc.children.map(k => k.x)) : 0;
+    clean.children.forEach(c => {
+      c.component = Object.assign({}, c.component, { lib: libName });
+      const e = exists(c.id);
+      if (e && e.component) { const par = ED.parent(e), arr = ED.childArr(par); c.x = e.x; c.y = e.y; arr.splice(arr.indexOf(e), 1, c); uc++; }
+      else { c.x = x; c.y = y0; x += c.w + 48; ED.doc.children.push(c); placed.push(c); nc++; }
+    });
+    ED.commit('Import library ' + libName);
+    LP.imagesReady(ED.doc).then(() => ED.redraw());
+    window.PANELS?.renderAssets?.();
+    Aero.toast(`Library "${libName}": ${nc} new / ${uc} updated components, ${ns} new / ${us} updated styles`);
+    return { nc, uc, ns, us, placed };
+  };
+
+  /* ---------------- review comments from the HTML viewer ---------------- */
+  // merge a viewer's exported comments file: new comments (deduped by id), replies (deduped), resolved state
+  IO.importReviewComments = text => {
+    const raw = JSON.parse(text);
+    if (!raw || raw.format !== 'lproto-comments') throw new Error('Not a Lumen Proto comments file');
+    const list = ED.doc.comments = ED.doc.comments || [];
+    let added = 0, replies = 0, states = 0;
+    const rkey = r => r.author + '|' + r.ts + '|' + r.text;
+    IO.cleanComments(raw.added).forEach(c => {
+      const e = list.find(x => x.id === c.id);
+      if (!e) { list.push(c); added++; return; }
+      c.replies.forEach(r => { if (!e.replies.some(q => rkey(q) === rkey(r))) { e.replies.push(r); replies++; } });
+    });
+    if (raw.replies && typeof raw.replies === 'object' && !Array.isArray(raw.replies)) for (const id in raw.replies) {
+      const e = list.find(x => x.id === id); if (!e) continue;
+      IO.cleanComments([{ id, replies: raw.replies[id] }])[0].replies.forEach(r => { if (!e.replies.some(q => rkey(q) === rkey(r))) { e.replies.push(r); replies++; } });
+      e.replies.sort((a, b) => a.ts - b.ts);
+    }
+    if (raw.state && typeof raw.state === 'object' && !Array.isArray(raw.state)) for (const id in raw.state) { const e = list.find(x => x.id === id); if (e && e.resolved !== !!raw.state[id]) { e.resolved = !!raw.state[id]; states++; } }
+    ED.commit('Import review comments');
+    window.COMMENTS?.renderList?.();
+    Aero.toast(`Review comments: ${added} new, ${replies} replies, ${states} status changes`);
+    return { added, replies, states };
+  };
+  IO.importReviewFile = async () => { const f = await Aero.openFile({ accept: '.json', filters: [{ name: 'Comments (JSON)', extensions: ['json'] }] }); if (f[0]) try { IO.importReviewComments(new TextDecoder().decode(f[0].data)); } catch (e) { Aero.alert('Import comments', e.message); } };
+
   /* ---------------- standalone HTML prototype ---------------- */
   IO.buildHTML = async (startId) => {
     const get = async u => { const r = await fetch(u); if (!r.ok) throw new Error('Missing ' + u); return r; };
-    const srcs = await Promise.all(['js/icons.js', 'js/core.js', 'js/render.js', 'js/player.js'].map(async u => (await get(u)).text()));
+    const srcs = await Promise.all(['js/icons.js', 'js/core.js', 'js/render.js', 'js/player.js', 'js/review.js'].map(async u => (await get(u)).text()));
     const font = b64(await (await get('vendor/inter.woff2')).arrayBuffer());
     const data = IO.serialize().replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
     const title = xmlEsc(ED.doc.name || 'Prototype');
@@ -464,14 +556,17 @@ html,body{margin:0;height:100%;background:#1b1f26;overflow:hidden;font:13px "Int
 #bar b{font-weight:600;color:#fff}#bar .sp{flex:1}#bar span{opacity:.75}
 #bar button,#bar select{background:#262d37;color:#e6edf5;border:1px solid #3a4452;border-radius:6px;padding:4px 10px;font:inherit;cursor:pointer}
 #bar button:hover{background:#303946}
+#bar button.on{background:#7b3fe4;border-color:#9a6cf0}
+#bar label{display:flex;align-items:center;gap:4px;opacity:.85}
 </style></head><body>
 <div id="stage"></div>
-<div id="bar"><b>${title}</b><span id="where"></span><span class="sp"></span><select id="flows" title="Flow"></select><button id="restart" title="Restart (R)">⟲ Restart</button><span>Made with Lumen Proto</span></div>
+<div id="bar"><b>${title}</b><span id="where"></span><span class="sp"></span><select id="flows" title="Flow"></select><label title="Show resolved comments"><input type="checkbox" id="showres">resolved</label><button id="cmt" title="Add a comment: click this, then click on the screen (stored in this browser)">💬 Comment</button><button id="cexp" title="Save the comments you added as a file to send to the designer (File › Import review comments in Lumen Proto)">⇩ Comments</button><button id="restart" title="Restart (R)">⟲ Restart</button><span>Made with Lumen Proto</span></div>
 <script type="application/json" id="doc">${data}</script>
 <script>${safeJs(srcs[0])}</script>
 <script>${safeJs(srcs[1])}</script>
 <script>${safeJs(srcs[2])}</script>
 <script>${safeJs(srcs[3])}</script>
+<script>${safeJs(srcs[4])}</script>
 <script>
 (function(){
   var doc = JSON.parse(document.getElementById('doc').textContent);
@@ -479,8 +574,10 @@ html,body{margin:0;height:100%;background:#1b1f26;overflow:hidden;font:13px "Int
   var starts = LP.flowStarts(doc);
   if (starts.length < 2) flows.style.display = 'none';
   starts.forEach(function(f){ var o = document.createElement('option'); o.value = f.id; o.textContent = f.flowStart; flows.appendChild(o); });
-  var player;
-  function start(id){ if (player) player.destroy(); player = window.prototypePlayer = new LP.Player(document.getElementById('stage'), doc, { start: id, onNavigate: function(i){ var n = player.scene.get(i); where.textContent = n ? '· ' + n.name : ''; } }); var n = player.cur; where.textContent = n ? '· ' + n.name : ''; player.canvas.focus(); }
+  var player, review, cmt = document.getElementById('cmt'), showres = document.getElementById('showres');
+  function start(id){ if (player) { player.destroy(); document.querySelectorAll('.lpr-layer').forEach(function(e){ e.remove(); }); } player = window.prototypePlayer = new LP.Player(document.getElementById('stage'), doc, { start: id, onNavigate: function(i){ var n = player.scene.get(i); where.textContent = n ? '· ' + n.name : ''; } }); var n = player.cur; where.textContent = n ? '· ' + n.name : ''; review = window.prototypeReview = LPReview.attach(player, doc, document.getElementById('stage'), cmt); review.setShowResolved(showres.checked); player.canvas.focus(); }
+  showres.onchange = function(){ review && review.setShowResolved(showres.checked); };
+  document.getElementById('cexp').onclick = function(){ review && review.download(); };
   var first = ${JSON.stringify(startId || '')} || (starts[0] && starts[0].id) || null;
   if (first) flows.value = first;
   flows.onchange = function(){ start(flows.value); };

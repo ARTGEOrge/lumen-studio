@@ -7,6 +7,7 @@
   /* ---------- edit ---------- */
   LV.deleteSel = () => {
     if (LV.toolId === 'artboard') return LV.deleteArtboard();
+    if (LV.toolId === 'width' && LV.tool.deletePoint()) return;
     if (LV.toolId === 'direct' && LV.selSegs.size) {
       const segs = [...LV.selSegs], paths = new Set(segs.map(s => s.path));
       segs.forEach(s => s.remove());
@@ -14,10 +15,18 @@
       LV.setSel(LV.sel.filter(it => it.parent)); LV.commit('Delete Anchors'); return;
     }
     if (!LV.sel.length) return;
-    LV.sel.forEach(it => it.remove()); LV.setSel([]); LV.commit('Delete');
+    LV.threadUnlink(LV.sel); LV.sel.forEach(it => it.remove()); LV.setSel([]); LV.commit('Delete');
+  };
+  // turn live/compound objects (symbol instances, tracings, blends) into plain groups before path operations
+  LV.expandSpecial = it => {
+    const k = LV.kind(it);
+    if (k === 'symbol') { it.applyMatrix = true; delete it.data.kind; delete it.data.sym; return it; }
+    if (k === 'trace') return LV.trace.expand(it);
+    if (k === 'blend') return LV.blend.expandOne(it);
+    return it;
   };
   LV.copy = () => { if (!need()) return false; LV.clipboard = { items: sorted().map(it => it.exportJSON({ asString: false })), bounds: LV.selBounds() }; LV.toast(`Copied ${LV.sel.length} object${LV.sel.length > 1 ? 's' : ''}`); return true; };
-  LV.cut = () => { if (LV.copy()) { LV.sel.forEach(it => it.remove()); LV.setSel([]); LV.commit('Cut'); } };
+  LV.cut = () => { if (LV.copy()) { LV.threadUnlink(LV.sel); LV.sel.forEach(it => it.remove()); LV.setSel([]); LV.commit('Cut'); } };
   LV.paste = (mode = 'center') => {
     const cb = LV.clipboard; if (!cb) return LV.toast('Clipboard is empty');
     const L = LV.activeLayer(), items = cb.items.map(j => LV.reUid(P.Base.importJSON(j)));
@@ -102,6 +111,7 @@
 
   /* ---------- pathfinder ---------- */
   const toPathItem = it => {
+    if (['symbol', 'trace', 'blend'].includes(LV.kind(it))) it = LV.expandSpecial(it);
     if (LV.isPathItem(it)) return it;
     if (LV.isTextLike(it)) return LV.outlineText(it);
     if (it instanceof P.Group && !it.clipped) { // unite children into one compound shape
@@ -118,19 +128,7 @@
     const top = items[items.length - 1], bottom = items[0];
     let result;
     if (op === 'divide') {
-      let pieces = [{ path: bottom.clone({ insert: false }), src: bottom }];
-      for (const it of items.slice(1)) {
-        const next = []; let covered = null;
-        for (const pc of pieces) {
-          const inter = pc.path.intersect(it, { insert: false }), rest = pc.path.subtract(it, { insert: false });
-          if (!inter.isEmpty() && Math.abs(inter.area) > 1e-3) next.push({ path: inter, src: it });
-          if (!rest.isEmpty() && Math.abs(rest.area) > 1e-3) next.push({ path: rest, src: pc.src });
-          covered = covered ? covered.unite(pc.path, { insert: false }) : pc.path;
-        }
-        const own = covered ? it.subtract(covered, { insert: false }) : it.clone({ insert: false });
-        if (!own.isEmpty() && Math.abs(own.area) > 1e-3) next.push({ path: own, src: it });
-        pieces = next;
-      }
+      const pieces = LV.dividePieces(items, false);
       const g = new P.Group({ insert: false, name: 'Divided' });
       pieces.forEach(pc => { const parts = pc.path instanceof P.CompoundPath ? splitCompound(pc.path) : [pc.path]; parts.forEach(pp => { pp.style = pc.src.style; LV.reUid(pp); g.addChild(pp); }); });
       g.insertAbove(top); result = g;
@@ -144,6 +142,41 @@
     }
     items.forEach(i => i.remove());
     LV.reUid(result); LV.setSel([result]); LV.commit({ unite: 'Unite', subtract: 'Minus Front', intersect: 'Intersect', exclude: 'Exclude', divide: 'Divide' }[op]);
+  };
+  // non-destructive Divide: the regions formed by overlapping path items (bottom → top), each with the item that paints it
+  LV.dividePieces = (items, split = true) => {
+    const bottom = items[0]; let pieces = [{ path: bottom.clone({ insert: false }), src: bottom }];
+    for (const it of items.slice(1)) {
+      const next = []; let covered = null;
+      for (const pc of pieces) {
+        const inter = pc.path.intersect(it, { insert: false }), rest = pc.path.subtract(it, { insert: false });
+        if (!inter.isEmpty() && Math.abs(inter.area) > 1e-3) next.push({ path: inter, src: it });
+        if (!rest.isEmpty() && Math.abs(rest.area) > 1e-3) next.push({ path: rest, src: pc.src });
+        covered = covered ? covered.unite(pc.path, { insert: false }) : pc.path;
+      }
+      const own = covered ? it.subtract(covered, { insert: false }) : it.clone({ insert: false });
+      if (!own.isEmpty() && Math.abs(own.area) > 1e-3) next.push({ path: own, src: it });
+      pieces = next;
+    }
+    if (!split) return pieces;
+    return pieces.flatMap(pc => (pc.path instanceof P.CompoundPath ? splitCompound(pc.path) : [pc.path]).filter(p => Math.abs(p.area) > 0.5).map(p => ({ path: p, src: pc.src })));
+  };
+  // Shape Builder: merge (or with erase, delete) regions of the selected shapes; the rest stay as separate shapes
+  LV.shapeBuild = (items, picked, erase) => {
+    const pieces = LV.dividePieces(items), first = pc => picked.findIndex(p => pc.path.contains(p));
+    const sel = pieces.filter(pc => first(pc) >= 0).sort((x, y) => first(x) - first(y)); // style comes from where the drag started
+    if (!sel.length) return null;
+    const top = items[items.length - 1], made = [];
+    const styled = (p, src) => { p.style = src.style; p.opacity = src.opacity; p.blendMode = src.blendMode; if (src.data.fx) p.data.fx = src.data.fx; p.name = src.name || 'Path'; return LV.reUid(p); };
+    pieces.filter(pc => !sel.includes(pc)).forEach(pc => { const p = styled(pc.path, pc.src); p.insertAbove(top); made.push(p); });
+    let merged = null;
+    if (!erase) {
+      merged = sel[0].path; sel.slice(1).forEach(pc => { merged = merged.unite(pc.path, { insert: false }); });
+      if (merged instanceof P.CompoundPath) merged.reduce();
+      styled(merged, sel[0].src); merged.name = 'Shape'; merged.insertAbove(top); made.push(merged);
+    }
+    items.forEach(i => i.remove());
+    return { merged, made };
   };
   function splitCompound(cp) {
     const parts = cp.children.slice();
@@ -168,6 +201,7 @@
     const ps = pathSel().filter(p => p.hasStroke()); if (!ps.length) return LV.toast('Select a stroked path');
     const out = [];
     ps.forEach(p => {
+      if (LV.width.active(p)) { const x = LV.width.expand(p); if (x) { x.insertAbove(p); LV.reUid(x); out.push(x); p.remove(); return; } }
       const w = p.strokeWidth, al = p.data.strokeAlign, closed = p instanceof P.CompoundPath || p.closed;
       let o = PaperOffset.offsetStroke(p, w / 2, { join: p.strokeJoin, cap: p.strokeCap, limit: p.miterLimit, insert: false });
       if (al && al !== 'center' && closed) { o = PaperOffset.offsetStroke(p, w, { join: p.strokeJoin, cap: p.strokeCap, limit: p.miterLimit, insert: false }); o = al === 'inside' ? o.intersect(p, { insert: false }) : o.subtract(p, { insert: false }); }

@@ -285,7 +285,14 @@ const Tools = (() => {
     const start = { sx, sy, wx, wy };
     if (e.button === 1 || spaceDown || S.tool === 'hand') { S.drag = { type: 'pan', start, ox: S.view.ox, oy: S.view.oy }; ov().style.cursor = 'grabbing'; return; }
     if (S.tool === 'zoom') { View.zoomAt(S.view.z * (e.altKey ? 1 / 1.6 : 1.6), sx, sy); return; }
-    if (S.cell) UI.closeCellEditor(true);
+    // Shift-click extends a table cell selection (for merging / formatting several cells)
+    if (S.cell && e.shiftKey) {
+      const h = hitAt(wx, wy, true); let rc = null;
+      if (h && h.item.id === S.cell.id && h.item.type === 'table') { const [lx, ly] = toLocal(h.item, wx - h.pp.x, wy - h.pp.y); rc = Tables.hit(h.item, h.item.rowH.map((_, k) => k), h.item.rowH, lx, ly); }
+      else if (h && h.item.type === 'text') { const [lx, ly] = toLocal(h.item, wx - h.pp.x, wy - h.pp.y); const o = Objects.hitFrame(h.item, lx, ly); if (o && o.kind === 'table' && o.id === S.cell.id) rc = [o.r, o.c]; }
+      if (rc) { UI.closeCellEditor(true); S.cell = { ...S.cell, r2: rc[0], c2: rc[1] }; requestRender(); UI.refresh(true); return; }
+    }
+    if (S.cell) { UI.closeCellEditor(true); if (!e.shiftKey) S.cell = null; }
     // loaded text cursor (threading)
     if (S.loadedThread) {
       const h = hitAt(wx, wy, true);
@@ -297,6 +304,7 @@ const Tools = (() => {
       const h = hitAt(wx, wy, true);
       if (h && h.item.type === 'text' && (h.item.story === S.edit.sid || S.tool === 'type')) {
         const [lx, ly] = toLocal(h.item, wx - h.pp.x, wy - h.pp.y);
+        if (e.detail === 2 && objDbl(h, lx, ly)) return;
         if (h.item.story !== S.edit.sid) { T.enter(h.item, T.indexAt(h.item, lx, ly)); }
         const idx = T.indexAt(h.item, lx, ly);
         if (e.detail === 2) { T.selectWord(idx); S.drag = { type: 'textsel', start, word: true }; return; }
@@ -342,7 +350,7 @@ const Tools = (() => {
       const id = h.item.id;
       if (e.detail === 2 && S.tool === 'select') {
         if (h.item.type === 'group') { const c = deepHit(h.item, wx - h.pp.x, wy - h.pp.y, 3 / S.view.z); if (c) { S.sel = [c.id]; UI.setTool('direct'); requestRender(); UI.refresh(true); } return; }
-        if (h.item.type === 'text') { const [lx, ly] = toLocal(h.item, wx - h.pp.x, wy - h.pp.y); T.enter(h.item, T.indexAt(h.item, lx, ly)); return; }
+        if (h.item.type === 'text') { const [lx, ly] = toLocal(h.item, wx - h.pp.x, wy - h.pp.y); if (objDbl(h, lx, ly)) return; T.enter(h.item, T.indexAt(h.item, lx, ly)); return; }
         if (h.item.type === 'image' && h.item.img) { S.content = id; S.sel = [id]; requestRender(); UI.refresh(true); return; }
         if (h.item.type === 'table') { const [lx, ly] = toLocal(h.item, wx - h.pp.x, wy - h.pp.y); const rc = cellAt(h.item, lx, ly); if (rc) UI.openCellEditor(h.item, rc[0], rc[1]); return; }
       }
@@ -359,6 +367,14 @@ const Tools = (() => {
     const pg = pageAt(wx, wy); if (pg && pg.kind === 'doc' && pg.index !== S.curPage) { S.curPage = pg.index; UI.refresh(); }
     S.drag = { type: 'marquee', start, add: e.shiftKey ? [...S.sel] : [] };
     requestRender();
+  }
+  // double-click on an inline table cell, anchored graphic or footnote inside a text frame
+  function objDbl(h, lx, ly) {
+    const o = Objects.hitFrame(h.item, lx, ly); if (!o) return false;
+    if (o.kind === 'table') { UI.openCellEditor(o.t, o.r, o.c, o.id); return true; }
+    if (o.kind === 'graphic') { Objects.graphicDialog(null, { sid: o.sid, id: o.id }); return true; }
+    if (o.kind === 'note') { Objects.editFootnote({ sid: o.sid, id: o.id }); return true; }
+    return false;
   }
   function cellAt(it, lx, ly) {
     let y = 0, r = -1; for (let k = 0; k < it.rowH.length; k++) { if (ly >= y && ly < y + it.rowH[k]) { r = k; break; } y += it.rowH[k]; }
@@ -666,6 +682,12 @@ const Tools = (() => {
         if (H.single?.locked) { }
       }
     }
+    // table cell selection
+    if (S.cell) {
+      const cells = UI.cellRange();
+      ctx.fillStyle = 'rgba(60,130,235,.22)'; ctx.strokeStyle = 'rgba(31,111,214,.9)'; ctx.lineWidth = 1.5;
+      for (const [r, c] of cells) { const g = UI.cellGeom(S.cell.id, r, c); if (!g) continue; const p = [[g.x, g.y], [g.x + g.w, g.y], [g.x + g.w, g.y + g.h], [g.x, g.y + g.h]].map(([x, y]) => l2s(g.pp, g.it, x, y)); ctx.beginPath(); ctx.moveTo(...p[0]); p.slice(1).forEach(q => ctx.lineTo(...q)); ctx.closePath(); ctx.fill(); if (cells.length === 1) ctx.stroke(); }
+    }
     // image content (direct selection)
     const chd = contentHandles();
     if (chd) {
@@ -711,8 +733,8 @@ const Tools = (() => {
     const ctrl = e.ctrlKey || e.metaKey, sh = e.shiftKey, s = T.story(); if (!s) return;
     const done = () => { e.preventDefault(); e.stopPropagation(); caretOn = true; };
     switch (e.key) {
-      case 'ArrowLeft': { const [a, b] = T.range(); if (!sh && a !== b && !ctrl) T.setCaret(a); else T.setCaret(ctrl ? T.wordEdge(S.edit.f, -1) : S.edit.f - 1, sh); return done(); }
-      case 'ArrowRight': { const [a, b] = T.range(); if (!sh && a !== b && !ctrl) T.setCaret(b); else T.setCaret(ctrl ? T.wordEdge(S.edit.f, 1) : S.edit.f + 1, sh); return done(); }
+      case 'ArrowLeft': if (e.altKey) { UI.cmd.kern(ctrl ? -100 : -20); return done(); } { const [a, b] = T.range(); if (!sh && a !== b && !ctrl) T.setCaret(a); else T.setCaret(ctrl ? T.wordEdge(S.edit.f, -1) : S.edit.f - 1, sh); return done(); }
+      case 'ArrowRight': if (e.altKey) { UI.cmd.kern(ctrl ? 100 : 20); return done(); } { const [a, b] = T.range(); if (!sh && a !== b && !ctrl) T.setCaret(b); else T.setCaret(ctrl ? T.wordEdge(S.edit.f, 1) : S.edit.f + 1, sh); return done(); }
       case 'ArrowUp': T.vertical(-1, sh); return done();
       case 'ArrowDown': T.vertical(1, sh); return done();
       case 'Home': if (ctrl) T.setCaret(0, sh); else T.lineEdge(-1, sh); return done();

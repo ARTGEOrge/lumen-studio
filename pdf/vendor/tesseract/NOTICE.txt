@@ -1,0 +1,5 @@
+OCR engine vendored for Lumen PDF (all loaded locally; no network access):
+
+- tesseract.js 7.0.0 (tesseract.min.js, worker.min.js) - Apache License 2.0 - https://github.com/naptha/tesseract.js  (tesseract.js.LICENSE)
+- tesseract.js-core 7.0.0 (core/*.wasm.js: relaxed-SIMD and SIMD LSTM builds) - Apache License 2.0 - Tesseract OCR compiled to WebAssembly (core/LICENSE)
+- English trained data "4.0.0_best_int" (lang/eng.traineddata.gz) from tesseract-ocr/tessdata_best via @tesseract.js-data/eng 1.0.0 - Apache License 2.0

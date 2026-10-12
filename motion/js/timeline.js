@@ -3,7 +3,7 @@
 (function () {
   const LM = window.LM, el = Aero.el, esc = Aero.esc, W = LM.w, st = LM.st, $ = LM.$;
   const root = $('#timeline');
-  const LW = 548;
+  const LW = 618;
   const TL = LM.tl = { v0: 0, v1: 10, graph: false, graphMode: 'value', LW };
   root.style.setProperty('--lw', LW + 'px');
   root.innerHTML = `
@@ -13,7 +13,7 @@
       <span class="tl-sep"></span>
       <span class="tl-transport">
         <button data-a="home" title="First frame (Home)">⏮</button><button data-a="prev" title="Previous frame (Page Up)">◀|</button><button data-a="play" class="play" title="Play / Stop (Space)">▶</button><button data-a="next" title="Next frame (Page Down)">|▶</button><button data-a="end" title="Last frame (End)">⏭</button>
-        <button data-a="loop" title="Loop playback">⟲</button><button data-a="ram" title="RAM Preview: render the work area to memory, then play in real time (Numpad 0)">RAM ▶</button>
+        <button data-a="loop" title="Loop playback">⟲</button><button data-a="audio" class="aud" title="Play audio during preview">${W.icon.audio}</button><button data-a="ram" title="RAM Preview: render the work area to memory, then play in real time (Numpad 0)">RAM ▶</button>
       </span>
       <span class="tl-sep"></span>
       <button class="tl-tog" data-a="reveal" title="Reveal only animated properties (U)">U</button>
@@ -28,7 +28,7 @@
     </div>
     <div class="tl-main">
       <div class="tl-scroll">
-        <div class="tl-colhead"><div class="tl-left"><span class="ch-sw">◉ 👁 🔒</span><span class="ch-num">#</span><span class="ch-name">Layer Name</span><span class="ch-sws">MB fx</span><span class="ch-mode">Mode</span><span class="ch-matte">Track Matte</span><span class="ch-par">Parent</span></div><div class="tl-ruler"><canvas></canvas></div></div>
+        <div class="tl-colhead"><div class="tl-left"><span class="ch-sw" title="Video · Audio · Solo · Lock">👁 ♪ ◉ 🔒</span><span class="ch-num">#</span><span class="ch-name">Layer Name</span><span class="ch-sws" title="Motion blur · Effects · Frame blending · 3D layer">MB fx fb 3D</span><span class="ch-mode">Mode</span><span class="ch-matte">Track Matte</span><span class="ch-par">Parent</span></div><div class="tl-ruler"><canvas></canvas></div></div>
         <div class="tl-rows"></div>
         <div class="tl-empty">This composition has no layers yet. Use <b>Layer › New</b>, draw with the shape or pen tools, or drop images/video here.</div>
       </div>
@@ -67,6 +67,7 @@
     if (a === 'prev') LM.setTime(st.time - 1 / c.fps); if (a === 'next') LM.setTime(st.time + 1 / c.fps);
     if (a === 'play') LM.togglePlay(); if (a === 'ram') LM.ramPreview();
     if (a === 'loop') { st.loop = !st.loop; syncHead(); }
+    if (a === 'audio') { LM.audio.toggle(); syncHead(); }
     if (a === 'reveal') { st.reveal = !st.reveal; rebuild(); }
     if (a === 'mb') { c.mbOn = !c.mbOn; LM.commit(c.mbOn ? 'Enable Motion Blur' : 'Disable Motion Blur', false); syncHead(); }
     if (a === 'graph') TL.toggleGraph();
@@ -81,6 +82,7 @@
     head.querySelector('[data-a=play]').textContent = st.playing ? '■' : '▶';
     head.querySelector('[data-a=play]').classList.toggle('on', st.playing);
     head.querySelector('[data-a=loop]').classList.toggle('on', st.loop);
+    head.querySelector('[data-a=audio]').classList.toggle('on', LM.audio.enabled);
     head.querySelector('[data-a=ram]').classList.toggle('on', !!(st.rendering || st.ramPlaying));
     head.querySelector('[data-a=reveal]').classList.toggle('on', st.reveal);
     head.querySelector('[data-a=mb]').classList.toggle('on', !!c?.mbOn);
@@ -137,7 +139,7 @@
     if (st.playing) LM.stop();
     const mv = ev => {
       const t = TL.t(ev.clientX - r.left);
-      if (mode === 'scrub') LM.setTime(t);
+      if (mode === 'scrub') { LM.setTime(t); LM.audio.scrub(st.time); }
       else if (mode === 'wa0') c.workIn = Math.max(0, Math.min(LM.snap(t), c.workOut - 1 / c.fps));
       else if (mode === 'wa1') c.workOut = Math.min(c.duration, Math.max(LM.snap(t), c.workIn + 1 / c.fps));
       else { let d = LM.snap(t - t0); d = Math.max(-w0[0], Math.min(c.duration - w0[1], d)); c.workIn = w0[0] + d; c.workOut = w0[1] + d; }
@@ -195,9 +197,11 @@
     const r = el('div', 'tl-row layer' + (st.sel.includes(L.id) ? ' sel' : '') + (L.visible ? '' : ' hidden-layer'));
     r.dataset.id = L.id;
     const left = el('div', 'tl-left'), track = el('div', 'tl-track');
-    left.innerHTML = `<span class="sw eye${L.visible ? ' on' : ''}" title="Video (show/hide)">${L.visible ? W.icon.eye : ''}</span><span class="sw solo${L.solo ? ' on' : ''}" title="Solo">${L.solo ? W.icon.solo : ''}</span><span class="sw lock${L.locked ? ' on' : ''}" title="Lock">${L.locked ? W.icon.lock : ''}</span>` +
+    const hasAud = LM.layerHasAudio(L, c), canFb = L.type === 'precomp' || L.type === 'video', can3D = L.type !== 'audio' && L.type !== 'camera';
+    left.innerHTML = `<span class="sw eye${L.visible ? ' on' : ''}${L.type === 'audio' ? ' na' : ''}" title="Video (show/hide)">${L.visible ? W.icon.eye : ''}</span><span class="sw aud${hasAud ? (L.au.on ? ' on' : '') : ' na'}" title="Audio (mute/unmute)">${hasAud && L.au.on ? W.icon.audio : ''}</span><span class="sw solo${L.solo ? ' on' : ''}" title="Solo">${L.solo ? W.icon.solo : ''}</span><span class="sw lock${L.locked ? ' on' : ''}" title="Lock">${L.locked ? W.icon.lock : ''}</span>` +
       `<span class="twirl${L.expanded ? ' open' : ''}">${W.icon.twirl}</span><span class="lbl" style="background:${LM.LABELS[L.label] || '#888'}"></span><span class="num">${i + 1}</span><span class="ticon">${W.typeIcon(L.type)}</span><span class="name" title="${esc(L.name)} — double-click to rename">${esc(L.name)}</span>` +
-      `<span class="sw mbsw${L.mb ? ' on' : ''}" title="Motion Blur switch">${L.mb ? W.icon.mb : ''}</span><span class="sw fxsw${L.effects.length ? (L.effects.some(f => f.on) ? ' on' : '') : ' na'}" title="Effects on/off">${L.effects.length ? W.icon.fx : ''}</span>`;
+      `<span class="sw mbsw${L.mb ? ' on' : ''}" title="Motion Blur switch">${L.mb ? W.icon.mb : ''}</span><span class="sw fxsw${L.effects.length ? (L.effects.some(f => f.on) ? ' on' : '') : ' na'}" title="Effects on/off">${L.effects.length ? W.icon.fx : ''}</span>` +
+      `<span class="sw fbsw${canFb ? (L.fb ? ' on' : '') : ' na'}" title="Frame blending (mixes source frames when time is remapped)">${canFb && L.fb ? W.icon.fb : ''}</span><span class="sw d3sw${can3D ? (L.threeD ? ' on' : '') : ' na'}" title="3D layer">${can3D && L.threeD ? W.icon.cube : ''}</span>`;
     const mode = el('select', 'mode'); LM.BLENDS.forEach(([v, t]) => mode.add(new Option(t, v))); mode.value = L.blend; mode.title = 'Blending mode';
     mode.onchange = () => { L.blend = mode.value; LM.commit('Blending Mode'); };
     const matte = el('select', 'matte'); [['', 'None'], ['alpha', 'Alpha Matte'], ['alphaInv', 'Alpha Inverted'], ['luma', 'Luma Matte'], ['lumaInv', 'Luma Inverted']].forEach(([v, t]) => matte.add(new Option(t, v)));
@@ -206,9 +210,14 @@
     const pw = el('span', 'pw', W.icon.pick); pw.title = 'Pick whip: drag onto another layer to parent';
     const par = el('select', 'parent'); par.add(new Option('None', '')); c.layers.forEach((o, j) => { if (o !== L) par.add(new Option(`${j + 1}. ${o.name}`, o.id)); }); par.value = L.parent || ''; par.title = 'Parent layer';
     par.onchange = () => LM.setParent(L, par.value || null);
+    if (L.type === 'audio' || L.type === 'camera') { mode.disabled = true; matte.disabled = true; mode.title = matte.title = 'Not available for ' + L.type + ' layers'; }
+    if (L.type === 'audio') par.disabled = true;
     [mode, matte, par].forEach(s => { s.onpointerdown = e => e.stopPropagation(); s.onclick = e => e.stopPropagation(); });
     left.append(mode, matte, pw, par);
     left.querySelector('.eye').onclick = e => { e.stopPropagation(); L.visible = !L.visible; LM.commit(L.visible ? 'Show Layer' : 'Hide Layer'); };
+    left.querySelector('.aud').onclick = e => { e.stopPropagation(); if (!hasAud) return; L.au.on = !L.au.on; LM.commit(L.au.on ? 'Unmute Audio' : 'Mute Audio'); };
+    left.querySelector('.fbsw').onclick = e => { e.stopPropagation(); if (!canFb) return; L.fb = !L.fb; LM.commit(L.fb ? 'Frame Blending On' : 'Frame Blending Off'); };
+    left.querySelector('.d3sw').onclick = e => { e.stopPropagation(); if (!can3D) return; LM.set3D([L], !L.threeD); };
     left.querySelector('.solo').onclick = e => { e.stopPropagation(); L.solo = !L.solo; LM.commit('Solo'); };
     left.querySelector('.lock').onclick = e => { e.stopPropagation(); L.locked = !L.locked; LM.commit(L.locked ? 'Lock Layer' : 'Unlock Layer'); };
     left.querySelector('.mbsw').onclick = e => { e.stopPropagation(); L.mb = !L.mb; LM.commit('Motion Blur Switch'); if (L.mb && !c.mbOn) Aero.toast('Turn on “◎ MB” in the timeline header to see motion blur'); };
@@ -221,7 +230,12 @@
     const bar = el('div', 'bar'); bar.style.setProperty('--lc', LM.LABELS[L.label] || '#888');
     bar.innerHTML = '<span class="h l"></span><span class="h r"></span>';
     bar.dataset.id = L.id; track.appendChild(bar);
-    r._layout = () => { bar.style.left = TL.x(L.in) + 'px'; bar.style.width = Math.max(2, TL.x(L.out) - TL.x(L.in)) + 'px'; };
+    let wave = null;
+    if (hasAud && LM.media.get(L.asset)?.peaks) { wave = el('canvas', 'wave'); track.appendChild(wave); }
+    r._layout = () => {
+      bar.style.left = TL.x(L.in) + 'px'; bar.style.width = Math.max(2, TL.x(L.out) - TL.x(L.in)) + 'px';
+      if (wave) { const x0 = Math.max(0, TL.x(L.in) + 1), x1 = Math.min(trackW(), TL.x(L.out) - 1); if (x1 - x0 < 2) wave.style.display = 'none'; else { wave.style.display = ''; LM.audio.drawWave(wave, L, c, x0, x1, TL.t, 16); } }
+    };
     bar.onpointerdown = e => barDown(e, L, bar);
     r.append(left, track);
     return r;
@@ -251,10 +265,16 @@
     }
     if (n.kind === 'animator') { const A = n.ref; left.appendChild(miniBtns(L, [['✕', 'Delete animator', () => { L.text.animators = L.text.animators.filter(a => a !== A); LM.commit('Delete Animator'); }]])); }
     if (n.id === 'text') left.appendChild(miniBtns(L, [['Animate ▸', 'Add a text animator (per-character offset/opacity/position with a range selector)', () => LM.addAnimator(L)]]));
-    if (n.id === 'contents' && L.type === 'shape') void 0;
+    if (n.id === 'contents' && L.type === 'shape') left.appendChild(miniBtns(L, [['Add ▸', 'Add a shape group, repeater, merge paths or gradient', e => { const r = e.target.getBoundingClientRect(); LM.shapeAddMenu(L, r.left, r.bottom); }]]));
+    if (n.kind === 'sgroup') {
+      const g = n.ref; left.querySelector('.gname').ondblclick = e => { e.stopPropagation(); renameInline(e.target, g.name, v => { g.name = v; LM.commit('Rename Group'); }); };
+      const gon = el('input'); gon.type = 'checkbox'; gon.checked = g.on !== false; gon.title = 'Show/hide this group'; gon.onclick = e => e.stopPropagation(); gon.onchange = () => { g.on = gon.checked; LM.commit(g.on ? 'Show Group' : 'Hide Group'); }; left.querySelector('.twirl').after(gon);
+      left.appendChild(miniBtns(L, [['+Rep', g.rep.on ? 'Remove the repeater' : 'Add a repeater to this group', () => LM.toggleRepeater(L, g)], ['↑', 'Move group up', () => moveIn(L.shape.groups, g, -1, 'Reorder Groups')], ['↓', 'Move group down', () => moveIn(L.shape.groups, g, 1, 'Reorder Groups')], ['✕', 'Delete group', () => { L.shape.groups = L.shape.groups.filter(x => x !== g); LM.commit('Delete Group'); }]]));
+    }
+    if (n.kind === 'repeater') left.appendChild(miniBtns(L, [['✕', 'Remove repeater', () => LM.toggleRepeater(L, n.ref === L.shape ? null : n.ref)]]));
     r.append(left, track); return r;
   }
-  function miniBtns(L, defs) { const s = el('span', 'gbtns'); defs.forEach(([t, title, fn]) => { const b = el('button', 'mini', esc(t)); b.title = title; b.onclick = e => { e.stopPropagation(); fn(); }; b.onpointerdown = e => e.stopPropagation(); s.appendChild(b); }); return s; }
+  function miniBtns(L, defs) { const s = el('span', 'gbtns'); defs.forEach(([t, title, fn]) => { const b = el('button', 'mini', esc(t)); b.title = title; b.onclick = e => { e.stopPropagation(); fn(e); }; b.onpointerdown = e => e.stopPropagation(); s.appendChild(b); }); return s; }
   function moveIn(arr, item, d, label) { const i = arr.indexOf(item), j = i + d; if (j < 0 || j >= arr.length) return; arr.splice(i, 1); arr.splice(j, 0, item); LM.commit(label); }
   function settingRow(L, n, depth) {
     const r = el('div', 'tl-row prop setting'), left = el('div', 'tl-left'), track = el('div', 'tl-track');

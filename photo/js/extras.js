@@ -56,7 +56,8 @@ function serializeHistory(budgetPx = 160e6) {
 async function deserializeHistory(h, canv) {
   resetHistory();
   for (const o of h.nodes) {
-    const st = { ...o.state, layers: o.state.layers.map(l => ({ ...l, canvas: l.canvas ? canv[l.canvas] : null, mask: l.mask ? { enabled: l.mask.enabled, canvas: canv[l.mask.canvas] } : null })) };
+    const st = { ...o.state, layers: o.state.layers.map(l => ({ ...l, canvas: l.canvas ? canv[l.canvas] : null, mask: l.mask ? { enabled: l.mask.enabled, canvas: canv[l.mask.canvas] } : null,
+      style: sanitizeStyle(l.style), parent: Number.isFinite(+l.parent) ? +l.parent : 0, collapsed: !!l.collapsed, blend: validBlend(l.blend, l.type === 'group'), opacity: clamp(Number.isFinite(+l.opacity) ? +l.opacity : 1, 0, 1) })) };
     addNode(o.label, st, o.parent != null ? hist.nodes.get(o.parent) : null, o.id, o.time);
   }
   for (const o of h.nodes) { const n = hist.nodes.get(o.id); n.next = o.next != null ? hist.nodes.get(o.next) || n.next : n.next; }

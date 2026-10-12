@@ -163,6 +163,7 @@ const UI = (() => {
     its.forEach(it => { Tools.applyFit(it, mode); if (mode === 'fit' || mode === 'fill') it.fit = null; });
     commit({ fit: 'Fit Content Proportionally', fill: 'Fill Frame Proportionally', center: 'Center Content', frame: 'Fit Frame to Content' }[mode]);
   }
+  function toggleOverprint(k) { const its = []; for (const it of selItems()) M.walkItems([it], x => { if (x.type !== 'group') its.push(x); }); if (!its.length) return; const v = !its[0][k]; its.forEach(x => { x[k] = v; }); commit(k === 'opFill' ? 'Overprint Fill' : 'Overprint Stroke'); }
   function setWrap(v) { for (const it of selItems()) it.wrap = v; commit('Text Wrap'); }
 
   /* placeholder text */
@@ -261,6 +262,7 @@ const UI = (() => {
       { key: 'w', label: 'Width', type: 'number', value: f(cur.w), step: 0.01 }, { key: 'h', label: 'Height', type: 'number', value: f(cur.h), step: 0.01 },
       { key: 'orient', label: 'Orientation', type: 'select', value: cur.w > cur.h ? 'landscape' : 'portrait', options: [['portrait', 'Portrait'], ['landscape', 'Landscape']] },
       ...(isNew ? [{ key: 'pages', label: 'Number of pages', type: 'number', value: cur.pages, min: 1, max: 500 }] : []),
+      { key: 'intent', label: 'Intent', type: 'select', value: isNew || d.cmyk ? 'print' : 'web', options: [['print', 'Print (CMYK swatches, color pickers in CMYK)'], ['web', 'Digital (RGB)']] },
       { key: 'facing', label: 'Facing pages', type: 'checkbox', value: cur.facing },
       { key: 'mt', label: 'Margin top', type: 'number', value: f(cur.m.t), step: 0.1 }, { key: 'mb', label: 'Margin bottom', type: 'number', value: f(cur.m.b), step: 0.1 },
       { key: 'mi', label: 'Margin inside / left', type: 'number', value: f(cur.m.i), step: 0.1 }, { key: 'mo', label: 'Margin outside / right', type: 'number', value: f(cur.m.o), step: 0.1 },
@@ -278,8 +280,8 @@ const UI = (() => {
       onOK: v => {
         const P = key => Math.max(0, M.fromU(+v[key] || 0, v.units));
         const o = { units: v.units, w: Math.max(9, P('w')), h: Math.max(9, P('h')), facing: !!v.facing, margins: { t: P('mt'), b: P('mb'), i: P('mi'), o: P('mo') }, cols: Aero.clamp(v.cols | 0, 1, 20), gutter: P('gutter'), bleed: P('bleed'), slug: P('slug') };
-        if (isNew) { const nd = M.newDoc({ ...o, pages: Aero.clamp(v.pages | 0, 1, 500) }); IO.defaultStyles(nd); setDocument(nd, {}, 'Untitled'); return; }
-        const d = S.doc; const wasFacing = d.facing;
+        if (isNew) { const nd = M.newDoc({ ...o, cmyk: v.intent === 'print', pages: Aero.clamp(v.pages | 0, 1, 500) }); IO.defaultStyles(nd); setDocument(nd, {}, 'Untitled'); return; }
+        const d = S.doc; const wasFacing = d.facing; d.cmyk = v.intent === 'print';
         Object.assign(d, { units: o.units, w: o.w, h: o.h, facing: o.facing, margins: o.margins, cols: o.cols, gutter: o.gutter, bleed: o.bleed, slug: o.slug });
         if (wasFacing !== o.facing) for (const m of d.masters) { if (o.facing && m.pages.length === 1) m.pages.push(structuredClone({ ...m.pages[0], id: 'P' + M.uid(), items: Tools.cloneItems(m.pages[0].items) })); if (!o.facing && m.pages.length > 1) m.pages = [m.pages[1]]; }
         commit('Document Setup'); requestAnimationFrame(() => View.fitPage());
@@ -309,50 +311,94 @@ const UI = (() => {
       } });
   }
 
-  /* ---------- table commands ---------- */
+  /* ---------- table commands (standalone table frames and inline tables in stories) ---------- */
   function insertTable() {
-    Aero.dialog({ title: 'Insert Table', fields: [{ key: 'r', label: 'Body rows', type: 'number', value: 5, min: 1, max: 200 }, { key: 'c', label: 'Columns', type: 'number', value: 3, min: 1, max: 30 }, { key: 'h', label: 'Header rows', type: 'number', value: 1, min: 0, max: 5 }],
+    const inl = !!S.edit;
+    Aero.dialog({ title: inl ? 'Insert Inline Table' : 'Insert Table', instruction: inl ? 'The table is anchored in the text at the cursor and flows across columns and frames, repeating its header rows' : null,
+      fields: [{ key: 'r', label: 'Body rows', type: 'number', value: 5, min: 1, max: 200 }, { key: 'c', label: 'Columns', type: 'number', value: 3, min: 1, max: 30 }, { key: 'h', label: 'Header rows', type: 'number', value: 1, min: 0, max: 5 }],
       onOK: v => {
+        const hr = Aero.clamp(v.h | 0, 0, 5), rows = Aero.clamp(v.r | 0, 1, 200) + hr, cols = Aero.clamp(v.c | 0, 1, 30);
+        if (inl && S.edit) { Objects.insertInlineTable(cols, rows, hr); return; }
         const pp = curPlaced(); const m = S.eng.marginsFor(pp.kind, pp.kind === 'doc' ? pp.index : pp.side);
-        const rows = Aero.clamp(v.r | 0, 1, 200) + Aero.clamp(v.h | 0, 0, 5), cols = Aero.clamp(v.c | 0, 1, 30);
-        const t = M.newTable(m.l, m.t, cols, rows, pp.w - m.l - m.r, 20, Aero.clamp(v.h | 0, 0, 5));
+        const t = M.newTable(m.l, m.t, cols, rows, pp.w - m.l - m.r, 20, hr);
         for (let c = 0; c < cols; c++) if (t.header) t.cells[0][c].t = 'Heading ' + (c + 1);
         Tools.addItem(pp, t); S.sel = [t.id]; commit('Insert Table');
       } });
   }
-  function curTable() { if (S.cell) return { t: info(S.cell.id)?.item, r: S.cell.r, c: S.cell.c }; const t = selItems().find(i => i.type === 'table'); return t ? { t, r: t.rowH.length - 1, c: t.colW.length - 1 } : null; }
+  function tableById(id) { const inf = info(id); if (inf && inf.item.type === 'table') return inf.item; return S.eng.objIdx.get(id)?.obj || null; }
+  function curTable() {
+    if (S.cell) { const t = tableById(S.cell.id); return t ? { t, id: S.cell.id, r: S.cell.r, c: S.cell.c, r2: S.cell.r2 ?? S.cell.r, c2: S.cell.c2 ?? S.cell.c } : null; }
+    const t = selItems().find(i => i.type === 'table'); return t ? { t, id: t.id, r: t.rowH.length - 1, c: t.colW.length - 1, r2: t.rowH.length - 1, c2: t.colW.length - 1 } : null;
+  }
+  const TABLE_OPS = { rowAbove: 'Insert Row Above', rowBelow: 'Insert Row Below', colLeft: 'Insert Column Left', colRight: 'Insert Column Right', delRow: 'Delete Row', delCol: 'Delete Column',
+    merge: 'Merge Cells', unmerge: 'Unmerge Cells', splitV: 'Split Cell Vertically', splitH: 'Split Cell Horizontally' };
   function tableOp(op) {
     const ct = curTable(); if (!ct || !ct.t) { Aero.toast('Select a table (double-click a cell to pick a row/column)'); return; }
-    const { t, r, c } = ct;
-    if (op === 'rowAbove' || op === 'rowBelow') { const at = op === 'rowAbove' ? r : r + 1; t.rowH.splice(at, 0, t.rowH[r]); t.cells.splice(at, 0, t.colW.map(() => ({ t: '' }))); }
-    if (op === 'colLeft' || op === 'colRight') { const at = op === 'colLeft' ? c : c + 1; const w = t.colW[c] / 2; t.colW[c] = w; t.colW.splice(at, 0, w); t.cells.forEach(row => row.splice(at, 0, { t: '' })); }
-    if (op === 'delRow') { if (t.rowH.length < 2) return; t.rowH.splice(r, 1); t.cells.splice(r, 1); if (S.cell) S.cell.r = Math.min(r, t.rowH.length - 1); if (t.header > t.rowH.length) t.header = t.rowH.length; }
-    if (op === 'delCol') { if (t.colW.length < 2) return; const w = t.colW[c]; t.colW.splice(c, 1); t.colW[Math.max(0, c - 1)] += w; t.cells.forEach(row => row.splice(c, 1)); if (S.cell) S.cell.c = Math.min(c, t.colW.length - 1); }
-    t.h = t.rowH.reduce((a, b) => a + b, 0); t.w = t.colW.reduce((a, b) => a + b, 0);
-    commit('Table: ' + op);
+    closeCellEditor(true);
+    const { t, r, c } = ct; let ok = true;
+    if (op === 'rowAbove' || op === 'rowBelow') { const s = Tables.span(t, ...Tables.ownerOf(t, r, c)); const [r0] = Tables.ownerOf(t, r, c); ok = Tables.insertRow(t, op === 'rowAbove' ? r0 : r0 + s.rs, r); }
+    if (op === 'colLeft' || op === 'colRight') ok = Tables.insertCol(t, op === 'colLeft' ? c : c + 1, c);
+    if (op === 'delRow') { ok = Tables.deleteRow(t, r); if (ok && S.cell) S.cell.r = S.cell.r2 = Math.min(r, t.rowH.length - 1); }
+    if (op === 'delCol') { ok = Tables.deleteCol(t, c); if (ok && S.cell) S.cell.c = S.cell.c2 = Math.min(c, t.colW.length - 1); }
+    if (op === 'merge') { if (ct.r === ct.r2 && ct.c === ct.c2) { Aero.toast('Shift-click another cell to select a range of cells to merge'); return; } const [r0, c0] = [Math.min(ct.r, ct.r2), Math.min(ct.c, ct.c2)]; ok = Tables.merge(t, ct.r, ct.c, ct.r2, ct.c2); if (ok && S.cell) { const [er0, ec0] = Tables.ownerOf(t, r0, c0); S.cell = { id: ct.id, r: er0, c: ec0 }; } }
+    if (op === 'unmerge') ok = Tables.unmerge(t, r, c);
+    if (op === 'splitV' || op === 'splitH') ok = Tables.splitCell(t, r, c, op === 'splitV');
+    if (!ok) { Aero.toast('Nothing to do'); return; }
+    if (t.type === 'table') { t.h = t.rowH.reduce((a, b) => a + b, 0); t.w = t.colW.reduce((a, b) => a + b, 0); }
+    commit('Table: ' + (TABLE_OPS[op] || op));
+  }
+  // geometry of a cell (local coords of the table frame, or of the text frame holding an inline table)
+  function cellGeom(id, r, c) {
+    const inf = info(id);
+    if (inf && inf.item.type === 'table') {
+      const t = inf.item, pp = placedOf(inf.page), cr = Tables.cellRect(t, t.rowH.map((_, k) => k), t.rowH, r, c);
+      return cr && pp ? { pp, it: t, x: cr.x, y: cr.y, w: cr.w, h: cr.h } : null;
+    }
+    const o = S.eng.objIdx.get(id); if (!o) return null;
+    const s = S.doc.stories[o.sid]; if (!s) return null;
+    for (const fid of s.frames) {
+      const fi = info(fid); if (!fi) continue; const pp = placedOf(fi.page); if (!pp) continue;
+      const L = S.eng.frameLayout(fi.item, labelFor(pp)); if (!L) continue;
+      for (const ln of L.lines) if (ln.block && ln.block.id === id) { const cr = Tables.cellRect(o.obj, ln.block.rows, ln.block.rh, r, c); if (cr) return { pp, it: fi.item, x: ln.block.x + cr.x, y: ln.block.y + cr.y, w: cr.w, h: cr.h }; }
+    }
+    return null;
+  }
+  // owner cells in the current cell selection range
+  function cellRange() {
+    const c = S.cell; if (!c) return []; const t = tableById(c.id); if (!t) return [];
+    const [r0, c0, r1, c1] = Tables.expand(t, c.r, c.c, c.r2 ?? c.r, c.c2 ?? c.c), out = [];
+    for (let r = r0; r <= r1; r++) for (let x = c0; x <= c1; x++) if (!t.cells[r][x].m) out.push([r, x]);
+    return out;
   }
   let cellEd = null;
-  function openCellEditor(t, r, c) {
+  function openCellEditor(t, r, c, id) {
     closeCellEditor(true);
-    S.cell = { id: t.id, r, c }; S.sel = [t.id];
-    const inf = info(t.id), pp = placedOf(inf.page);
-    let x = 0; for (let k = 0; k < c; k++) x += t.colW[k]; let y = 0; for (let k = 0; k < r; k++) y += t.rowH[k];
-    const [sx, sy] = Tools.l2s(pp, t, x, y), z = S.view.z;
+    id = id || t.id;
+    [r, c] = Tables.ownerOf(t, r, c);
+    const g = cellGeom(id, r, c); if (!g) { Aero.toast('That cell is not visible (overset)'); return; }
+    if (S.edit) T().exit();
+    S.cell = { id, r, c }; S.sel = [g.it.id];
+    const [sx, sy] = Tools.l2s(g.pp, g.it, g.x, g.y), z = S.view.z;
     const ta = el('textarea', 'celled'); ta.value = t.cells[r][c].t || '';
-    Object.assign(ta.style, { left: sx + 'px', top: sy + 'px', width: Math.max(60, t.colW[c] * z) + 'px', height: Math.max(22, t.rowH[r] * z) + 'px', fontSize: Math.max(10, t.tsize * z) + 'px' });
+    Object.assign(ta.style, { left: sx + 'px', top: sy + 'px', width: Math.max(60, g.w * z) + 'px', height: Math.max(22, g.h * z) + 'px', fontSize: Math.max(10, t.tsize * z) + 'px' });
     $('#stagewrap').appendChild(ta); ta.focus(); ta.select();
     ta.addEventListener('keydown', e => {
       if (e.key === 'Escape') { e.preventDefault(); closeCellEditor(false); }
       else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); closeCellEditor(true); }
-      else if (e.key === 'Tab') { e.preventDefault(); const n = t.colW.length; let k = r * n + c + (e.shiftKey ? -1 : 1); k = Aero.clamp(k, 0, n * t.rowH.length - 1); closeCellEditor(true); openCellEditor(info(t.id).item, Math.floor(k / n), k % n); }
+      else if (e.key === 'Tab') {
+        e.preventDefault(); const T0 = tableById(id); const n = T0.colW.length, tot = n * T0.rowH.length;
+        let k = r * n + c; const d = e.shiftKey ? -1 : 1;
+        do { k += d; } while (k > 0 && k < tot - 1 && T0.cells[Math.floor(k / n)][k % n].m);
+        k = Aero.clamp(k, 0, tot - 1); closeCellEditor(true); const T1 = tableById(id); if (T1) openCellEditor(T1, Math.floor(k / n), k % n, id);
+      }
       e.stopPropagation();
     });
-    cellEd = { ta, id: t.id, r, c };
+    cellEd = { ta, id, r, c };
     requestRender(); refresh(true);
   }
   function closeCellEditor(save) {
     if (!cellEd) return; const { ta, id, r, c } = cellEd; cellEd = null;
-    const t = info(id)?.item;
+    const t = tableById(id);
     if (save && t && t.cells[r] && t.cells[r][c] && t.cells[r][c].t !== ta.value) { t.cells[r][c].t = ta.value; ta.remove(); commit('Edit Cell'); return; }
     ta.remove(); requestRender();
   }
@@ -462,25 +508,41 @@ const UI = (() => {
       if (S.edit) { if (!document.execCommand('paste')) { try { const t = await navigator.clipboard.readText(); if (t) { T().insert(t); commit('Paste'); } } catch (e) { Aero.toast('Use Ctrl+V to paste text'); } } return; }
       pasteItems(false);
     },
+    // manual kerning at the caret (1/1000 em) or tracking for a selection (Alt+Left/Right)
+    kern(d) {
+      if (!S.edit) return; const s = S.doc.stories[S.edit.sid]; const [a, b] = T().range();
+      if (a !== b) { const c = charState(); applyChar({ track: Math.round((c?.track || 0) + d) }, 'Tracking'); return; }
+      if (a < 1 || s.text[a - 1] === '\n') return;
+      const at = s.attrs[s.ca[a - 1]] || {}; const v = Math.round((at.kadj || 0) + d);
+      const o = { ...at }; if (v) o.kadj = v; else delete o.kadj; s.ca[a - 1] = M.attrIdx(s, o); commit('Kerning');
+    },
     duplicate() { const infs = topLevelSel(); if (!infs.length) return; const byPage = new Map(); infs.forEach(i => { const a = byPage.get(i.page) || []; a.push(i.item); byPage.set(i.page, a); }); const ns = []; for (const [p, items] of byPage) { const cl = Tools.cloneItems(items, 12, 12); p.items.push(...cl); ns.push(...cl.map(c => c.id)); } S.sel = ns; commit('Duplicate'); },
   };
   function menus() {
     const sel = () => S.sel.length > 0, ed = () => !!S.edit;
+    const cs = () => charState();
+    const clipInline = () => !!(S.edit && S.clip && S.clip.items.length === 1 && ['image', 'rect', 'ellipse'].includes(S.clip.items[0].type));
     return {
       File: [['New…', 'Ctrl+N', () => docDialog(true)], ['Open…', 'Ctrl+O', () => IO.open()], ['Open Sample', '', () => IO.openSample()], '-',
         ['Save', 'Ctrl+S', () => IO.save(false)], ['Save As…', 'Ctrl+Shift+S', () => IO.save(true)], '-',
         ['Place…', 'Ctrl+D', () => IO.place()], '-',
-        ['Export PDF…', 'Ctrl+E', () => IO.exportPdfDialog()], ['Export Pages as PNG…', '', () => IO.exportImagesDialog('png')], ['Export Pages as JPEG…', '', () => IO.exportImagesDialog('jpeg')], '-',
-        ['Print…', 'Ctrl+P', () => IO.print()], '-', ['Document Setup…', 'Ctrl+Alt+P', () => docDialog(false)]],
+        ['Export PDF…', 'Ctrl+E', () => IO.exportPdfDialog()], ['Export EPUB (Reflowable)…', '', () => LongDoc.epubDialog()], ['Export Pages as PNG…', '', () => IO.exportImagesDialog('png')], ['Export Pages as JPEG…', '', () => IO.exportImagesDialog('jpeg')], '-',
+        '#Data Merge', ['Data Merge Source…', '', () => Merge.sourceDialog()], ['Create Merged Document…', '', () => Merge.mergeDialog(false)], ['Export Merged PDF…', '', () => Merge.mergeDialog(true)], '-',
+        ['Preflight…', 'Ctrl+Alt+Shift+F', () => Preflight.dialog()], ['Print…', 'Ctrl+P', () => IO.print()], '-', ['Document Setup…', 'Ctrl+Alt+P', () => docDialog(false)]],
       Edit: [['Undo', 'Ctrl+Z', cmd.undo], ['Redo', 'Ctrl+Y/Ctrl+Shift+Z', cmd.redo], '-', ['Cut', 'Ctrl+X', cmd.cut], ['Copy', 'Ctrl+C', cmd.copy], ['Paste', 'Ctrl+V', cmd.paste], ['Paste in Place', 'Ctrl+Alt+Shift+V', () => pasteItems(true)],
+        { label: 'Paste as Inline Graphic', key: '', fn: () => { if (!Objects.pasteInline()) Aero.toast('Copy an image or shape, then place the text cursor'); }, disabled: () => !clipInline() },
         ['Duplicate', 'Ctrl+Alt+Shift+D', cmd.duplicate], { label: 'Delete', key: 'Delete/Backspace', fn: deleteSel, disabled: () => !sel() || ed() }, '-',
         ['Select All', 'Ctrl+A', cmd.selectAll], ['Deselect', 'Escape', cmd.deselect]],
       Layout: [['Add Page', 'Ctrl+Shift+P', () => addPage()], ['Insert Pages…', '', insertPagesDialog], ['Duplicate Page', '', () => addPage(S.curPage, true)], ['Delete Page', '', () => deletePage()], '-',
         ['First Page', 'Ctrl+Shift+PageUp', () => View.goPage(0)], ['Previous Page', 'Shift+PageUp', () => View.goPage(S.curPage - 1)], ['Next Page', 'Shift+PageDown', () => View.goPage(S.curPage + 1)], ['Last Page', 'Ctrl+Shift+PageDown', () => View.goPage(S.doc.pages.length - 1)], '-',
         '#Masters', ['New Master', '', newMaster], ['Edit Master of Current Page', '', () => { const m = S.doc.pages[S.curPage]?.master; if (m) editMaster(m); else Aero.toast('The current page has no master'); }], ['Back to Document Pages', '', () => View.goPage(S.curPage)], { label: 'Delete Master Being Edited', fn: () => deleteMaster(S.mode.id), disabled: () => S.mode.kind !== 'master' }, ['Override All Master Page Items', 'Ctrl+Alt+Shift+L', overrideMaster], '-',
+        '#Long Documents', ['Numbering & Section Options…', '', () => LongDoc.sectionDialog()], ['Table of Contents…', '', () => LongDoc.tocDialog()], { label: 'Update Table of Contents', fn: () => LongDoc.updateToc(), disabled: () => !S.doc.toc || !S.doc.stories[S.doc.toc.sid] }, '-',
         ['Margins and Columns…', '', marginsDialog], ['Create Guides…', '', createGuidesDialog], ['Baseline Grid…', '', gridDialog], ['Clear Guides on Page', '', () => { curPlaced().page.guides = []; commit('Clear Guides'); }]],
       Type: [['Font Size Up', 'Ctrl+Shift+>', () => cmd.bumpSize(1)], ['Font Size Down', 'Ctrl+Shift+<', () => cmd.bumpSize(-1)], ['Bold', 'Ctrl+Shift+B', () => cmd.toggleChar('bold')], ['Italic', 'Ctrl+Shift+I', () => cmd.toggleChar('italic')], ['Underline', 'Ctrl+Shift+U', () => cmd.toggleChar('under')], ['All Caps', 'Ctrl+Shift+K', () => cmd.toggleChar('allcaps')], ['Small Caps', 'Ctrl+Shift+H', () => cmd.toggleChar('smallcaps')], '-',
-        ['Insert Page Number', 'Ctrl+Alt+Shift+N', () => insertSpecial('\uE000', 'Insert Page Number')], ['Insert Em Dash', '', () => insertSpecial('—', 'Insert Em Dash')], ['Insert Forced Line Break', '', () => insertSpecial('\u2028', 'Forced Line Break')], ['Fill with Placeholder Text', '', fillPlaceholder], '-',
+        { label: 'Kerning: Metrics', fn: () => applyChar({ kern: cs()?.kern === false }, 'Kerning'), checked: () => cs()?.kern !== false }, { label: 'Ligatures', fn: () => applyChar({ liga: cs()?.liga === false }, 'Ligatures'), checked: () => cs()?.liga !== false },
+        { label: 'Paragraph Composer (Knuth–Plass)', fn: () => applyPara({ composer: cs()?.pe.composer === 'paragraph' ? 'single' : 'paragraph' }, 'Composer'), checked: () => cs()?.pe.composer === 'paragraph' }, '-',
+        ['Tabs…', 'Ctrl+Shift+T', () => Typo.open()], ['Bullets and Numbering…', '', () => Typo.bulletsDialog()], { label: 'Bulleted List', fn: () => Typo.toggleList('bullet'), checked: () => cs()?.pe.list === 'bullet' }, { label: 'Numbered List', fn: () => Typo.toggleList('number'), checked: () => cs()?.pe.list === 'number' }, '-',
+        ['Insert Page Number', 'Ctrl+Alt+Shift+N', () => insertSpecial('\uE000', 'Insert Page Number')], ['Insert Em Dash', '', () => insertSpecial('—', 'Insert Em Dash')], ['Insert Forced Line Break', '', () => insertSpecial('\u2028', 'Forced Line Break')], ['Insert Footnote…', 'Ctrl+Alt+Shift+O', () => Objects.insertFootnote()], ['Edit Footnote…', '', () => Objects.editFootnote()], ['Document Footnote Options…', '', () => Objects.footnoteOptions()], ['Insert Graphic in Text…', '', () => Objects.insertGraphic()], ['Insert Merge Field…', '', () => Merge.insertField()], ['Fill with Placeholder Text', '', fillPlaceholder], '-',
         ['Text Frame Options…', 'Ctrl+B', textFrameOptions], { label: 'Show Hidden Characters', key: 'Ctrl+Alt+I', fn: () => toggleOpt('hidden'), checked: () => S.opt.hidden }, '-',
         ['New Paragraph Style…', '', () => paraStyleDialog(null, true, styleFromSelection())], ['New Character Style…', '', () => charStyleDialog(null, true)]],
       Object: [['Bring to Front', 'Ctrl+Shift+]', () => arrange('front')], ['Bring Forward', 'Ctrl+]', () => arrange('forward')], ['Send Backward', 'Ctrl+[', () => arrange('backward')], ['Send to Back', 'Ctrl+Shift+[', () => arrange('back')], '-',
@@ -488,14 +550,17 @@ const UI = (() => {
         '#Align', ['Align Left', '', () => align('left')], ['Align Horizontal Centers', '', () => align('hcenter')], ['Align Right', '', () => align('right')], ['Align Top', '', () => align('top')], ['Align Vertical Centers', '', () => align('vcenter')], ['Align Bottom', '', () => align('bottom')],
         ['Distribute Horizontal Centers', '', () => distribute('h')], ['Distribute Vertical Centers', '', () => distribute('v')], '-',
         '#Fitting', ['Fit Content Proportionally', 'Ctrl+Alt+Shift+E', () => fitImage('fit')], ['Fill Frame Proportionally', 'Ctrl+Alt+Shift+C', () => fitImage('fill')], ['Center Content', 'Ctrl+Shift+E', () => fitImage('center')], ['Fit Frame to Content', 'Ctrl+Alt+C', () => fitImage('frame')], '-',
-        ['Text Wrap: Bounding Box', '', () => setWrap('box')], ['Text Wrap: None', '', () => setWrap('none')], '-', ['Rotate 90° CW', '', () => rotateSel(90)], ['Rotate 90° CCW', '', () => rotateSel(-90)]],
-      Table: [['Insert Table…', 'Ctrl+Alt+Shift+T', insertTable], '-', ['Insert Row Above', '', () => tableOp('rowAbove')], ['Insert Row Below', '', () => tableOp('rowBelow')], ['Insert Column Left', '', () => tableOp('colLeft')], ['Insert Column Right', '', () => tableOp('colRight')], '-', ['Delete Row', '', () => tableOp('delRow')], ['Delete Column', '', () => tableOp('delCol')]],
+        '#Overprint', { label: 'Overprint Fill', fn: () => toggleOverprint('opFill'), checked: () => !!selItems()[0]?.opFill, disabled: () => !sel() }, { label: 'Overprint Stroke', fn: () => toggleOverprint('opStroke'), checked: () => !!selItems()[0]?.opStroke, disabled: () => !sel() },
+        ['Merge Image Field…', '', () => Merge.imageFieldDialog()], '-',
+        '#Text Wrap', ['Text Wrap: Bounding Box', '', () => setWrap('box')], ['Text Wrap: Object Shape', '', () => setWrap('shape')], ['Text Wrap: Contour (image alpha / edges)', '', () => setWrap('contour')], ['Text Wrap: Jump Object', '', () => setWrap('jump')], ['Text Wrap: None', '', () => setWrap('none')], '-', ['Rotate 90° CW', '', () => rotateSel(90)], ['Rotate 90° CCW', '', () => rotateSel(-90)]],
+      Table: [['Insert Table…', 'Ctrl+Alt+Shift+T', insertTable], '-', ['Insert Row Above', '', () => tableOp('rowAbove')], ['Insert Row Below', '', () => tableOp('rowBelow')], ['Insert Column Left', '', () => tableOp('colLeft')], ['Insert Column Right', '', () => tableOp('colRight')], '-',
+        ['Merge Cells', '', () => tableOp('merge')], ['Unmerge Cells', '', () => tableOp('unmerge')], ['Split Cell Horizontally', '', () => tableOp('splitH')], ['Split Cell Vertically', '', () => tableOp('splitV')], '-', ['Delete Row', '', () => tableOp('delRow')], ['Delete Column', '', () => tableOp('delCol')]],
       View: [['Zoom In', 'Ctrl+=', () => View.zoomBy(1.25)], ['Zoom Out', 'Ctrl+-', () => View.zoomBy(0.8)], ['Fit Page in Window', 'Ctrl+0', () => View.fitPage()], ['Fit Spread in Window', 'Ctrl+Alt+0', () => View.fitSpread()], ['Actual Size', 'Ctrl+1', () => View.actual()], '-',
-        { label: 'Preview Mode', key: 'W', fn: () => toggleOpt('preview'), checked: () => S.opt.preview }, '-',
+        { label: 'Preview Mode', key: 'W', fn: () => toggleOpt('preview'), checked: () => S.opt.preview }, { label: 'Separations Preview', key: 'Shift+F6', fn: () => Swatches.toggleSeps(), checked: () => !!S.opt.seps }, { label: 'Overprint Preview', key: 'Ctrl+Alt+Shift+Y', fn: () => toggleOpt('opPreview'), checked: () => !!S.opt.opPreview }, '-',
         { label: 'Rulers', key: 'Ctrl+R', fn: () => toggleOpt('rulers'), checked: () => S.opt.rulers }, { label: 'Guides', key: 'Ctrl+;', fn: () => toggleOpt('guides'), checked: () => S.opt.guides }, { label: 'Lock Guides', key: 'Ctrl+Alt+;', fn: () => toggleOpt('lockGuides'), checked: () => S.opt.lockGuides },
         { label: 'Baseline Grid', key: "Ctrl+Alt+'", fn: () => toggleOpt('baseline'), checked: () => S.opt.baseline }, { label: 'Frame Edges', key: 'Ctrl+H', fn: () => toggleOpt('frames'), checked: () => S.opt.frames }, { label: 'Text Threads', key: 'Ctrl+Alt+Y', fn: () => toggleOpt('threads'), checked: () => S.opt.threads }, '-',
         { label: 'Snap to Guides', key: 'Ctrl+Shift+;', fn: () => toggleOpt('snap'), checked: () => S.opt.snap }, { label: 'Smart Guides', key: 'Ctrl+U', fn: () => toggleOpt('smart'), checked: () => S.opt.smart }],
-      Help: [['Keyboard Shortcuts', 'F1', shortcutsDialog], ['About Lumen Layout', '', () => Aero.alert('About Lumen Layout', 'Lumen Layout 1.0 — page layout and desktop publishing for the Lumen Studio suite. Threaded text, master pages, paragraph & character styles, tables and print-ready vector PDF export. Bundled typefaces: Source Serif 4, Playfair Display, Lora, Montserrat and Oswald (SIL Open Font License).')]],
+      Help: [['Keyboard Shortcuts', 'F1', shortcutsDialog], ['About Lumen Layout', '', () => Aero.alert('About Lumen Layout', 'Lumen Layout 1.1 — page layout and desktop publishing for the Lumen Studio suite. Threaded text, master pages, paragraph & character styles with OpenType kerning, ligatures and features, tab stops, lists and a Knuth–Plass paragraph composer; process CMYK and spot colors with separations; inline tables, anchored graphics, footnotes, sections and tables of contents; print-ready PDF and reflowable EPUB export. Bundled typefaces: Source Serif 4, Playfair Display, Lora, Montserrat and Oswald (SIL Open Font License).')]],
     };
   }
   function rotateSel(deg) { const b = Tools.selBox(); if (!b) return; for (const i of S.sel.map(info)) { const pp = placedOf(i.page); Tools.rotateAbout(i.item, structuredClone(i.item), deg, b.x + b.w / 2 - pp.x, b.y + b.h / 2 - pp.y); } commit('Rotate'); }
@@ -509,7 +574,10 @@ const UI = (() => {
     const rows = [['V / A', 'Selection / Direct Selection'], ['T', 'Type tool (drag to create a text frame)'], ['F / M / L / \\', 'Image frame / Rectangle / Ellipse / Line'], ['H, hold Space', 'Hand (pan)'], ['Z', 'Zoom (Alt-click zooms out)'], ['W', 'Preview mode'],
       ['Double-click', 'Edit text • adjust image content • edit table cell • enter group'], ['Out-port ▸ click', 'Load text to thread into another frame'], ['Shift-drag', 'Constrain proportions / angle'], ['Alt-drag', 'Duplicate while moving'], ['Arrows / Shift+Arrows', 'Nudge 1 pt / 10 pt'],
       ['Ctrl+Shift+B / I / U', 'Bold / Italic / Underline'], ['Ctrl+Shift+. / ,', 'Increase / decrease font size'], ['Ctrl+Alt+Shift+N', 'Insert automatic page number'], ['Ctrl+B', 'Text frame options'], ['Ctrl+D', 'Place image or text'], ['Ctrl+E', 'Export PDF'], ['Ctrl+G / Ctrl+Shift+G', 'Group / Ungroup'],
-      ['Ctrl+0 / Ctrl+1', 'Fit page / Actual size'], ['Ctrl+wheel', 'Zoom at pointer'], ['Drag from ruler', 'Create guide (drag back onto ruler to delete)']];
+      ['Ctrl+0 / Ctrl+1', 'Fit page / Actual size'], ['Ctrl+wheel', 'Zoom at pointer'], ['Drag from ruler', 'Create guide (drag back onto ruler to delete)'],
+      ['Ctrl+Shift+T', 'Tabs panel (click the ruler to add a stop, drag off to remove)'], ['Alt+Left / Alt+Right', 'Kern at the cursor or track the selection (Ctrl = ×5)'], ['Ctrl+Alt+Shift+O', 'Insert footnote'],
+      ['Ctrl+Alt+Shift+T', 'Insert table (inline when the text cursor is active)'], ['Shift-click a cell', 'Extend the table cell selection (then Table ▸ Merge Cells)'], ['Double-click in text', 'Edit an inline table cell, anchored graphic or footnote'],
+      ['Shift+F6', 'Separations preview'], ['Ctrl+Alt+Shift+Y', 'Overprint preview'], ['Ctrl+Alt+Shift+F', 'Preflight report (or click the status bar)']];
     Aero.dialog({ title: 'Keyboard Shortcuts', noCancel: true, width: 560, html: `<table class="kbd">${rows.map(r => `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td></tr>`).join('')}</table>` });
   }
 
@@ -530,16 +598,17 @@ const UI = (() => {
       add(`<label title="Font size (pt)"><b class="ic">T</b><input id="c-size" type="text" list="sizes" style="width:44px"></label><label title="Leading (pt), blank = auto"><b class="ic">↕</b><input id="c-lead" type="text" style="width:40px" placeholder="auto"></label><label title="Tracking (1/1000 em)"><b class="ic">VA</b><input id="c-track" type="number" step="10" style="width:52px"></label><input id="c-color" type="color" title="Text color">`);
       add(`<button class="aero-btn small" id="c-b" title="Bold (Ctrl+Shift+B)"><b>B</b></button><button class="aero-btn small" id="c-i" title="Italic (Ctrl+Shift+I)"><i>I</i></button><button class="aero-btn small" id="c-u" title="Underline"><u>U</u></button><button class="aero-btn small" id="c-tt" title="All caps">TT</button><button class="aero-btn small" id="c-sc" title="Small caps">Tt</button>`);
       bar.appendChild(el('span', 'sep'));
-      add(['left', 'center', 'right', 'justify', 'justify-all'].map(a => `<button class="aero-btn small al" data-al="${a}" title="Align ${a}">${alignIcon(a)}</button>`).join(''));
+      add(['left', 'center', 'right', 'justify', 'justify-all'].map(a => `<button class="aero-btn small al" data-al="${a}" title="Align ${a}">${alignIcon(a)}</button>`).join('') + `<button class="aero-btn small" id="c-ul" title="Bulleted list">•≡</button><button class="aero-btn small" id="c-ol" title="Numbered list">1≡</button>`);
       bar.appendChild(el('span', 'sep'));
       add(`<label title="Paragraph style">¶<select id="c-ps" style="width:120px"></select></label><label title="Character style"><b class="ic">A</b><select id="c-cs" style="width:104px"></select></label>`);
       $('#c-font').onchange = e => { const c = charState(); applyChar({ font: e.target.value, weight: c?.weight, italic: c?.italic }, 'Font'); };
       $('#c-style').onchange = e => { const [w, i] = e.target.value.split('|'); applyChar({ weight: +w, italic: i === '1' }, 'Font Style'); };
       const numIn = (id, key, label, min) => { const i = $(id); i.onchange = () => { const v = i.value.trim(); if (key === 'lead' && (v === '' || /auto/i.test(v))) return applyChar({ lead: 0 }, label); const n = parseFloat(v); if (!isNaN(n)) applyChar({ [key]: min != null ? Math.max(min, n) : n }, label); }; i.onkeydown = e => { if (e.key === 'Enter') { i.blur(); } }; };
       numIn('#c-size', 'size', 'Font Size', 1); numIn('#c-lead', 'lead', 'Leading', 0); numIn('#c-track', 'track', 'Tracking');
-      $('#c-color').onchange = e => applyChar({ color: e.target.value }, 'Text Color');
+      $('#c-color').onchange = e => applyChar({ color: Color.fromPicker(e.target.value) }, 'Text Color');
       $('#c-b').onclick = () => cmd.toggleChar('bold'); $('#c-i').onclick = () => cmd.toggleChar('italic'); $('#c-u').onclick = () => cmd.toggleChar('under'); $('#c-tt').onclick = () => cmd.toggleChar('allcaps'); $('#c-sc').onclick = () => cmd.toggleChar('smallcaps');
       bar.querySelectorAll('.al').forEach(b => b.onclick = () => applyPara({ align: b.dataset.al }, 'Alignment'));
+      $('#c-ul').onclick = () => Typo.toggleList('bullet'); $('#c-ol').onclick = () => Typo.toggleList('number');
       $('#c-ps').onchange = e => applyParaStyle(e.target.value);
       $('#c-cs').onchange = e => applyCharStyle(e.target.value || null);
       for (const b of bar.querySelectorAll('button')) b.addEventListener('mousedown', e => e.preventDefault()); // keep text focus
@@ -549,8 +618,8 @@ const UI = (() => {
       add(`<label>Fill<input id="o-fill" type="color"><button class="aero-btn small" id="o-fn" title="No fill">∅</button></label><label>Stroke<input id="o-stroke" type="color"><button class="aero-btn small" id="o-sn" title="No stroke">∅</button></label><label title="Stroke weight (pt)"><input id="o-sw" type="number" min="0" step="0.25" style="width:48px">pt</label><label>Opacity<input id="o-op" type="range" min="0" max="100" style="width:80px"><span class="v" id="o-opv"></span></label>`);
       const geo = (id, k) => { const i = $(id); i.onchange = () => setGeo(k, i.value); i.onkeydown = e => { if (e.key === 'Enter') i.blur(); if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); const v = parseFloat(i.value) || 0; i.value = +(v + (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 10 : 1)).toFixed(3); setGeo(k, i.value); } }; };
       geo('#o-x', 'x'); geo('#o-y', 'y'); geo('#o-w', 'w'); geo('#o-h', 'h'); geo('#o-r', 'rot');
-      $('#o-fill').oninput = e => setProp('fill', e.target.value, true); $('#o-fill').onchange = e => setProp('fill', e.target.value);
-      $('#o-stroke').oninput = e => setProp('stroke', e.target.value, true); $('#o-stroke').onchange = e => setProp('stroke', e.target.value);
+      $('#o-fill').oninput = e => setProp('fill', e.target.value, true); $('#o-fill').onchange = e => setProp('fill', Color.fromPicker(e.target.value));
+      $('#o-stroke').oninput = e => setProp('stroke', e.target.value, true); $('#o-stroke').onchange = e => setProp('stroke', Color.fromPicker(e.target.value));
       $('#o-fn').onclick = () => setProp('fill', null); $('#o-sn').onclick = () => setProp('stroke', null);
       $('#o-sw').onchange = e => setProp('sw', Math.max(0, +e.target.value || 0));
       $('#o-op').oninput = e => setProp('opacity', +e.target.value / 100, true); $('#o-op').onchange = e => setProp('opacity', +e.target.value / 100);
@@ -571,9 +640,10 @@ const UI = (() => {
       const c = charState(); if (!c) return;
       setV('#c-font', c.font);
       const so = $('#c-style'); if (so && so !== foc) { const key = c.font; if (so.dataset.fam !== key) { so.innerHTML = ''; styleOpts(c.font).forEach(([a, b]) => so.add(new Option(b, a))); so.dataset.fam = key; } const p = Fonts.parse(Fonts.resolve(c.font, c.weight, c.italic)); so.value = `${p.weight}|${c.italic ? 1 : 0}`; }
-      setV('#c-size', +(+c.size).toFixed(2)); setV('#c-lead', c.lead > 0 ? +(+c.lead).toFixed(2) : ''); $('#c-lead').placeholder = 'auto ' + +(c.size * 1.2).toFixed(1); setV('#c-track', c.track || 0); setV('#c-color', /^#[0-9a-f]{6}$/i.test(c.color) ? c.color : '#000000');
+      setV('#c-size', +(+c.size).toFixed(2)); setV('#c-lead', c.lead > 0 ? +(+c.lead).toFixed(2) : ''); $('#c-lead').placeholder = 'auto ' + +(c.size * 1.2).toFixed(1); setV('#c-track', c.track || 0); setV('#c-color', Color.hex(c.color) || '#000000');
       $('#c-b').classList.toggle('on', c.weight >= 600); $('#c-i').classList.toggle('on', !!c.italic); $('#c-u').classList.toggle('on', !!c.under); $('#c-tt').classList.toggle('on', c.caps === 'all'); $('#c-sc').classList.toggle('on', c.caps === 'small');
       document.querySelectorAll('#cmd .al').forEach(b => b.classList.toggle('on', b.dataset.al === c.pe.align));
+      $('#c-ul')?.classList.toggle('on', c.pe.list === 'bullet'); $('#c-ol')?.classList.toggle('on', c.pe.list === 'number');
       const ps = $('#c-ps'); if (ps && ps !== foc) { ps.innerHTML = ''; Object.entries(S.doc.paraStyles).forEach(([k, v]) => ps.add(new Option(v.name + (Object.keys(M.stripMeta(c.para)).filter(x => x !== 'ps').length ? '' : ''), k))); ps.value = c.ps; }
       const cs = $('#c-cs'); if (cs && cs !== foc) { cs.innerHTML = ''; cs.add(new Option('[None]', '')); Object.entries(S.doc.charStyles).forEach(([k, v]) => cs.add(new Option(v.name, k))); cs.value = c.cs || ''; }
     } else if ($('#o-x')) {
@@ -584,7 +654,7 @@ const UI = (() => {
       setV('#o-w', M.fmtU(one && one.type !== 'group' ? one.w : b.w, u)); setV('#o-h', M.fmtU(one && one.type !== 'group' ? one.h : b.h, u));
       setV('#o-r', one ? +(one.rot || 0).toFixed(1) : 0);
       const f = one || selItems()[0];
-      setV('#o-fill', f?.fill && /^#[0-9a-f]{6}$/i.test(f.fill) ? f.fill : '#ffffff'); setV('#o-stroke', f?.stroke && /^#[0-9a-f]{6}$/i.test(f.stroke) ? f.stroke : '#000000');
+      setV('#o-fill', (f?.fill && Color.hex(f.fill)) || '#ffffff'); setV('#o-stroke', (f?.stroke && Color.hex(f.stroke)) || '#000000');
       $('#o-fn').classList.toggle('on', !f?.fill); $('#o-sn').classList.toggle('on', !f?.stroke);
       setV('#o-sw', f?.sw ?? 1); setV('#o-op', Math.round((f?.opacity ?? 1) * 100)); $('#o-opv').textContent = Math.round((f?.opacity ?? 1) * 100) + '%';
     }
@@ -642,7 +712,8 @@ const UI = (() => {
     if (textCtx && (S.edit || one?.type === 'text')) host.appendChild(frameTextProps());
     if (its.length && !S.edit) host.appendChild(objProps(its, one));
     if (one?.type === 'image') host.appendChild(imageProps(one));
-    if (one?.type === 'table') host.appendChild(tableProps(one));
+    if (one?.type === 'table') host.appendChild(tableProps(one.id));
+    else if (S.cell && S.eng.objIdx.has(S.cell.id)) host.appendChild(tableProps(S.cell.id));
     if (!its.length && !S.edit) host.appendChild(docProps());
     syncProps();
   }
@@ -657,14 +728,22 @@ const UI = (() => {
     numRow(f, 'Drop cap chars', () => P().dropC, v => applyPara({ dropC: Aero.clamp(v | 0, 1, 10) }, 'Drop Cap'));
     bindRow(f, 'Hyphenate', '<input type="checkbox">', () => P().hyph !== false, v => applyPara({ hyph: !!v }, 'Hyphenation'));
     bindRow(f, 'Align to baseline grid', '<input type="checkbox">', () => !!P().grid, v => applyPara({ grid: !!v }, 'Align to Grid'));
+    bindRow(f, 'Composer', `<select><option value="single">Single-line</option><option value="paragraph">Paragraph (Knuth–Plass)</option></select>`, () => P().composer || 'single', v => applyPara({ composer: v }, 'Composer'));
+    bindRow(f, 'List', `<select><option value="">None</option><option value="bullet">Bullets</option><option value="number">Numbers</option></select>`, () => P().list || '', v => { if (v) Typo.toggleList(v); else applyPara({ list: '' }, 'Remove List'); });
+    { const lab = el('label', null, 'Tab stops'), w = el('div', 'pc', '<button class="aero-btn small">Tabs… (Ctrl+Shift+T)</button>'); w.querySelector('button').onclick = () => Typo.open(); f.append(lab, w); }
     const c = pf('');
     numRow(c, 'Baseline shift (pt)', () => C().shift || 0, v => applyChar({ shift: v }, 'Baseline Shift'), 0.5);
     bindRow(c, 'Case', `<select><option value="none">Normal</option><option value="all">All Caps</option><option value="small">Small Caps</option></select>`, () => C().caps || 'none', v => applyChar({ caps: v }, 'Case'));
     bindRow(c, 'Underline', '<input type="checkbox">', () => !!C().under, v => applyChar({ under: !!v }, 'Underline'));
     bindRow(c, 'Strikethrough', '<input type="checkbox">', () => !!C().strike, v => applyChar({ strike: !!v }, 'Strikethrough'));
-    const box = el('div'); box.appendChild(section('Paragraph', f)); box.appendChild(section('Character', c));
+    bindRow(c, 'Kerning', `<select><option value="1">Metrics</option><option value="0">None</option></select>`, () => C().kern === false ? '0' : '1', v => applyChar({ kern: v === '1' }, 'Kerning'));
+    bindRow(c, 'Ligatures', '<input type="checkbox">', () => C().liga !== false, v => applyChar({ liga: !!v }, 'Ligatures'));
+    const o = pf(''); const cst = charState(); const avail = cst ? Fonts.featuresOf(cst.font, cst.weight, cst.italic) : new Set();
+    const has = tag => String(C().otf || '').split(' ').includes(tag);
+    for (const [tag, label] of Fonts.OT_FEATURES) if (avail.has(tag)) bindRow(o, label, '<input type="checkbox">', () => has(tag), v => { const l = new Set(String(C().otf || '').split(' ').filter(Boolean)); if (v) l.add(tag); else l.delete(tag); if (tag === 'onum' && v) l.delete('lnum'); if (tag === 'lnum' && v) l.delete('onum'); if (tag === 'tnum' && v) l.delete('pnum'); if (tag === 'pnum' && v) l.delete('tnum'); applyChar({ otf: [...l].join(' ') }, 'OpenType ' + label); });
+    const box = el('div'); box.appendChild(section('Paragraph', f)); box.appendChild(section('Character', c)); if (o.children.length) box.appendChild(section('OpenType Features', o));
     const btns = el('div', 'pbtns'); btns.innerHTML = `<button class="aero-btn small" data-a="clr">Clear Overrides</button><button class="aero-btn small" data-a="lorem">Placeholder Text</button>`;
-    btns.querySelector('[data-a=clr]').onclick = () => { const ts = textTargets(); for (const { s, a, b } of ts) { const lo = a === b ? M.paraStart(s, M.paraIndexAt(s, a)) : a, hi = a === b ? M.paraEnd(s, M.paraIndexAt(s, a)) : b; for (let i = lo; i < hi; i++) { const at = s.attrs[s.ca[i]]; s.ca[i] = M.attrIdx(s, at.cs ? { cs: at.cs } : {}); } const p0 = M.paraIndexAt(s, lo), p1 = M.paraIndexAt(s, hi); for (let k = p0; k <= p1; k++) s.paras[k] = { ps: s.paras[k].ps }; } commit('Clear Overrides'); };
+    btns.querySelector('[data-a=clr]').onclick = () => { const ts = textTargets(); for (const { s, a, b } of ts) { const lo = a === b ? M.paraStart(s, M.paraIndexAt(s, a)) : a, hi = a === b ? M.paraEnd(s, M.paraIndexAt(s, a)) : b; for (let i = lo; i < hi; i++) { const at = s.attrs[s.ca[i]], o = {}; if (at.cs) o.cs = at.cs; if (at.obj) o.obj = at.obj; if (at.fn) o.fn = at.fn; s.ca[i] = M.attrIdx(s, o); } const p0 = M.paraIndexAt(s, lo), p1 = M.paraIndexAt(s, hi); for (let k = p0; k <= p1; k++) s.paras[k] = { ps: s.paras[k].ps }; } commit('Clear Overrides'); };
     btns.querySelector('[data-a=lorem]').onclick = fillPlaceholder;
     box.appendChild(btns);
     return box;
@@ -698,12 +777,14 @@ const UI = (() => {
       }
     }
     bindRow(f, 'Stroke style', `<select><option value="">Solid</option><option value="1">Dashed</option></select>`, () => (its[0].dash ? '1' : ''), v => { its.forEach(it => M.walkItems([info(it.id).item], x => x.dash = !!v)); commit('Stroke Style'); });
-    bindRow(f, 'Text wrap', `<select><option value="none">No wrap</option><option value="box">Wrap around bounding box</option></select>`, () => its[0].wrap || 'none', v => setWrap(v));
+    bindRow(f, 'Text wrap', `<select><option value="none">No wrap</option><option value="box">Bounding box</option><option value="shape">Object shape</option><option value="contour">Contour (image alpha / edges)</option><option value="jump">Jump object</option></select>`, () => its[0].wrap || 'none', v => setWrap(v));
     lenRow(f, 'Wrap offset', () => its[0].wrapOff ?? 6, v => { selItems().forEach(it => it.wrapOff = Math.max(0, v)); commit('Wrap Offset'); });
     bindRow(f, 'Layer', `<select>${S.doc.layers.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('')}</select>`, () => its[0].layer, v => { selItems().forEach(it => M.walkItems([it], x => x.layer = v)); commit('Move to Layer'); });
+    bindRow(f, 'Overprint fill', '<input type="checkbox">', () => !!its[0].opFill, v => { selItems().forEach(it => M.walkItems([it], x => { x.opFill = !!v; })); commit('Overprint Fill'); });
+    bindRow(f, 'Overprint stroke', '<input type="checkbox">', () => !!its[0].opStroke, v => { selItems().forEach(it => M.walkItems([it], x => { x.opStroke = !!v; })); commit('Overprint Stroke'); });
     bindRow(f, 'Locked', '<input type="checkbox">', () => !!its[0].locked, v => lockSel(!!v));
     const sw = el('div', 'swatches'); sw.style.gridColumn = '1/-1';
-    S.doc.swatches.forEach(c => { const b = el('button', 'sw'); b.style.background = c; b.title = c + ' — click: fill, Alt+click: stroke'; b.onclick = e => setProp(e.altKey ? 'stroke' : 'fill', c); sw.appendChild(b); });
+    S.doc.swatches.forEach(w => { const ref = '@' + w.id, b = el('button', 'sw' + (w.spot ? ' spot' : '')); b.style.background = Color.hex(ref); b.title = w.name + ' (' + (w.spot ? 'spot, ' : '') + Color.describe(w) + ') — click: fill, Alt+click: stroke'; b.onclick = e => setProp(e.altKey ? 'stroke' : 'fill', ref); sw.appendChild(b); });
     const none = el('button', 'sw none'); none.title = 'None — click: no fill, Alt+click: no stroke'; none.onclick = e => setProp(e.altKey ? 'stroke' : 'fill', null); sw.appendChild(none);
     f.appendChild(sw);
     const al = el('div', 'pbtns'); al.style.gridColumn = '1/-1';
@@ -736,27 +817,28 @@ const UI = (() => {
     f.appendChild(b);
     return section('Image', f);
   }
-  function tableProps(t0) {
-    const t = () => info(t0.id)?.item || t0; const f = pf('');
+  function tableProps(tid) {
+    const t0 = tableById(tid), t = () => tableById(tid) || t0; const f = pf('');
     const n = el('div', 'pnote'); n.style.gridColumn = '1/-1';
-    binds.push({ inp: null, get: () => { n.textContent = `${t().rowH.length} rows × ${t().colW.length} columns` + (S.cell ? ` · cell ${S.cell.r + 1}, ${S.cell.c + 1}` : ' · double-click a cell to edit'); } });
+    binds.push({ inp: null, get: () => { const c = S.cell; n.textContent = `${t().rowH.length} rows × ${t().colW.length} columns${t0.kind === 'table' ? ' · inline' : ''}` + (c ? (c.r2 != null && (c.r2 !== c.r || c.c2 !== c.c) ? ` · cells ${Math.min(c.r, c.r2) + 1},${Math.min(c.c, c.c2) + 1} – ${Math.max(c.r, c.r2) + 1},${Math.max(c.c, c.c2) + 1}` : ` · cell ${c.r + 1}, ${c.c + 1}`) : ' · double-click a cell to edit, Shift-click to select a range'); } });
     f.appendChild(n);
     numRow(f, 'Header rows', () => t().header || 0, v => { t().header = Aero.clamp(v | 0, 0, t().rowH.length); commit('Header Rows'); });
     numRow(f, 'Text size (pt)', () => t().tsize, v => { t().tsize = Math.max(4, v); commit('Table Text Size'); }, 0.5);
     bindRow(f, 'Font', `<select>${Fonts.families.map(x => `<option>${esc(x)}</option>`).join('')}</select>`, () => t().tfont, v => { t().tfont = v; commit('Table Font'); });
-    bindRow(f, 'Header fill', '<input type="color">', () => t().hfill || '#ffffff', v => { t().hfill = v; commit('Header Fill'); });
-    bindRow(f, 'Header text', '<input type="color">', () => t().hcolor || '#000000', v => { t().hcolor = v; commit('Header Text'); });
-    bindRow(f, 'Alternate rows', '<input type="color">', () => t().zebra || '#ffffff', v => { t().zebra = v; commit('Alternating Fill'); });
-    bindRow(f, 'Border color', '<input type="color">', () => t().bcolor, v => { t().bcolor = v; commit('Border Color'); });
+    bindRow(f, 'Header fill', '<input type="color">', () => Color.hex(t().hfill) || '#ffffff', v => { t().hfill = Color.fromPicker(v); commit('Header Fill'); });
+    bindRow(f, 'Header text', '<input type="color">', () => Color.hex(t().hcolor) || '#000000', v => { t().hcolor = Color.fromPicker(v); commit('Header Text'); });
+    bindRow(f, 'Alternate rows', '<input type="color">', () => Color.hex(t().zebra) || '#ffffff', v => { t().zebra = Color.fromPicker(v); commit('Alternating Fill'); });
+    bindRow(f, 'Border color', '<input type="color">', () => Color.hex(t().bcolor) || '#000000', v => { t().bcolor = Color.fromPicker(v); commit('Border Color'); });
     numRow(f, 'Border weight (pt)', () => t().bw, v => { t().bw = Math.max(0, v); commit('Border Weight'); }, 0.25);
     if (S.cell) {
-      bindRow(f, 'Cell fill', '<input type="color">', () => t().cells[S.cell.r]?.[S.cell.c]?.fill || '#ffffff', v => { t().cells[S.cell.r][S.cell.c].fill = v; commit('Cell Fill'); });
+      bindRow(f, 'Cell fill', '<input type="color">', () => Color.hex(t().cells[S.cell.r]?.[S.cell.c]?.fill) || '#ffffff', v => { cellRange().forEach(([r, c]) => { t().cells[r][c].fill = Color.fromPicker(v); }); commit('Cell Fill'); });
       bindRow(f, 'Cell align', `<select><option value="">Default</option><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select>`, () => t().cells[S.cell.r]?.[S.cell.c]?.align || '', v => { const c = t().cells[S.cell.r][S.cell.c]; if (v) c.align = v; else delete c.align; commit('Cell Align'); });
       lenRow(f, 'Row height', () => t().rowH[S.cell.r], v => { const T0 = t(); T0.rowH[S.cell.r] = Math.max(4, v); T0.h = T0.rowH.reduce((a, b) => a + b, 0); commit('Row Height'); });
       lenRow(f, 'Column width', () => t().colW[S.cell.c], v => { const T0 = t(); T0.colW[S.cell.c] = Math.max(4, v); T0.w = T0.colW.reduce((a, b) => a + b, 0); commit('Column Width'); });
     }
     const b = el('div', 'pbtns'); b.style.gridColumn = '1/-1';
-    b.innerHTML = `<button class="aero-btn small" data-o="rowAbove">+ Row ↑</button><button class="aero-btn small" data-o="rowBelow">+ Row ↓</button><button class="aero-btn small" data-o="colLeft">+ Col ←</button><button class="aero-btn small" data-o="colRight">+ Col →</button><button class="aero-btn small" data-o="delRow">− Row</button><button class="aero-btn small" data-o="delCol">− Col</button>`;
+    b.innerHTML = `<button class="aero-btn small" data-o="rowAbove">+ Row ↑</button><button class="aero-btn small" data-o="rowBelow">+ Row ↓</button><button class="aero-btn small" data-o="colLeft">+ Col ←</button><button class="aero-btn small" data-o="colRight">+ Col →</button><button class="aero-btn small" data-o="delRow">− Row</button><button class="aero-btn small" data-o="delCol">− Col</button>`
+      + `<button class="aero-btn small" data-o="merge" title="Merge the selected cells (Shift-click to select a range)">Merge</button><button class="aero-btn small" data-o="unmerge">Unmerge</button><button class="aero-btn small" data-o="splitV" title="Split cell vertically">Split ⇹</button><button class="aero-btn small" data-o="splitH" title="Split cell horizontally">Split ⇕</button>`;
     b.querySelectorAll('[data-o]').forEach(x => x.onclick = () => tableOp(x.dataset.o));
     f.appendChild(b);
     return section('Table', f);
@@ -772,8 +854,8 @@ const UI = (() => {
     numRow(f, 'Grid start (pt)', () => d.grid.start, v => { d.grid.start = Math.max(0, v); commit('Baseline Grid'); }, 0.5);
     numRow(f, 'Grid increment (pt)', () => d.grid.step, v => { d.grid.step = Math.max(2, v); commit('Baseline Grid'); }, 0.5);
     const b = el('div', 'pbtns'); b.style.gridColumn = '1/-1';
-    b.innerHTML = `<button class="aero-btn small" data-a="setup">Document Setup…</button><button class="aero-btn small" data-a="mc">Margins & Columns…</button>`;
-    b.querySelector('[data-a=setup]').onclick = () => docDialog(false); b.querySelector('[data-a=mc]').onclick = marginsDialog;
+    b.innerHTML = `<button class="aero-btn small" data-a="setup">Document Setup…</button><button class="aero-btn small" data-a="mc">Margins & Columns…</button><button class="aero-btn small" data-a="sec">Numbering & Sections…</button>`;
+    b.querySelector('[data-a=setup]').onclick = () => docDialog(false); b.querySelector('[data-a=mc]').onclick = marginsDialog; b.querySelector('[data-a=sec]').onclick = () => LongDoc.sectionDialog();
     f.appendChild(b);
     return section(S.mode.kind === 'master' ? 'Master Page' : 'Document', f);
   }
@@ -899,7 +981,8 @@ const UI = (() => {
         t.appendChild(thumb(p, i, 'doc'));
         const mm = d.masters.find(m => m.id === p.master);
         if (mm) t.appendChild(el('span', 'pp-pre', esc(mm.prefix)));
-        t.appendChild(el('div', 'pp-n', String(i + 1)));
+        t.appendChild(el('div', 'pp-n', esc(S.eng.label(i))));
+        if (d.sections[p.id] && i > 0) t.appendChild(el('span', 'pp-sec', '▼'));
         t.draggable = true; t.title = `Page ${i + 1}${mm ? ' · master ' + mm.prefix : ''} — drag to reorder`;
         t.onclick = () => View.goPage(i);
         t.ondblclick = () => { View.goPage(i); View.fitPage(); };
@@ -919,14 +1002,17 @@ const UI = (() => {
   /* ---------- status ---------- */
   function status() {
     $('#st-zoom').textContent = Math.round(S.view.z * 100) + '%';
-    $('#st-page').textContent = S.mode.kind === 'master' ? `Editing master ${S.doc.masters.find(m => m.id === S.mode.id)?.prefix || ''}` : `Page ${S.curPage + 1} of ${S.doc.pages.length}`;
+    const lab = S.eng.label(S.curPage);
+    $('#st-page').textContent = S.mode.kind === 'master' ? `Editing master ${S.doc.masters.find(m => m.id === S.mode.id)?.prefix || ''}` : lab === String(S.curPage + 1) ? `Page ${S.curPage + 1} of ${S.doc.pages.length}` : `Page ${lab} (${S.curPage + 1} of ${S.doc.pages.length})`;
     let over = 0; S.eng.ensure(); for (const r of S.eng.storyRes.values()) if (r.overset) over++;
     let sel = '';
     if (S.edit) { const [a, b] = T().range(); sel = a === b ? `Text cursor at ${a}` : `${b - a} characters selected`; }
     else if (S.sel.length === 1) { const it = info(S.sel[0]).item; sel = { rect: 'Rectangle', ellipse: 'Ellipse', line: 'Line', image: 'Image frame', text: 'Text frame', group: 'Group', table: 'Table' }[it.type] + (it.locked ? ' (locked)' : ''); }
     else if (S.sel.length) sel = `${S.sel.length} objects selected`;
     $('#st-sel').textContent = sel;
-    const ov = $('#st-over'); ov.textContent = over ? `⚠ ${over} overset ${over > 1 ? 'stories' : 'story'}` : 'No errors'; ov.className = over ? 'err' : 'ok';
+    const pf = Preflight.state, errs = Math.max(over, pf.errors);
+    const ov = $('#st-over'); ov.textContent = errs ? (errs === over && over ? `⚠ ${over} overset ${over > 1 ? 'stories' : 'story'}` : `⚠ ${errs} preflight error${errs > 1 ? 's' : ''}`) : 'No errors' + (pf.warns ? ` · ${pf.warns} warning${pf.warns > 1 ? 's' : ''}` : ''); ov.className = errs ? 'err' : 'ok'; ov.title = 'Preflight — click for the full report';
+    if (S.sepPlate) $('#st-sel').textContent = 'Separation: ' + Color.plateLabel(S.sepPlate) + (sel ? ' · ' + sel : '');
   }
   function statusPos(wx, wy) { const p = pageAt(wx, wy, true) || curPlaced(); if (!p) return; $('#st-pos').textContent = `X ${M.fmtU(wx - p.x, U())}  Y ${M.fmtU(wy - p.y, U())} ${U()}`; }
 
@@ -939,10 +1025,10 @@ const UI = (() => {
       rq = false;
       if (!S.doc || !S.eng) return;
       buildCmd();
-      const sig = JSON.stringify([S.sel, !!S.edit, S.edit?.fid, S.content, S.cell && [S.cell.id, S.cell.r, S.cell.c], S.mode, S.sel.map(id => info(id)?.item.type), S.doc.layers.length, Object.keys(S.doc.masters).length]);
+      const sig = JSON.stringify([charState()?.font, charState()?.weight, charState()?.italic, S.sel, !!S.edit, S.edit?.fid, S.content, S.cell && [S.cell.id, S.cell.r, S.cell.c, S.cell.r2, S.cell.c2], S.mode, S.sel.map(id => info(id)?.item.type), S.doc.layers.length, Object.keys(S.doc.masters).length]);
       if (rebuildReq || sig !== propSig) { propSig = sig; buildProps(); } else syncProps();
       rebuildReq = false;
-      buildLayers(); buildStyles(); status(); thumbsSoon();
+      buildLayers(); buildStyles(); Swatches.build(); Typo.refresh(); if (S.opt.seps) Swatches.sepBar(); Preflight.soon(); status(); thumbsSoon();
       $('#welcome').hidden = !(S.mode.kind === 'doc' && !Aero.dirty && S.doc.pages.every(p => !p.items.length) && S.doc.masters.every(m => m.pages.every(p => !p.items.length)));
     });
   }
@@ -973,7 +1059,7 @@ const UI = (() => {
     Aero.shortcut('Ctrl+>', () => cmd.bumpSize(1)); Aero.shortcut('Ctrl+<', () => cmd.bumpSize(-1));
     Aero.shortcut('Ctrl+}', () => arrange('front')); Aero.shortcut('Ctrl+{', () => arrange('back')); Aero.shortcut('Ctrl+:', () => toggleOpt('snap'));
     // tabs
-    document.querySelectorAll('#ptabs .aero-tab').forEach(t => t.onclick = () => { document.querySelectorAll('#ptabs .aero-tab').forEach(x => x.classList.toggle('on', x === t)); document.querySelectorAll('.tabpane').forEach(p => p.hidden = p.id !== t.dataset.p); if (t.dataset.p === 'tp-hist') historyList(); });
+    document.querySelectorAll('#ptabs .aero-tab').forEach(t => t.onclick = () => { document.querySelectorAll('#ptabs .aero-tab').forEach(x => x.classList.toggle('on', x === t)); document.querySelectorAll('.tabpane').forEach(p => p.hidden = p.id !== t.dataset.p); if (t.dataset.p === 'tp-hist') historyList(); if (t.dataset.p === 'tp-swatches') Swatches.build(); });
     // pages iconbar
     const pb = (id, fn) => $(id).onclick = fn;
     pb('#pg-add', () => addPage()); pb('#pg-dup', () => addPage(S.curPage, true)); pb('#pg-del', () => S.mode.kind === 'master' ? deleteMaster(S.mode.id) : deletePage()); pb('#pg-up', () => movePage(S.curPage, S.curPage - 1)); pb('#pg-down', () => movePage(S.curPage, S.curPage + 1)); pb('#pg-master', newMaster);
@@ -983,12 +1069,14 @@ const UI = (() => {
     pb('#ps-del', () => deleteStyle('p', selStyle.p || charState()?.ps));
     pb('#cs-new', () => charStyleDialog(null, true)); pb('#cs-edit', () => { const id = selStyle.c || charState()?.cs; if (id) charStyleDialog(id, false); else Aero.toast('Pick a character style first'); });
     pb('#cs-del', () => { const id = selStyle.c || charState()?.cs; if (id) deleteStyle('c', id); });
+    pb('#sw-new', () => Swatches.dialog(null)); pb('#sw-edit', () => { const sw = Swatches.selected(); if (sw) Swatches.dialog(sw); else Aero.toast('Click a swatch first'); }); pb('#sw-dup', () => Swatches.duplicate()); pb('#sw-del', () => Swatches.remove()); pb('#sw-add', () => Swatches.addUnnamed());
+    $('#st-over').style.cursor = 'pointer'; $('#st-over').onclick = () => Preflight.dialog();
     Tools.init();
     $('#w-sample').onclick = () => IO.openSample(); $('#w-new').onclick = () => docDialog(true);
     window.addEventListener('keydown', e => { if (e.key === 'F1') { e.preventDefault(); shortcutsDialog(); } });
   }
 
   return { build, refresh, setTool, status, statusPos, historyList, syncEditor, thumbsSoon, cmd, defaultFill: () => '#cfd8e3', defaultStroke: () => null,
-    openCellEditor, closeCellEditor, applyChar, applyPara, applyParaStyle, applyCharStyle, charState, fillPlaceholder, docDialog, editMaster, addPage, deletePage, movePage, applyMaster,
+    openCellEditor, closeCellEditor, cellRange, cellGeom, tableById, insertTable, setProp, selItems, applyChar, applyPara, applyParaStyle, applyCharStyle, charState, fillPlaceholder, docDialog, editMaster, addPage, deletePage, movePage, applyMaster,
     group, ungroup, align, distribute, arrange, fitImage, tableOp, copyItems, pasteItems, deleteSel, newMaster, overrideMaster, layerCmd, textTargets };
 })();

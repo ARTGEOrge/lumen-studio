@@ -57,18 +57,37 @@
     if (v.blur && v.blur.on !== false) L.push(v.blur.type === 'bg' ? `backdrop-filter: blur(${px(v.blur.r)});` : `filter: blur(${px(v.blur.r)});`);
     if (v.layout) {
       const Lt = v.layout, p = Lt.pad || [0, 0, 0, 0];
-      L.push('display: flex;', `flex-direction: ${Lt.mode === 'h' ? 'row' : 'column'};`);
-      if (Lt.justify === 'between') L.push('justify-content: space-between;'); else if (Lt.gap) L.push(`gap: ${px(Lt.gap)};`);
+      if (Lt.mode === 'grid') {
+        L.push('display: grid;', `grid-template-columns: repeat(${Lt.cols || 2}, 1fr);`, `column-gap: ${px(Lt.gap || 0)};`, `row-gap: ${px(Lt.gapY ?? Lt.gap ?? 0)};`);
+        L.push(`justify-items: ${Lt.justify === 'center' ? 'center' : Lt.justify === 'end' ? 'end' : 'start'};`);
+      } else L.push('display: flex;', `flex-direction: ${Lt.mode === 'h' ? 'row' : 'column'};`);
+      if (Lt.mode === 'h' && Lt.wrap) L.push('flex-wrap: wrap;', `row-gap: ${px(Lt.gapY ?? Lt.gap ?? 0)};`, `column-gap: ${px(Lt.gap || 0)};`);
+      if (Lt.mode === 'grid') { } else if (Lt.justify === 'between') L.push('justify-content: space-between;'); else if (Lt.gap && !Lt.wrap) L.push(`gap: ${px(Lt.gap)};`);
       if (Lt.justify === 'center') L.push('justify-content: center;'); if (Lt.justify === 'end') L.push('justify-content: flex-end;');
       L.push(`align-items: ${Lt.align === 'center' ? 'center' : Lt.align === 'end' ? 'flex-end' : 'flex-start'};`);
       if (p.some(x => x)) L.push(`padding: ${p.every(x => x === p[0]) ? px(p[0]) : p.map(px).join(' ')};`);
       if (n.sizeH === 'hug') L.push('width: fit-content;'); if (n.sizeV === 'hug') L.push('height: fit-content;');
     }
-    if (v.clip && (t === 'frame') && ED.kids(n).length) L.push('overflow: hidden;');
+    { [['minW', 'min-width'], ['maxW', 'max-width'], ['minH', 'min-height'], ['maxH', 'max-height']].forEach(([k, c]) => { if (n[k] > 0) L.push(`${c}: ${px(n[k])};`); });
+    }
+    if (v.scroll) L.push(v.scroll === 'h' ? 'overflow-x: auto;' : v.scroll === 'v' ? 'overflow-y: auto;' : 'overflow: auto;');
+    else if (v.clip && (t === 'frame') && ED.kids(n).length) L.push('overflow: hidden;');
     const par = ED.parent(n), pv = par && par !== ED.doc ? ED.scene.view(par) : null;
     if (pv?.layout) { if ((pv.layout.mode === 'h' ? n.sizeH : n.sizeV) === 'fill') L.push('flex: 1 1 0;'); if ((pv.layout.mode === 'h' ? n.sizeV : n.sizeH) === 'fill') L.push('align-self: stretch;'); }
     let out = L.join('\n');
     if (t === 'text') out += `\n\n/* content */\n/* ${String(v.text).replace(/\*\//g, '* /').slice(0, 300)} */`;
+    if (t === 'text' && LP.isRich(v)) {
+      // mixed styles: one <span> per styled range
+      const base = LP.textProps(v, doc()), text = String(v.text || ''), esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]).replace(/\n/g, '<br>');
+      const spans = LP.normRuns(v.runs, text.length).map(g => {
+        const st = LP.runStyle(base, g.st, doc()), css = [];
+        if (st.font !== base.font) css.push(`font-family: '${st.font}'`); if (st.size !== base.size) css.push(`font-size: ${px(st.size)}`); if (st.weight !== base.weight) css.push(`font-weight: ${st.weight}`);
+        if (st.italic && !base.italic) css.push('font-style: italic'); if (st.color) css.push(`color: ${LP.rgba(st.color, st.a ?? 1)}`); if ((st.ls || 0) !== (base.ls || 0)) css.push(`letter-spacing: ${px(st.ls)}`);
+        if (st.deco !== (v.deco || 'none')) css.push(`text-decoration: ${st.deco === 'strike' ? 'line-through' : st.deco}`);
+        const s = esc(text.slice(g.s, g.e)); return css.length ? `<span style="${css.join('; ')}">${s}</span>` : s;
+      }).join('');
+      out += `\n\n/* mixed-style HTML */\n/* <p>${spans.replace(/\*\//g, '* /')}</p> */`;
+    }
     return out;
   }
   const rgb = (c, a = 1) => { const p = LP.parseColor(c); return { r: r2(p[0] / 255), g: r2(p[1] / 255), b: r2(p[2] / 255), a: r2(p[3] * a) }; };

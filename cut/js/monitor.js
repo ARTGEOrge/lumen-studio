@@ -10,16 +10,16 @@
   /* ---------- <video> pool, one element per clip that is (about to be) on screen ---------- */
   const pool = new Map();   // clipId → {v, media, used, want}
   LC.vpool = {
-    get(c) {
-      let e = pool.get(c.id); const rt = LC.rt.media.get(c.media);
-      if (e && e.media !== c.media) { this.kill(c.id); e = null; }
+    get(c, key = c.id) {           // key = nest path + clip id (the same nested clip can appear more than once)
+      let e = pool.get(key); const rt = LC.rt.media.get(c.media);
+      if (e && e.media !== c.media) { this.kill(key); e = null; }
       if (!e) {
         if (!rt || rt.status !== 'ok') return null;
         const v = document.createElement('video'); v.muted = true; v.preload = 'auto'; v.playsInline = true; v.src = rt.url;
         e = { v, media: c.media, used: 0, want: null };
         v.addEventListener('seeked', () => { if (e.want != null && Math.abs(v.currentTime - e.want) > 1e-3 && !LC.playing) { const w = e.want; e.want = null; v.currentTime = w; } else e.want = null; LC.requestRender(); });
         v.addEventListener('loadeddata', () => LC.requestRender());
-        pool.set(c.id, e);
+        pool.set(key, e);
       }
       e.used = performance.now(); return e;
     },
@@ -39,26 +39,27 @@
     const m = LC.mediaOf(c); if (!m) return null; const rt = LC.rt.media.get(m.id);
     if (!rt || rt.status === 'offline' || rt.status === 'error') return 'offline';
     if (c.type === 'image') return rt.img ? { src: rt.img, w: m.w, h: m.h, key: 'img:' + m.id, version: 1 } : null;
-    const e = pool.get(c.id); if (!e || e.v.readyState < 2) return null;
+    const e = pool.get((LC._nestPath || '') + c.id); if (!e || e.v.readyState < 2) return null;
     return { src: e.v, w: e.v.videoWidth || m.w, h: e.v.videoHeight || m.h, key: 'v:' + c.id };
   }
   LC.previewSrc = getSrc;
 
   // which video clips must show a frame at t (including transition handles)
-  function visibleVideoClips(t) {
+  function visibleVideoClips(t) {           // [{c, t (time in the clip's own sequence), key}] including nested sequences
     const out = [];
-    for (const tr of LC.videoTracks()) { if (tr.mute) continue; for (const L of LC.Compositor.layersAt(tr, t)) if (L.clip.type === 'video') out.push(L.clip); }
+    LC.walkVideo(t, (c, tt, path) => { if (c.type === 'video') out.push({ c, t: tt, key: path + c.id }); });
     return out;
   }
   function clampSrc(c, t) { const m = LC.mediaOf(c); let s = LC.srcTime(c, t); return Math.min(Math.max(s, 0), Math.max(0, (m?.duration || 0) - .02)); }
   function syncVideos(t, playing, rate) {
     const keep = new Set();
-    const vis = visibleVideoClips(t);
-    for (const c of vis) {
-      const e = LC.vpool.get(c); if (!e) continue; keep.add(c.id);
+    const vis = visibleVideoClips(t), T = t;
+    for (const { c, t, key } of vis) {
+      const e = LC.vpool.get(c, key); if (!e) continue; keep.add(key);
       const st = clampSrc(c, t), v = e.v;
+      if (c.hold != null) { if (!v.paused) v.pause(); if (Math.abs(v.currentTime - st) > .25 / LC.fps()) seekEl(e, st + 1e-3); continue; }
       if (playing && rate > 0 && rate <= 8) {
-        const pr = Math.min(16, Math.max(.0625, c.props.speed * rate));
+        const pr = Math.min(16, Math.max(.0625, LC.speedAt(c, Math.min(c.dur, Math.max(0, t - c.start))) * rate));
         if (v.playbackRate !== pr) v.playbackRate = pr;
         const atEnd = LC.srcTime(c, t) >= (LC.mediaOf(c).duration - .03);
         if (atEnd) { if (!v.paused) v.pause(); continue; }
@@ -70,7 +71,7 @@
       }
     }
     if (playing) {   // pre-roll clips that start within the next 1.5 s so they are ready on the cut
-      const look = t + 1.5 * Math.max(1, Math.abs(rate));
+      const look = T + 1.5 * Math.max(1, Math.abs(rate)); t = T;
       for (const c of LC.project.clips) {
         if (c.type !== 'video' || keep.has(c.id) || c.disabled || LC.track(c.track).mute) continue;
         if (c.start > t && c.start < look) { const e = LC.vpool.get(c); if (!e) continue; keep.add(c.id); if (!e.v.paused) e.v.pause(); const st = clampSrc(c, c.start); if (Math.abs(e.v.currentTime - st) > .05) seekEl(e, st); }
@@ -121,7 +122,8 @@
     const sw = c.type === 'title' ? S.w : (m?.w || S.w), sh = c.type === 'title' ? S.h : (m?.h || S.h);
     const fit = c.type === 'title' ? 1 : Math.min(S.w / sw, S.h / sh), sc = LC.valueAt(c, 'scale', tl) / 100, pos = LC.valueAt(c, 'pos', tl), rot = LC.valueAt(c, 'rot', tl) * Math.PI / 180;
     const qw = sw * fit * sc, qh = sh * fit * sc, cx = pos[0] * S.w, cy = pos[1] * S.h, cs = Math.cos(rot), sn = Math.sin(rot);
-    let [l, tp, r, b] = c.props.crop.map(v => v / 100);
+    if (c.type === 'adjust') return [[0, 0], [S.w, 0], [S.w, S.h], [0, S.h]];
+    let [l, tp, r, b] = LC.valueAt(c, 'crop', tl).map(v => v / 100);
     if (c.type === 'title') { const box = titleBox(c, tl); if (box) [l, tp, r, b] = box; }
     return [[l, tp], [1 - r, tp], [1 - r, 1 - b], [l, 1 - b]].map(([u, v]) => { const px = (u - .5) * qw, py = (v - .5) * qh; return [cx + px * cs - py * sn, cy + px * sn + py * cs]; });
   }
@@ -153,9 +155,30 @@
       x.beginPath(); x.arc(cx, cy, r, 0, 7); x.moveTo(cx - r * 1.6, cy); x.lineTo(cx + r * 1.6, cy); x.moveTo(cx, cy - r * 1.6); x.lineTo(cx, cy + r * 1.6); x.strokeStyle = '#fff'; x.lineWidth = 1.5 / k; x.stroke();
     }
   }
+  /* eyedropper for the chroma key colour: samples the clip's own (un-keyed, un-graded) pixels */
+  mon.pickKey = c => new Promise(res => {
+    const ov = $('#mover'); LC.stop(); ov.style.cursor = 'crosshair'; LC.statusMsg('Click the background colour in the Program monitor (Esc cancels)');
+    $('#mbox').classList.add('picking');
+    const done = v => { ov.removeEventListener('pointerdown', down, true); document.removeEventListener('keydown', key, true); ov.style.cursor = ''; $('#mbox').classList.remove('picking'); res(v); };
+    const key = e => { if (e.key === 'Escape') { e.stopPropagation(); done(null); } };
+    const down = e => {
+      e.stopPropagation(); e.preventDefault();
+      const r = ov.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * comp.w, y = (e.clientY - r.top) / r.height * comp.h;
+      done(mon.sampleRaw(c, x, y));
+    };
+    ov.addEventListener('pointerdown', down, true); document.addEventListener('keydown', key, true);
+  });
+  mon.sampleRaw = (c, x, y) => {          // x,y in compositor pixels
+    comp.view.raw = c.id; let px;
+    try { syncVideos(LC.playhead, false, 0); comp.render(LC.playhead, getSrc, { gc: false }); px = comp.readPixel(x, y); }
+    finally { comp.view.raw = null; LC.requestRender(); }
+    return '#' + px.map(v => v.toString(16).padStart(2, '0')).join('');
+  };
+  mon.setMatte = id => { comp.view.matte = id || null; LC.requestRender(); };
+  mon.matteId = () => comp?.view.matte || null;
   function onMonDown(e) {
     const c = LC.tl.primary(); const ov = $('#mover'), S = LC.project.settings;
-    if (!c || c.type === 'audio' || LC.playhead < c.start || LC.playhead >= c.start + c.dur || LC.track(c.track).lock) return;
+    if (!c || c.type === 'audio' || c.type === 'adjust' || LC.playhead < c.start || LC.playhead >= c.start + c.dur || LC.track(c.track).lock) return;
     LC.stop();
     const r = ov.getBoundingClientRect(), k = r.width / S.w, P0 = [(e.clientX - r.left) / k, (e.clientY - r.top) / k];
     const tl = LC.playhead - c.start, q = clipQuad(c, LC.playhead);
@@ -197,6 +220,7 @@
   const clockNow = () => (LC.playing?.audio ? LC.audio.ctx.currentTime : performance.now() / 1000);
   LC.play = (rate = 1) => {
     if (LC.playing) LC.stop(true);
+    LC.src?.pause?.(); LC.focusMon = 'program';
     const P = LC.project; let end = LC.seqDuration();
     const rangeIn = P.inPoint ?? 0, rangeOut = P.outPoint ?? end;
     if (rate > 0 && LC.playhead >= (mon.loop ? rangeOut : end) - 1e-3) LC.playhead = mon.loop ? rangeIn : 0;
@@ -246,7 +270,7 @@
     requestAnimationFrame(tick);
   }
   // meter animation runs all the time (cheap) so peaks decay after stopping
-  function meterLoop() { LC.audio.drawMeter($('#meter')); requestAnimationFrame(meterLoop); }
+  function meterLoop() { LC.audio.drawMeter($('#meter')); LC.mixer?.tick(); requestAnimationFrame(meterLoop); }
   mon.startMeter = () => requestAnimationFrame(meterLoop);
 
   LC.step = n => { LC.stop(); LC.setPlayhead(LC.fr(LC.playhead + n / LC.fps())); };

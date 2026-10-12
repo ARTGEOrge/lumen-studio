@@ -46,10 +46,10 @@ export class Doc {
     if (pdf.numPages !== this.state.pageIds.length) throw new Error('Page count mismatch');
     this.pdf = pdf; this.info = info; this.text = new Map(); this.pageAnnots = new Map(); this.outline = null;
   }
-  snapshot() { const s = this.state; return { bytes: s.bytes, pageIds: s.pageIds.slice(), annots: structuredClone(s.annots), form: { ...s.form }, props: { ...s.props } }; }
+  snapshot() { const s = this.state; return { bytes: s.bytes, pageIds: s.pageIds.slice(), annots: structuredClone(s.annots), form: { ...s.form }, props: { ...s.props }, security: s.security || null }; }
   async restore(snap) {
     const bytesChanged = snap.bytes !== this.state.bytes;
-    this.state = { bytes: snap.bytes, pageIds: snap.pageIds.slice(), annots: structuredClone(snap.annots), form: { ...snap.form }, props: { ...snap.props } };
+    this.state = { bytes: snap.bytes, pageIds: snap.pageIds.slice(), annots: structuredClone(snap.annots), form: { ...snap.form }, props: { ...snap.props }, security: snap.security || null };
     if (bytesChanged) await this.loadBytes(snap.bytes);
     return bytesChanged;
   }
@@ -180,12 +180,13 @@ function convert(d, pageId, usedIds) {
 
 // Load a PDF, pull out the annotation types Lumen can edit (they become model objects and are
 // re-written on save), and return the base bytes without them.
-export async function importDocument(bytes) {
+export async function importDocument(bytes, { keepBytes = false } = {}) {
   let pdf;
   try { pdf = await PDFDocument.load(bytes, { updateMetadata: false }); }
   catch (e) { return { bytes, annots: [], props: {}, pageIds: null, readOnly: /encrypt/i.test(e.message) ? 'encrypted' : 'unparsable', error: e.message }; }
   const props = { title: pdf.getTitle() || '', author: pdf.getAuthor() || '', subject: pdf.getSubject() || '', keywords: pdf.getKeywords() || '' };
   const pages = pdf.getPages(); const pageIds = pages.map(() => uid());
+  if (keepBytes) return { bytes, annots: [], props, pageIds, readOnly: false }; // signed files: keep every byte
   const annots = []; const usedIds = new Set(); let changed = false;
   const ctx = pdf.context;
   pages.forEach((page, pi) => {

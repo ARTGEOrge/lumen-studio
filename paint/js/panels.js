@@ -138,7 +138,7 @@ function runPreviews() {
 
 /* ---------- brush editor ---------- */
 const BE_FIELDS = {
-  Shape: [['tip', 'Tip', 'select', [['round', 'Round'], ['pencil', 'Pencil grit'], ['chalk', 'Chalk'], ['charcoal', 'Charcoal'], ['crayon', 'Wax crayon'], ['sponge', 'Sponge'], ['bristle', 'Round bristle'], ['flat', 'Flat bristle'], ['knife', 'Palette knife']]],
+  Shape: [['tip', 'Tip', 'select', () => [['round', 'Round'], ['pencil', 'Pencil grit'], ['chalk', 'Chalk'], ['charcoal', 'Charcoal'], ['crayon', 'Wax crayon'], ['sponge', 'Sponge'], ['bristle', 'Round bristle'], ['flat', 'Flat bristle'], ['knife', 'Palette knife'], ...customTipOptions()]],
     ['size', 'Size (px)', 'range', 1, 1000, 1], ['hardness', 'Hardness', 'range', 0, 1, 0.01], ['roundness', 'Roundness', 'range', 0.05, 1, 0.01], ['angle', 'Angle (°)', 'range', -180, 180, 1],
     ['rotMode', 'Rotation', 'select', [['fixed', 'Fixed angle'], ['direction', 'Follow stroke'], ['tilt', 'Follow pen tilt'], ['random', 'Random']]], ['spacing', 'Spacing', 'range', 0.01, 1, 0.01]],
   Stroke: [['mode', 'Paint mode', 'select', [['paint', 'Paint'], ['water', 'Watercolor (wet)'], ['oil', 'Oil / acrylic'], ['smudge', 'Blend / smudge'], ['erase', 'Erase']]], ['blend', 'Blend', 'select', [['normal', 'Normal'], ['multiply', 'Multiply (marker)']]],
@@ -168,7 +168,7 @@ function openBrushEditor(target) {
     for (const f of BE_FIELDS[tab]) {
       const [key, label, type] = f, row = el('div', 'aero-row'), lab = el('label'); lab.textContent = label; row.appendChild(lab);
       let inp; const out = el('span', 'val');
-      if (type === 'select') { inp = el('select'); f[3].forEach(([v, t]) => inp.add(new Option(t, v))); inp.value = work[key]; inp.onchange = () => { work[key] = inp.value; drawPrev(); }; }
+      if (type === 'select') { inp = el('select'); (typeof f[3] === 'function' ? f[3]() : f[3]).forEach(([v, t]) => inp.add(new Option(t, v))); inp.value = work[key]; inp.onchange = () => { work[key] = inp.value; drawPrev(); }; }
       else if (type === 'checkbox') { inp = el('input'); inp.type = 'checkbox'; inp.checked = !!work[key]; inp.style.justifySelf = 'start'; inp.onchange = () => { work[key] = inp.checked; drawPrev(); }; }
       else { inp = el('input'); inp.type = 'range'; inp.min = f[3]; inp.max = f[4]; inp.step = f[5]; inp.value = work[key]; const fmt = v => f[5] >= 1 ? String(Math.round(v)) : f[5] < 0.001 ? (+v).toFixed(4) : (+v).toFixed(2); out.textContent = fmt(work[key]); inp.oninput = () => { work[key] = +inp.value; out.textContent = fmt(work[key]); drawPrev(); }; }
       row.append(inp, out); p.appendChild(row);
@@ -186,10 +186,10 @@ function openBrushEditor(target) {
     const name = $('#be-name', box).value.trim() || target.name;
     if (a === 'c') close();
     else if (a === 'reset') { const f = target.custom ? target : BRUSH_FACTORY[target.id]; Object.keys(BRUSH_DEF).forEach(k => work[k] = f[k] ?? BRUSH_DEF[k]); renderPane(); drawPrev(); }
-    else if (a === 'o') { for (const k of Object.keys(BRUSH_DEF)) target[k] = work[k]; if (target.custom) target.name = name; saveBrushState(); if (target.custom) saveCustomBrushes(); close(); renderBrushList(); renderCmd(); Aero.toast('Brush updated'); }
+    else if (a === 'o') { for (const k of Object.keys(BRUSH_DEF)) target[k] = work[k]; if (target.custom) target.name = name; saveBrushState(); if (target.custom) { saveCustomBrushes(); saveCustomTips(); } close(); renderBrushList(); renderCmd(); Aero.toast('Brush updated'); }
     else if (a === 'new') {
       const nb = sanitizeBrush({ ...work, id: 'custom-' + uid(), name: name === target.name ? name + ' copy' : name });
-      BRUSHES.push(nb); saveCustomBrushes(); brushCat = 'Custom'; const k = ['eraser', 'smudge'].includes(activeToolId) ? activeToolId : 'brush'; toolBrush[k] = nb.id; saveBrushState();
+      BRUSHES.push(nb); saveCustomBrushes(); saveCustomTips(); brushCat = 'Custom'; const k = ['eraser', 'smudge'].includes(activeToolId) ? activeToolId : 'brush'; toolBrush[k] = nb.id; saveBrushState();
       close(); renderBrushCats(); renderBrushList(); renderCmd(); Aero.toast('Saved custom brush “' + nb.name + '”');
     }
   };
@@ -200,6 +200,7 @@ function openBrushEditor(target) {
 const thumbDirty = new Set(); let thumbT = 0;
 function layerThumbDirty(L) { if (L) thumbDirty.add(L); clearTimeout(thumbT); thumbT = setTimeout(updateThumbs, 160); }
 function drawThumb(L, cv) {
+  if (L.isMask) return drawMaskThumb(L, cv);
   const tw = 44, th = 33; cv.width = tw; cv.height = th; const c = cv.getContext('2d');
   if (L.type === 'fill') { c.fillStyle = rgbHex(L.color); c.fillRect(0, 0, tw, th); return; }
   if (L.type === 'group') { c.clearRect(0, 0, tw, th); return; }
@@ -230,17 +231,36 @@ function renderLayers() {
     eye.onclick = e => { e.stopPropagation(); L.visible = !L.visible; doc.ver++; requestRender(); histPush(L.visible ? 'Show Layer' : 'Hide Layer'); };
     it.appendChild(eye);
     if (L.type === 'group') { const tg = el('span', 'ltog', L.open ? '▾' : '▸'); tg.onclick = e => { e.stopPropagation(); L.open = !L.open; renderLayers(); }; it.appendChild(tg); it.appendChild(el('span', 'lfolder', '<svg viewBox="0 0 16 16"><path d="M1.5 3.5h5l1.5 1.5h6.5v8.5h-13z" fill="url(#gFolder)" stroke="#a87a1a"/></svg>')); }
-    else { const cv = el('canvas', 'lthumb'); cv.dataset.id = L.id; drawThumb(L, cv); it.appendChild(cv); }
+    else {
+      const cv = el('canvas', 'lthumb' + (L.mask && !doc.editMask && L === doc.active ? ' tsel' : '')); cv.dataset.id = L.id; drawThumb(L, cv); it.appendChild(cv);
+      if (L.text) { const tb = el('span', 'ltext', 'T'); tb.title = 'Text layer — double-click to edit'; it.appendChild(tb); }
+      if (L.mask) cv.onclick = e => { if (L === doc.active) { e.stopPropagation(); doc.active = L; setEditMask(false); } };
+    }
+    if (L.mask) {
+      const lk = el('span', 'llink' + (L.maskLinked ? '' : ' off'), '<svg viewBox="0 0 10 16"><path d="M5 1.5v4M5 10.5v4" stroke="#3a5a7a" stroke-width="1.4"/><rect x="2" y="4.5" width="6" height="3.5" rx="1.7" fill="none" stroke="#3a5a7a" stroke-width="1.2"/><rect x="2" y="8" width="6" height="3.5" rx="1.7" fill="none" stroke="#3a5a7a" stroke-width="1.2"/></svg>');
+      lk.title = L.maskLinked ? 'Mask linked to layer (click to unlink)' : 'Mask not linked (click to link)';
+      lk.onclick = e => { e.stopPropagation(); doc.active = L; cmdToggleMaskLink(); };
+      const mc = el('canvas', 'lthumb lmask' + (doc.editMask && L === doc.active ? ' tsel' : '') + (L.maskOn ? '' : ' moff')); mc.dataset.id = L.mask.id; drawMaskThumb(L.mask, mc);
+      mc.title = 'Layer mask — click to paint on it · Shift-click: disable · Alt-click: view mask';
+      mc.onclick = e => {
+        e.stopPropagation(); if (floating) commitTransform();
+        if (doc.active !== L) { doc.active = L; doc.showMask = false; }
+        if (e.shiftKey) { cmdToggleMaskOn(); return; }
+        if (e.altKey) { toggleShowMask(); return; }
+        setEditMask(true); renderLayers();
+      };
+      it.append(lk, mc);
+    }
     if (L.clip) it.appendChild(el('span', 'lclip', '↳'));
     const nm = el('span', 'grow lname'); nm.textContent = L.name; it.appendChild(nm);
     const badges = el('span', 'lbadges');
     if (L.lockAlpha) badges.insertAdjacentHTML('beforeend', '<span title="Transparency locked">🔒︎</span>');
-    if (L.blend !== 'normal') badges.insertAdjacentHTML('beforeend', `<span class="dim">${esc((BLENDS.find(b => b[0] === L.blend) || [, ''])[1].split(' ')[0])}</span>`);
+    if (L.blend !== 'normal') badges.insertAdjacentHTML('beforeend', `<span class="dim">${esc((blendOptions(L).find(b => b[0] === L.blend) || [, ''])[1].split(' ')[0])}</span>`);
     if (L.opacity < 1) badges.insertAdjacentHTML('beforeend', `<span class="dim">${Math.round(L.opacity * 100)}%</span>`);
     if (wetSims.has(L)) badges.insertAdjacentHTML('beforeend', '<span class="wetdot" title="Wet paint drying">●</span>');
     it.appendChild(badges);
-    it.onclick = () => { if (doc.active !== L) { if (floating) commitTransform(); doc.active = L; renderLayers(); renderLayerCtl(); } };
-    it.ondblclick = () => layerProps(L);
+    it.onclick = () => { if (doc.active !== L) { if (floating) commitTransform(); doc.active = L; doc.editMask = false; if (doc.showMask) { doc.showMask = false; doc.ver++; requestRender(); } renderLayers(); renderLayerCtl(); if (typeof animLayerSelected === 'function') animLayerSelected(); } };
+    it.ondblclick = () => L.text ? editTextLayer(L) : layerProps(L);
     it.onpointerdown = e => startLayerDrag(e, L, it);
     list.appendChild(it);
   }
@@ -250,7 +270,7 @@ function renderLayers() {
 function renderLayerCtl() {
   const c = $('#layerctl'), L = doc.active; c.innerHTML = '';
   if (!L) return;
-  const bs = el('select'); BLENDS.forEach(([v, t]) => bs.add(new Option(t, v))); bs.value = L.blend; bs.title = 'Blend mode';
+  const bs = el('select'); blendOptions(L).forEach(([v, t]) => bs.add(new Option(t, v))); bs.value = L.blend; bs.title = 'Blend mode';
   bs.onchange = () => { L.blend = bs.value; doc.ver++; requestRender(); histPush('Blend Mode'); bs.blur(); };
   const op = el('input'); op.type = 'range'; op.min = 0; op.max = 100; op.value = Math.round(L.opacity * 100); op.title = 'Layer opacity';
   const ov = el('span', 'dim opv', op.value + '%');
@@ -298,8 +318,9 @@ function startLayerDrag(e, L, it) {
   };
   addEventListener('pointermove', mv); addEventListener('pointerup', upf);
 }
+const blendOptions = L => L.type === 'group' ? [['pass-through', 'Pass Through'], ...BLENDS] : BLENDS;
 function layerProps(L) {
-  Aero.dialog({ title: 'Layer Properties', fields: [{ key: 'name', label: 'Name', type: 'text', value: L.name }, { key: 'op', label: 'Opacity', type: 'range', min: 0, max: 100, value: Math.round(L.opacity * 100), fmt: v => v + '%' }, { key: 'blend', label: 'Blend mode', type: 'select', options: BLENDS, value: L.blend }],
+  Aero.dialog({ title: 'Layer Properties', fields: [{ key: 'name', label: 'Name', type: 'text', value: L.name }, { key: 'op', label: 'Opacity', type: 'range', min: 0, max: 100, value: Math.round(L.opacity * 100), fmt: v => v + '%' }, { key: 'blend', label: 'Blend mode', type: 'select', options: blendOptions(L), value: L.blend }],
     onOK: v => { L.name = String(v.name || L.name).slice(0, 80); L.opacity = v.op / 100; L.blend = v.blend; doc.ver++; requestRender(); histPush('Layer Properties'); } });
 }
 function buildLayerButtons() {
@@ -308,11 +329,12 @@ function buildLayerButtons() {
     ['New pixel layer (Ctrl+Shift+N)', '<path d="M3 1.5h6l3.5 3.5v9.5H3z" fill="url(#gPaper)" stroke="#5a7a9a"/><circle cx="11.5" cy="11.5" r="3.6" fill="url(#gGreen)" stroke="#2a6a14" stroke-width=".8"/><path d="M11.5 9.6v3.8M9.6 11.5h3.8" stroke="#fff" stroke-width="1.4"/>', () => cmdNewLayer()],
     ['New group (Ctrl+G groups the current layer)', '<path d="M1.5 3.5h5l1.5 1.5h6.5v8.5h-13z" fill="url(#gFolder)" stroke="#a87a1a"/>', () => cmdNewGroup()],
     ['New fill layer', '<rect x="2" y="2" width="12" height="12" rx="2" fill="url(#gBlue)" stroke="#174a85"/><path d="M5 11 11 5" stroke="#fff" stroke-width="1.6"/>', () => cmdNewFill()],
+    ['Add layer mask (Alt-click: hide all)', '<rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="url(#gPaper)" stroke="#5a7a9a"/><circle cx="8" cy="8" r="3.4" fill="#3a3f48"/>', e => cmdAddMask(e && e.altKey ? 'hide' : doc.sel ? 'selection' : 'reveal')],
     ['Duplicate layer (Ctrl+J)', '<path d="M5 4.5h8v10H5z" fill="url(#gPaper)" stroke="#5a7a9a"/><path d="M3 1.5h8v10H3z" fill="url(#gPaper)" stroke="#5a7a9a"/>', () => cmdDuplicate()],
     ['Merge down (Ctrl+E)', '<path d="M8 11 3.5 6H6V1.5h4V6h2.5z" fill="url(#gGold)" stroke="#8a5a0a" stroke-linejoin="round"/><rect x="2" y="12.3" width="12" height="2.4" rx=".8" fill="url(#gBlue)" stroke="#174a85" stroke-width=".7"/>', () => cmdMergeDown()],
     ['Delete layer', '<circle cx="8" cy="8" r="6.3" fill="url(#gRed)" stroke="#8a1a10"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>', () => cmdDeleteLayer()]
   ];
-  for (const [t, svg, fn] of B) { const b = el('button', 'aero-iconbtn', `<svg viewBox="0 0 16 16">${svg}</svg>`); b.title = t; b.onclick = fn; bar.appendChild(b); }
+  for (const [t, svg, fn] of B) { const b = el('button', 'aero-iconbtn', `<svg viewBox="0 0 16 16">${svg}</svg>`); b.title = t; b.onclick = e => fn(e); bar.appendChild(b); }
 }
 
 /* ---------- history panel ---------- */

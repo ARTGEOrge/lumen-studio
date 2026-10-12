@@ -16,7 +16,7 @@ function nextLayerName() { // "Layer n" with n one above the highest existing nu
 class Layer {
   constructor(type, name, w, h) {
     this.id = uid(); this.type = type; this.name = name || (type === 'group' ? 'Group' : nextLayerName());
-    this.visible = true; this.opacity = 1; this.blend = 'normal'; this.lockAlpha = false; this.clip = false; this.open = true;
+    this.visible = true; this.opacity = 1; this.blend = type === 'group' ? 'pass-through' : 'normal'; this.lockAlpha = false; this.clip = false; this.open = true;
     this.color = [1, 1, 1];
     this.mask = null; this.maskOn = true; this.maskLinked = true; // layer mask: a tile layer outside the tree (transparent = reveal)
     this.text = null;    // text layer props (pixel layer whose tiles are the rendered text) — replaced, never mutated

@@ -125,3 +125,54 @@ table.kbd td:first-child{white-space:nowrap;color:var(--navy)}
 /* sample painting overlay */
 .aero-modal.lp-block{background:transparent;cursor:progress;place-items:end center;padding-bottom:64px}
 .lp-pill{gap:10px;padding:8px 18px;font-size:13px;color:var(--navy)}
+
+/* layer masks + text layers in the layers panel */
+.lthumb.tsel{outline:2px solid #3c7fb1;outline-offset:1px}
+.lmask{background:#808080}
+.lmask.moff{opacity:.45;background:linear-gradient(135deg,transparent 46%,#d0281a 46% 54%,transparent 54%),#808080}
+.llink{width:10px;height:18px;flex:none;display:grid;place-items:center;margin:0 -3px}
+.llink svg{width:9px;height:16px}
+.llink.off svg{opacity:.25}
+.ltext{position:absolute;margin-left:30px;margin-top:16px;font:700 11px/13px Georgia,serif;color:#fff;background:#1c5fb4;border-radius:2px;padding:0 3px;pointer-events:none}
+.litem{position:relative}
+
+/* text editing panel */
+.textpanel{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:21;display:flex;flex-direction:column;align-items:stretch;gap:5px;padding:8px 10px;width:min(440px,80%);color:var(--navy)}
+.textpanel[hidden]{display:none}
+.tp-head{display:flex;justify-content:space-between;gap:8px;font-size:12px;font-weight:600}
+.tp-head .dim{font-weight:400;font-size:11px}
+#text-ta{width:100%;box-sizing:border-box;min-height:58px;resize:vertical;font-size:15px;padding:4px 6px}
+.tp-btns{display:flex;justify-content:flex-end;gap:5px}
+
+/* color harmonies + palettes */
+.cp-harm{display:flex;align-items:center;gap:6px;margin:5px 0 1px}
+.cp-harm select{width:132px;flex:none}
+.cp-harmsw{display:flex;gap:3px;flex-wrap:wrap}
+.cp-harmsw .cp-sw.base{box-shadow:0 0 0 1px #000,0 0 0 2px #fff}
+.rp-pal{display:flex;gap:3px;flex-wrap:wrap;padding-top:4px;flex:none}
+
+/* adjustments */
+.adj-curve{display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:6px}
+.adj-curve canvas{width:268px;height:268px;cursor:crosshair;touch-action:none}
+.adj-hist{display:block;width:256px;height:70px;margin:2px auto 6px;border:1px solid #b6c9e0}
+
+/* pressure curve */
+.pc-wrap{display:flex;gap:14px;align-items:flex-start;margin-top:8px}
+.pc-wrap canvas#pc-curve{width:232px;height:232px;cursor:crosshair;touch-action:none}
+.pc-io{text-align:center;margin-top:2px;font-variant-numeric:tabular-nums}
+.pc-padbox canvas{border:1px solid #b6c9e0;border-radius:3px;width:300px;height:230px;cursor:crosshair}
+.pc-btns{display:flex;gap:5px;justify-content:flex-end;margin-top:5px}
+
+/* animation timeline */
+.aero-client{grid-template-rows:auto 1fr auto auto}
+.animbar{border-top:1px solid #a7bcd6;background:linear-gradient(#f7fafe,#e6eef8);padding:4px 6px 5px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.animbar[hidden]{display:none}
+.ab-ctl{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;color:var(--navy)}
+.ab-ctl label{display:inline-flex;align-items:center;gap:3px}
+.ab-ctl .sep{width:1px;height:18px;background:#b9cbe0}
+.ab-strip{display:flex;gap:4px;overflow-x:auto;padding:2px 1px 3px;min-height:52px}
+.ab-cell{position:relative;flex:none;width:64px;height:40px;border:1px solid #9fb2c8;border-radius:3px;background:#fff;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.ab-cell canvas{display:block;width:64px;height:40px;border-radius:2px}
+.ab-cell.on{border-color:#2c6fc0;box-shadow:0 0 0 2px #7fb3ea}
+.ab-n{position:absolute;right:2px;bottom:1px;font-size:10px;font-weight:700;color:#fff;text-shadow:0 0 2px #000,0 0 2px #000}
+body.zen .animbar{display:none}

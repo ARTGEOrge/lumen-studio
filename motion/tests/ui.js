@@ -35,7 +35,7 @@ document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: tru
 ok('pen open path w/ tangents', LM.comp().layers[0].shape.path.v.c === false && LM.comp().layers[0].shape.path.v.pts[0][4] !== 0, LM.comp().layers[0].shape.path.v);
 // text tool → dialog
 LM.tools.set('text'); { const [sx, sy] = scr(960, 900); P(view, 'pointerdown', sx, sy); P(view, 'pointerup', sx, sy); } await sleep(50);
-document.querySelector('.aero-modal textarea').value = 'Hello'; document.querySelector('.aero-modal textarea').dispatchEvent(new Event('input')); document.querySelector('.aero-modal .aero-btn.pri').click(); await sleep(30);
+{ const ti = document.querySelector('#textinput'); ti.value = 'Hello'; ti.dispatchEvent(new Event('input')); ti.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); } await sleep(30);
 ok('text tool', LM.comp().layers[0].type === 'text' && LM.comp().layers[0].text.str === 'Hello');
 // brush on a new drawing layer
 LM.tools.set('brush'); await drag(view, scr(300, 800), scr(700, 850));
@@ -90,7 +90,7 @@ if (optRow) { optRow.querySelector('.xbtn').click(); await sleep(20); }
 const ta = document.querySelector('.tl-row.expr textarea'); ok('expression row', !!ta && L.tr.opacity.x != null);
 if (ta) { ta.value = 'clamp(time * 50, 0, 100)'; ta.dispatchEvent(new Event('change')); await sleep(20); ok('typed expression evaluates', Math.abs(LM.val(L.tr.opacity, 1) - 50) < 1e-6, LM.val(L.tr.opacity, 1)); }
 // every menu item (except file pickers / saves)
-const skip = /^(Open Project…|Import File…|Save|Save As…|Save Current Frame as PNG…|New Project|Open Sample)$/;
+const skip = /^(Open Project…|Import File…|Import Audio…|Save|Save As…|Save Current Frame as PNG…|New Project|Open Sample)$/;
 let clicked = 0;
 for (const m of document.querySelectorAll('.aero-menu')) {
   m.click(); await sleep(5);

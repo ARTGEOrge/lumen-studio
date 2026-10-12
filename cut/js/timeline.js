@@ -28,6 +28,7 @@
       if (!LC.drag) { e.dataTransfer.dropEffect = 'copy'; return; }
       const p = pos(e); const row = rowAt(p.y); const t = Math.max(0, snapTime(xToT(p.x), null, true));
       if (LC.drag.kind === 'media') tl.dropGhost = planMedia(LC.drag.ids, t, row?.t);
+      else if (LC.drag.kind === 'seq') tl.dropGhost = planSeq(LC.drag.id, t, row?.t);
       else if (LC.drag.kind === 'fx') tl.dropGhost = planFx(LC.drag.fx, p, row);
       tl.draw();
     });
@@ -44,6 +45,7 @@
       e.stopPropagation();
       const p = pos(e), row = rowAt(p.y);
       if (LC.drag.kind === 'media' && g) LC.placeMedia(LC.drag.ids, g.t, row?.t, e.ctrlKey ? 'insert' : 'overwrite');
+      else if (LC.drag.kind === 'seq' && g) LC.placeSeq(LC.drag.id, g.t, row?.t, e.ctrlKey ? 'insert' : 'overwrite');
       else if (LC.drag.kind === 'fx') applyFx(LC.drag.fx, p, row);
       LC.drag = null; tl.draw();
     });
@@ -124,17 +126,23 @@
     if (tl.tool === 'razor') cur = 'crosshair'; else if (tl.tool === 'hand') cur = 'grab'; else if (tl.tool === 'zoom') cur = e.altKey ? 'zoom-out' : 'zoom-in';
     else if (tl.tool === 'text') cur = 'text'; else if (tl.tool === 'slip' && h.clip) cur = 'ew-resize';
     else if (h.tr && h.trEdge || h.clip && h.edge) cur = (tl.tool === 'ripple' || tl.ripple) ? 'col-resize' : 'ew-resize';
+    if (tl.tool === 'select' || tl.tool === 'ripple') { if (kfHit(p)) cur = 'ew-resize'; else { const eh = envHit(p); if (eh?.k) cur = 'move'; else if (eh?.line && e.ctrlKey) cur = 'copy'; } }
     can.style.cursor = cur;
     if (tl.tool === 'razor') { tl.razorX = h.clip ? tToX(snapTime(h.t, null, false)) : null; tl.draw(); }
   }
   function onDbl(e) {
     const h = hit(pos(e));
+    if (h.clip?.type === 'nest') return LC.openNest(h.clip);
     if (h.clip) { tl.select([h.clip.id]); LC.props.focus(); }
   }
   function onDown(e) {
     if (e.button === 1) return startPan(e);
     const p = pos(e), h = hit(p), P = LC.project;
     try { can.setPointerCapture(e.pointerId); } catch (_) { }
+    if (e.button === 2) {
+      const kh = kfHit(p); if (kh) return easeMenu(e, LC.keysAt(kh.c, kh.t).map(q => q[1]), 'Keyframe', () => { for (const [key] of LC.keysAt(kh.c, kh.t)) LC.removeKey(kh.c, key, kh.t); LC.commit('Delete keyframe'); LC.refresh(); });
+      const eh = envHit(p); if (eh?.k) return easeMenu(e, [eh.k], 'Volume Keyframe', () => { eh.tr.kf.vol = eh.tr.kf.vol.filter(k => k !== eh.k); if (!eh.tr.kf.vol.length) delete eh.tr.kf.vol; LC.commit('Delete track keyframe'); LC.refresh(); });
+    }
     if (e.button === 2) { if (h.clip && !tl.sel.has(h.clip.id)) tl.select([h.clip.id]); else if (h.tr) { tl.selTr = h.tr.id; tl.sel.clear(); LC.onSelection(); } return clipMenu(e, h); }
     if (tl.tool === 'hand') return startPan(e);
     if (tl.tool === 'zoom') { tl.zoomAt(tl.pps * (e.altKey ? .5 : 2), p.x); return; }
@@ -146,6 +154,16 @@
     if (tl.tool === 'text') {
       const tr = h.row && h.row.t.kind === 'video' ? h.row.t : LC.videoTracks()[1] || LC.videoTracks()[0];
       LC.addTitle({ track: tr.id, start: Math.max(0, snapTime(h.t, null, false)) }); return;
+    }
+    // keyframe diamonds of the selected clip and track-volume automation points come first
+    const kh = kfHit(p), eh = !kh && envHit(p);
+    if (kh && !LC.track(kh.c.track).lock) {
+      const keys = LC.keysAt(kh.c, kh.t).map(q => q[1]);
+      tl.op = { kind: 'kf', c: kh.c, t: kh.t, t0: kh.t, x0: p.x, y0: p.y, keys, orig: keys.map(k => k.t), moved: false }; tl.draw(); return;
+    }
+    if (eh && !eh.tr.lock) {
+      if (eh.k) { tl.op = { kind: 'env', tr: eh.tr, row: eh.row, k: eh.k, t0: eh.k.t, v0: eh.k.v, x0: p.x, y0: p.y, moved: false }; return; }
+      if (e.ctrlKey) { const t = LC.fr(Math.max(0, xToT(p.x))); const v = +LC.trackVol(eh.tr, t).toFixed(1); LC.setKey(eh.tr, 'vol', t, v); LC.commit('Add track volume keyframe'); LC.refresh(); return; }
     }
     if (h.tr) {
       tl.sel.clear(); tl.selTr = h.tr.id; LC.onSelection(); tl.draw();
@@ -172,6 +190,35 @@
     tl.op = { kind: 'marquee', x0: p.x + tl.sx, y0: p.y, base: new Set(tl.sel) };
     tl.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
   }
+  /* ---------- keyframe + automation hit testing ---------- */
+  function kfHit(p) {
+    for (const id of tl.sel) {
+      const c = LC.clip(id); if (!c || !Object.keys(c.kf || {}).length) continue;
+      const r = rowOf(c.track); if (!r) continue;
+      const ky = r.y + 2 + (r.h - 5) - 6; if (Math.abs(p.y - ky) > 6) continue;
+      for (const t of LC.keyTimes(c)) if (Math.abs(tToX(c.start + t) - p.x) <= 5) return { c, t };
+    }
+    return null;
+  }
+  const VOL_LO = -60, VOL_HI = 12;
+  const volY = (r, db) => r.y + 5 + (1 - (Math.min(VOL_HI, Math.max(VOL_LO, db)) - VOL_LO) / (VOL_HI - VOL_LO)) * (r.h - 11);
+  const yVol = (r, y) => VOL_HI - (y - r.y - 5) / (r.h - 11) * (VOL_HI - VOL_LO);
+  tl.volY = volY;
+  function envHit(p) {
+    const r = rowAt(p.y); if (!r || r.t.kind !== 'audio' || !r.t.kf?.vol?.length) return null;
+    for (const k of r.t.kf.vol) if (Math.abs(tToX(k.t) - p.x) <= 5 && Math.abs(volY(r, k.v) - p.y) <= 5) return { tr: r.t, row: r, k };
+    if (Math.abs(volY(r, LC.trackVol(r.t, xToT(p.x))) - p.y) <= 4) return { tr: r.t, row: r, line: true };
+    return null;
+  }
+  tl.kfHit = kfHit; tl.envHit = envHit;
+  function easeMenu(e, keys, label, onDelete) {
+    const cur = keys[0]?.e || 'linear';
+    const set = (ez, bz) => { LC.setEase(keys, ez, bz); LC.commit('Keyframe ' + LC.EASES.find(q => q[0] === ez)[1].replace('…', '')); LC.refresh(); };
+    const items = LC.EASES.map(([id, name]) => [(cur === id ? '● ' : '    ') + name, () => id === 'bezier' ? LC.bezierDialog(keys[0]?.bz, bz => set('bezier', bz)) : set(id)]);
+    items.push('-', ['Delete ' + label, onDelete]);
+    LC.ctxMenu(e.clientX, e.clientY, items);
+  }
+  tl.easeMenu = easeMenu;
   function startPan(e) { const x0 = e.clientX, s0 = hscroll.scrollLeft, y0 = e.clientY, v0 = scroller.scrollTop; can.style.cursor = 'grabbing'; tl.op = { kind: 'pan', x0, s0, y0, v0 }; try { can.setPointerCapture(e.pointerId); } catch (_) { } }
   function startMove(e, p, c) {
     const P = LC.project; let ids = [...tl.sel].filter(id => { const x = LC.clip(id); return x && !LC.track(x.track).lock; });
@@ -203,8 +250,20 @@
     else if (op.kind === 'trim') doTrim(op, dx, e);
     else if (op.kind === 'slip') {
       const c = op.c, m = LC.mediaOf(c); const d = -dx / tl.pps;
-      for (const [id, in0] of op.ids) { const x = LC.clip(id), mm = LC.mediaOf(x); x.in = Math.max(0, Math.min(in0 + d * x.props.speed, mm.duration - x.dur * x.props.speed)); }
-      LC.statusMsg(`Slip: in ${LC.tc(c.in)}  out ${LC.tc(c.in + c.dur * c.props.speed)}`); LC.requestRender();
+      for (const [id, in0] of op.ids) { const x = LC.clip(id), sd = LC.srcDur(x); if (sd == null || x.hold != null) continue; x.in = Math.max(0, Math.min(in0 + d * LC.avgSpeed(x), sd - LC.srcOffset(x, x.dur))); }
+      LC.statusMsg(`Slip: in ${LC.tc(c.in)}  out ${LC.tc(LC.srcTime(c, c.start + c.dur))}`); LC.requestRender();
+    } else if (op.kind === 'kf') {
+      const c = op.c; let nt = op.t0 + dx / tl.pps;
+      if (tl.snap && Math.abs(tToX(LC.playhead) - tToX(c.start + nt)) < 8) nt = LC.playhead - c.start;
+      nt = Math.min(c.dur, Math.max(0, LC.fr(c.start + nt) - c.start));
+      // refuse to drop onto another keyframe of the same property
+      const eps = .5 / LC.fps(), clash = Object.entries(c.kf).some(([, a]) => a.some(k => !op.keys.includes(k) && Math.abs(k.t - nt) < eps) && a.some(k => op.keys.includes(k)));
+      if (!clash) { op.keys.forEach(k => k.t = nt); Object.values(c.kf).forEach(a => a.sort((p, q) => p.t - q.t)); op.t = nt; }
+      LC.statusMsg('Keyframe at ' + LC.tc(c.start + op.t)); LC.props.update(); LC.setPlayhead(c.start + op.t);
+    } else if (op.kind === 'env') {
+      const r = op.row, dy = p.y - op.y0;
+      op.k.t = Math.max(0, LC.fr(op.t0 + dx / tl.pps)); op.k.v = +Math.min(VOL_HI, Math.max(VOL_LO, op.v0 + yVol(r, op.y0 + dy) - yVol(r, op.y0))).toFixed(1);
+      op.tr.kf.vol.sort((a, b) => a.t - b.t); LC.statusMsg(`${op.tr.name} volume ${op.k.v.toFixed(1)} dB at ${LC.tc(op.k.t)}`); LC.mixer?.update();
     } else if (op.kind === 'trdur') {
       const d = (op.edge === 'l' ? -dx : dx) / tl.pps * (op.two ? 2 : 1);
       op.tr.dur = Math.max(1 / LC.fps(), LC.fr(op.d0 + d)); LC.cleanTransitions(); LC.statusMsg('Transition duration ' + LC.tc(op.tr.dur)); LC.props.render();
@@ -215,6 +274,10 @@
     const op = tl.op; if (!op) return; tl.op = null; tl.snapT = null;
     if (op.kind === 'pan') { can.style.cursor = ''; return; }
     if (op.kind === 'marquee') { tl.marquee = null; LC.onSelection(); tl.draw(); return; }
+    if (op.kind === 'kf' && !op.moved) { LC.setPlayhead(op.c.start + op.t0); tl.draw(); return; }
+    if (op.kind === 'env' && !op.moved) return;
+    if (op.kind === 'kf') { LC.commit('Move keyframe'); LC.refresh(); return; }
+    if (op.kind === 'env') { LC.commit('Move track keyframe'); LC.refresh(); if (LC.playing) LC.restartPlayback(); return; }
     if (!op.moved) { if (op.kind === 'move' && !e.ctrlKey && !e.shiftKey && tl.sel.size > 1 && !e.altKey) tl.select([op.prim.id]); tl.draw(); return; }
     if (op.kind === 'move') finishMove(op, e);
     else if (op.kind === 'trim') { LC.cleanTransitions(); LC.commit(op.ripple ? 'Ripple trim' : 'Trim clip'); }
@@ -229,6 +292,8 @@
     if (op?.kind === 'trim') LC.project.clips = op.snap;
     if (op?.kind === 'slip') for (const [id, in0] of op.ids) LC.clip(id).in = in0;
     if (op?.kind === 'trdur') op.tr.dur = op.d0;
+    if (op?.kind === 'kf') { op.keys.forEach((k, i) => k.t = op.orig[i]); Object.values(op.c.kf).forEach(a => a.sort((p, q) => p.t - q.t)); }
+    if (op?.kind === 'env') { op.k.t = op.t0; op.k.v = op.v0; op.tr.kf.vol.sort((a, b) => a.t - b.t); }
     LC.refresh();
   }
 
@@ -274,11 +339,11 @@
       const neighbours = LC.clipsOn(x.track).filter(o => !excl.has(o.id));
       if (op.edge === 'l') {
         d = Math.min(d, x.dur - one);
-        if (tb) d = Math.max(d, -x.in / x.props.speed);
+        if (tb) d = Math.max(d, -x.in / Math.max(.05, LC.speedAt(x, 0)));
         if (!op.ripple) { const prev = neighbours.filter(o => o.start + o.dur <= x.start + 1e-6).pop(); d = Math.max(d, (prev ? prev.start + prev.dur : 0) - x.start); }
       } else {
         d = Math.max(d, one - x.dur);
-        if (tb && m) d = Math.min(d, (m.duration - x.in) / x.props.speed - x.dur);
+        if (tb) d = Math.min(d, LC.maxDur(x) - x.dur);
         if (!op.ripple) { const next = neighbours.find(o => o.start >= x.start + x.dur - 1e-6); if (next) d = Math.min(d, next.start - (x.start + x.dur)); }
       }
     }
@@ -287,7 +352,7 @@
     for (const id of op.ids) {
       const x = LC.clip(id), end0 = x.start + x.dur; tracks.add(x.track);
       if (op.edge === 'l') {
-        if (op.ripple) { x.in += d * x.props.speed; x.dur -= d; for (const k of Object.keys(x.kf || {})) x.kf[k].forEach(q => q.t -= d); LC.rippleShift(x.track, end0 - 1e-6, -d, excl); }
+        if (op.ripple) { if (x.hold == null) x.in = LC.srcTime(x, x.start + d); x.dur -= d; for (const k of Object.keys(x.kf || {})) x.kf[k].forEach(q => q.t -= d); LC.rippleShift(x.track, end0 - 1e-6, -d, excl); }
         else LC.trimStart(x, x.start + d);
       } else { x.dur += d; if (op.ripple) LC.rippleShift(x.track, end0 - 1e-6, d, excl); }
     }
@@ -332,22 +397,25 @@
     if (v && v.lock) v = V.find(t => !t.lock); if (a && a.lock) a = A.find(t => !t.lock);
     return { v, a };
   }
-  function planMedia(ids, t, rowTrack) {
+  function planMedia(ids, t, rowTrack, opts = {}) {
     const items = []; let cur = t;
     for (const id of ids) {
       const m = LC.project.media.find(x => x.id === id); if (!m) continue;
       const rt = LC.rt.media.get(id); if (!rt || rt.status !== 'ok') continue;
-      const dur = m.kind === 'image' ? 5 : LC.fr(m.duration) || 1 / LC.fps();
+      // source In/Out marks (set in the Source monitor) define the range; otherwise the whole file
+      const sIn = m.kind === 'image' ? 0 : Math.max(0, Math.min(m.srcIn ?? 0, m.duration)), sOut = m.kind === 'image' ? 0 : Math.max(sIn, Math.min(m.srcOut ?? m.duration, m.duration));
+      let dur = m.kind === 'image' ? 5 : LC.fr(sOut - sIn) || 1 / LC.fps();
+      if (opts.dur) dur = m.kind === 'image' ? opts.dur : Math.min(dur, opts.dur);
       const { v, a } = targetTracks(m.kind, rowTrack);
-      if (m.kind === 'video' || m.kind === 'image') { if (v) items.push({ track: v.id, start: cur, dur, type: m.kind, media: m }); if (m.kind === 'video' && m.hasAudio && a) items.push({ track: a.id, start: cur, dur, type: 'audio', media: m, linked: true }); }
-      else if (a) items.push({ track: a.id, start: cur, dur, type: 'audio', media: m });
+      if (m.kind === 'video' || m.kind === 'image') { if (v && opts.video !== false) items.push({ track: v.id, start: cur, dur, type: m.kind, media: m, in: sIn }); if (m.kind === 'video' && m.hasAudio && a && opts.audio !== false) items.push({ track: a.id, start: cur, dur, type: 'audio', media: m, linked: true, in: sIn }); }
+      else if (a) items.push({ track: a.id, start: cur, dur, type: 'audio', media: m, in: sIn });
       cur += dur;
     }
     return { t, items };
   }
-  LC.placeMedia = (ids, t, rowTrack, mode = 'overwrite') => {
+  LC.placeMedia = (ids, t, rowTrack, mode = 'overwrite', opts = {}) => {
     rows();
-    const plan = planMedia(ids, LC.fr(t), rowTrack && LC.track(rowTrack.id || rowTrack));
+    const plan = planMedia(ids, LC.fr(t), rowTrack && LC.track(rowTrack.id || rowTrack), opts);
     if (!plan.items.length) return [];
     const made = []; let link = null, lastMedia = null;
     if (mode === 'insert') {
@@ -358,7 +426,7 @@
     for (const it of plan.items) {
       if (it.media !== lastMedia) { link = it.media.kind === 'video' && it.media.hasAudio ? 'l' + Aero.uid() : null; lastMedia = it.media; }
       if (mode !== 'insert') LC.overwriteRange(it.track, it.start, it.start + it.dur);
-      const c = LC.makeClip({ track: it.track, type: it.type, media: it.media.id, start: it.start, in: 0, dur: it.dur, link: (it.type === 'audio' && !it.linked) ? null : (it.media.kind === 'video' ? link : null), name: it.media.name });
+      const c = LC.makeClip({ track: it.track, type: it.type, media: it.media.id, start: it.start, in: it.in || 0, dur: it.dur, link: (it.type === 'audio' && !it.linked) ? null : (it.media.kind === 'video' ? link : null), name: it.media.name });
       LC.project.clips.push(c); made.push(c);
     }
     LC.cleanTransitions();
@@ -366,11 +434,37 @@
     LC.commit(`${mode === 'insert' ? 'Insert' : 'Overwrite'} ${made.length > 1 ? made.length + ' clips' : made[0].name}`);
     LC.refresh(); return made;
   };
+  /* nested sequence drop: video part on a video track, audio part (linked) on an audio track */
+  function planSeq(id, t, rowTrack) {
+    if (!LC.canNest(id)) return null;
+    const dur = LC.fr(LC.seqDur(id)); if (dur <= 0) return null;
+    const { v, a } = targetTracks('video', rowTrack), items = [], name = LC.seqName(id);
+    if (v) items.push({ track: v.id, start: t, dur, type: 'nest', label: '⧉ ' + name });
+    if (a && LC.seqHasAudio(id)) items.push({ track: a.id, start: t, dur, type: 'nest', label: '⧉ ' + name });
+    return { t, items };
+  }
+  LC.placeSeq = (id, t, rowTrack, mode = 'overwrite') => {
+    if (!LC.seqEntry(id)) return [];
+    if (!LC.canNest(id)) { Aero.toast('A sequence cannot contain itself (that would create a cycle)'); return []; }
+    rows();
+    const plan = planSeq(id, LC.fr(t), rowTrack && LC.track(rowTrack.id || rowTrack));
+    if (!plan || !plan.items.length) { Aero.toast('That sequence is empty'); return []; }
+    if (mode === 'insert') { const total = plan.items[0].dur; for (const tid of new Set(plan.items.map(i => i.track))) { LC.clipsOn(tid).filter(c => c.start < plan.t && c.start + c.dur > plan.t).forEach(c => LC.splitClip(c, plan.t)); LC.rippleShift(tid, plan.t, total); } }
+    const link = plan.items.length > 1 ? 'l' + Aero.uid() : null, made = [];
+    for (const it of plan.items) {
+      if (mode !== 'insert') LC.overwriteRange(it.track, it.start, it.start + it.dur);
+      const c = LC.makeClip({ track: it.track, type: 'nest', seq: id, start: it.start, in: 0, dur: it.dur, link, name: LC.seqName(id) });
+      LC.project.clips.push(c); made.push(c);
+    }
+    LC.cleanTransitions(); tl.select(made.map(c => c.id));
+    LC.commit(`${mode === 'insert' ? 'Insert' : 'Overwrite'} nested ${LC.seqName(id)}`); LC.refresh();
+    return made;
+  };
   function planFx(fx, p, row) {
     if (!row) return null;
     const [kind, type] = fx.split(':');
-    if (kind === 'title') { if (row.t.kind !== 'video') return null; const t = Math.max(0, snapTime(xToT(p.x), null, true)); return { t, items: [{ track: row.t.id, start: t, dur: 5, type: 'title' }] }; }
-    const h = hit(p); if (!h.clip || h.clip.type === 'audio') return null;
+    if (kind === 'title' || kind === 'adjust') { if (row.t.kind !== 'video') return null; const t = Math.max(0, snapTime(xToT(p.x), null, true)); return { t, items: [{ track: row.t.id, start: t, dur: 5, type: kind }] }; }
+    const h = hit(p), wantAudio = kind === 'atransition'; if (!h.clip || (h.clip.type === 'audio') !== wantAudio) return null;
     const c = h.clip, side = h.t < c.start + c.dur / 2 ? 'in' : 'out';
     const others = LC.clipsOn(c.track), eps = 1e-4;
     const nb = side === 'in' ? others.find(o => Math.abs(o.start + o.dur - c.start) < eps) : others.find(o => Math.abs(o.start - c.start - c.dur) < eps);
@@ -381,10 +475,12 @@
   function applyFx(fx, p, row) {
     const [kind, type] = fx.split(':');
     if (kind === 'title') { if (!row || row.t.kind !== 'video') return Aero.toast('Drop titles on a video track'); LC.addTitle({ track: row.t.id, start: Math.max(0, snapTime(xToT(p.x), null, false)), preset: type }); return; }
-    const h = hit(p); if (!h.clip || h.clip.type === 'audio') return Aero.toast('Drop transitions on the start or end of a video clip');
+    if (kind === 'adjust') { if (!row || row.t.kind !== 'video') return Aero.toast('Drop adjustment layers on a video track'); LC.addAdjustment({ track: row.t.id, start: Math.max(0, snapTime(xToT(p.x), null, false)) }); return; }
+    const h = hit(p), wantAudio = kind === 'atransition';
+    if (!h.clip || (h.clip.type === 'audio') !== wantAudio) return Aero.toast(wantAudio ? 'Drop audio transitions on the start or end of an audio clip' : 'Drop transitions on the start or end of a video clip');
     const side = h.t < h.clip.start + h.clip.dur / 2 ? 'in' : 'out';
     const tr = LC.addTransition(h.clip, side, type, 1);
-    if (tr) { tl.sel.clear(); tl.selTr = tr.id; LC.commit('Add ' + LC.TRANSITIONS.find(x => x.id === type).name); LC.onSelection(); LC.refresh(); }
+    if (tr) { tl.sel.clear(); tl.selTr = tr.id; LC.commit('Add ' + LC.trName(type)); LC.onSelection(); LC.refresh(); }
   }
 
   /* ---------- context menu ---------- */
@@ -395,7 +491,12 @@
       items.push(['Split at Playhead', () => LC.splitSelected()], ['Ripple Delete', () => LC.rippleDelete()], ['Delete', () => LC.deleteSelection()], '-',
         ['Copy', () => LC.copy()], ['Cut', () => LC.cut()], '-', ['Speed/Duration…', () => LC.speedDialog()], [h.clip.disabled ? 'Enable' : 'Disable', () => LC.toggleEnable()],
         [h.clip.link ? 'Unlink' : 'Link', () => LC.toggleLink()], ['Reset Effects', () => LC.resetEffects()]);
-      if (h.clip.type !== 'audio') items.push('-', ['Add Cross Dissolve at Start', () => { LC.addTransition(h.clip, 'in', 'dissolve', 1); LC.commit('Add transition'); LC.refresh(); }], ['Add Cross Dissolve at End', () => { LC.addTransition(h.clip, 'out', 'dissolve', 1); LC.commit('Add transition'); LC.refresh(); }]);
+      const addTr = (side, type) => { const x = LC.addTransition(h.clip, side, type, 1); if (x) { tl.sel.clear(); tl.selTr = x.id; LC.commit('Add ' + LC.trName(type)); } LC.refresh(); };
+      if (h.clip.type !== 'audio') items.push('-', ['Add Cross Dissolve at Start', () => addTr('in', 'dissolve')], ['Add Cross Dissolve at End', () => addTr('out', 'dissolve')]);
+      else items.push('-', ['Add Audio Crossfade at Start', () => addTr('in', 'cpower')], ['Add Audio Crossfade at End', () => addTr('out', 'cpower')]);
+      if (h.clip.type === 'video') items.push('-', ['Add Frame Hold', () => LC.frameHold(false)], ['Insert Frame Hold Segment', () => LC.frameHold(true)]);
+      items.push('-', ['Nest…', () => LC.nestSelection()]); if (h.clip.type === 'nest') items.push(['Open Nested Sequence', () => LC.openNest(h.clip)]);
+      if (LC.isVisual(h.clip) && h.clip.type !== 'adjust') items.push('-', ['Picture-in-Picture: Top Right', () => LC.pip('tr')], ['Picture-in-Picture: Bottom Left', () => LC.pip('bl')], ['Reset Position and Scale', () => LC.pip('full')]);
     } else { items.push(['Paste', () => LC.paste()], ['Add Marker', () => LC.addMarker()], ['Zoom to Sequence', () => tl.zoomFit()]); }
     LC.ctxMenu(e.clientX, e.clientY, items);
   }
@@ -435,7 +536,7 @@
   tl.draw = () => { if (pending) return; pending = true; requestAnimationFrame(() => { pending = false; drawNow(); }); };
   tl.drawNow = () => drawNow();
   const COL = {
-    video: ['#7fb0ea', '#4a7fc4', '#2c5c99'], audio: ['#86d68f', '#45a656', '#2a7238'], image: ['#f0c27a', '#d39b3f', '#9a6a1c'], title: ['#d6a4ec', '#a965c9', '#743a96']
+    video: ['#7fb0ea', '#4a7fc4', '#2c5c99'], audio: ['#86d68f', '#45a656', '#2a7238'], image: ['#f0c27a', '#d39b3f', '#9a6a1c'], title: ['#d6a4ec', '#a965c9', '#743a96'], adjust: ['#c9d4de', '#8fa1b3', '#5c6e80'], nest: ['#9ae6dd', '#3aa79c', '#1f6f68']
   };
   function niceStep(pps) {
     const fps = LC.fps(), cands = [1 / fps, 2 / fps, 5 / fps, 10 / fps, .5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
@@ -478,12 +579,13 @@
       }
       // transitions
       for (const tr of P.transitions.filter(q => q.track === r.t.id)) drawTransition(x, tr, r);
+      if (r.t.kind === 'audio' && r.t.kf?.vol?.length) drawEnv(x, r, W);
     }
     // drop ghost
     const g = tl.dropGhost;
     if (g) {
       x.save();
-      if (g.items) g.items.forEach(it => { const rr = rowOf(it.track); if (!rr) return; const gx = tToX(it.start), gw = it.dur * tl.pps; x.fillStyle = 'rgba(60,127,177,.25)'; x.strokeStyle = '#2a6fc0'; x.setLineDash([4, 3]); x.lineWidth = 1.5; x.fillRect(gx, rr.y + 2, gw, rr.h - 5); x.strokeRect(gx + .5, rr.y + 2.5, gw - 1, rr.h - 6); x.setLineDash([]); x.fillStyle = '#123'; x.font = '11px Segoe UI'; x.fillText(it.type === 'title' ? 'Title' : it.media.name, gx + 6, rr.y + 16); });
+      if (g.items) g.items.forEach(it => { const rr = rowOf(it.track); if (!rr) return; const gx = tToX(it.start), gw = it.dur * tl.pps; x.fillStyle = 'rgba(60,127,177,.25)'; x.strokeStyle = '#2a6fc0'; x.setLineDash([4, 3]); x.lineWidth = 1.5; x.fillRect(gx, rr.y + 2, gw, rr.h - 5); x.strokeRect(gx + .5, rr.y + 2.5, gw - 1, rr.h - 6); x.setLineDash([]); x.fillStyle = '#123'; x.font = '11px Segoe UI'; x.fillText(it.label || (it.type === 'title' ? 'Title' : it.type === 'adjust' ? 'Adjustment Layer' : it.media.name), gx + 6, rr.y + 16); });
       if (g.tr) { const rr = rowOf(g.track); const band = trBand(rr); x.fillStyle = 'rgba(255,190,40,.55)'; x.strokeStyle = '#b07800'; const gx = tToX(g.s), gw = (g.e - g.s) * tl.pps; x.fillRect(gx, band.y0, gw, band.y1 - band.y0); x.strokeRect(gx + .5, band.y0 + .5, gw - 1, band.y1 - band.y0 - 1); }
       x.restore();
     }
@@ -531,6 +633,14 @@
         }
       }
     }
+    if (c.type === 'nest') {
+      x.fillStyle = 'rgba(255,255,255,.14)'; for (let i = Math.floor(Math.max(cx, 0) / 10) * 10; i < Math.min(cx + cw, W); i += 10) x.fillRect(i, by + bh - 4, 6, 2);
+      x.fillStyle = 'rgba(8,40,36,.9)'; x.font = '600 11px Segoe UI'; x.fillText('⧉ ' + LC.seqName(c.seq), Math.max(cx, 0) + 8, by + bh / 2 + 4, Math.max(0, cw - 12));
+    }
+    if (c.type === 'adjust') {
+      x.strokeStyle = 'rgba(255,255,255,.28)'; x.lineWidth = 6; for (let i = Math.max(cx, -bh) - bh; i < Math.min(cx + cw, W); i += 16) { x.beginPath(); x.moveTo(i, by + bh); x.lineTo(i + bh, by); x.stroke(); }
+      x.fillStyle = 'rgba(20,35,50,.85)'; x.font = '600 11px Segoe UI'; x.fillText('Adjustment Layer', Math.max(cx, 0) + 8, by + bh / 2 + 4, Math.max(0, cw - 12));
+    }
     if (c.type === 'title') {
       x.fillStyle = 'rgba(255,255,255,.9)'; x.font = `${c.title.italic ? 'italic ' : ''}700 ${Math.min(22, Math.max(10, bh * .5))}px "${c.title.font}"`;
       x.fillText(c.title.text.replace(/\n/g, ' '), cx + 8, by + bh / 2 + 6);
@@ -540,8 +650,10 @@
     x.fillStyle = col[2]; x.globalAlpha = c.disabled ? .45 : .9; x.fillRect(cx, y, cw, hh); x.globalAlpha = c.disabled ? .45 : 1; x.fillStyle = hg; x.fillRect(cx, y, cw, hh / 2);
     x.font = '11px Segoe UI'; x.fillStyle = '#fff'; x.textBaseline = 'middle';
     const tags = [];
-    if (c.props.speed !== 1) tags.push(Math.round(c.props.speed * 100) + '%');
-    const pr = c.props, fx = pr.exposure || pr.brightness || pr.contrast || pr.saturation !== 100 || pr.temperature || pr.blur || pr.crop.some(v => v) || Object.keys(c.kf || {}).length;
+    if (c.hold != null) tags.push('Hold'); else if (LC.ramped(c)) tags.push('Ramp'); else if (c.props.speed !== 1) tags.push(Math.round(c.props.speed * 100) + '%');
+    if (c.key?.on) tags.push('Key');
+    if (c.props.blend && c.props.blend !== 'normal') tags.push(LC.BLEND_MODES.find(b => b[0] === c.props.blend)?.[1] || '');
+    const pr = c.props, dp = LC.defaultProps(), fx = LC.COLOR_KEYS.some(k => pr[k] !== dp[k]) || pr.blur || pr.crop.some(v => v) || Object.keys(c.kf || {}).length || c.key?.on || c.lut || LC.curvesActive(c.curves) || ['wS', 'wM', 'wH'].some(k => pr[k].some(v => v)) || (c.afx && Object.values(c.afx).some(f => f.on));
     let label = (c.link ? '' : '') + LC.clipName(c) + (tags.length ? '  [' + tags.join(' ') + ']' : '');
     if (off) label = '⚠ ' + label + ' — offline';
     x.save(); x.shadowColor = 'rgba(0,0,0,.6)'; x.shadowBlur = 2; x.fillText(label, Math.max(cx, 0) + 5, y + hh / 2 + .5, Math.max(0, cw - 26)); x.restore();
@@ -556,8 +668,15 @@
     }
     // keyframes
     if (sel) {
-      const kts = LC.keyTimes(c); x.fillStyle = '#fff'; x.strokeStyle = '#333';
-      kts.forEach(t => { const kx = cx + t * tl.pps, ky = y + h - 6; x.beginPath(); x.moveTo(kx, ky - 4); x.lineTo(kx + 4, ky); x.lineTo(kx, ky + 4); x.lineTo(kx - 4, ky); x.closePath(); x.fill(); x.stroke(); });
+      const kts = LC.keyTimes(c); x.strokeStyle = '#333';
+      kts.forEach(t => {
+        const kx = cx + t * tl.pps, ky = y + h - 6, ks = LC.keysAt(c, t), e = ks[0]?.[1].e || 'linear', drag = tl.op?.kind === 'kf' && tl.op.c.id === c.id && Math.abs(tl.op.t - t) < 1e-3;
+        x.fillStyle = drag ? '#ffd34a' : '#fff'; x.beginPath();
+        if (e === 'hold') x.rect(kx - 3.5, ky - 3.5, 7, 7);
+        else if (e === 'linear') { x.moveTo(kx, ky - 4); x.lineTo(kx + 4, ky); x.lineTo(kx, ky + 4); x.lineTo(kx - 4, ky); x.closePath(); }
+        else { x.moveTo(kx - 4, ky - 4); x.quadraticCurveTo(kx, ky, kx + 4, ky - 4); x.lineTo(kx + 4, ky + 4); x.quadraticCurveTo(kx, ky, kx - 4, ky + 4); x.closePath(); }   // eased: hourglass
+        x.fill(); x.stroke();
+      });
     }
     x.restore();
     // border
@@ -565,13 +684,21 @@
     x.beginPath(); x.roundRect(cx + (sel ? 1 : .5), y + (sel ? 1 : .5), cw - (sel ? 2 : 1), h - (sel ? 2 : 1), 3); x.stroke();
     if (sel) { x.strokeStyle = 'rgba(255,255,255,.7)'; x.lineWidth = 1; x.beginPath(); x.roundRect(cx + 2.5, y + 2.5, cw - 5, h - 5, 2); x.stroke(); }
   }
+  function drawEnv(x, r, W) {               // track volume automation ("rubber band")
+    x.save(); x.beginPath(); x.rect(0, r.y, W, r.h - 1); x.clip();
+    x.strokeStyle = '#ffcf33'; x.lineWidth = 1.6; x.shadowColor = 'rgba(0,0,0,.6)'; x.shadowBlur = 2; x.beginPath();
+    for (let px = 0; px <= W; px += 2) { const yy = volY(r, LC.trackVol(r.t, xToT(px))); px ? x.lineTo(px, yy) : x.moveTo(px, yy); }
+    x.stroke(); x.shadowBlur = 0;
+    for (const k of r.t.kf.vol) { const kx = tToX(k.t); if (kx < -6 || kx > W + 6) continue; x.fillStyle = k.e === 'hold' ? '#ffcf33' : '#fff'; x.strokeStyle = '#7a5a00'; x.beginPath(); x.arc(kx, volY(r, k.v), 3.5, 0, 7); x.fill(); x.stroke(); }
+    x.restore();
+  }
   function drawTransition(x, tr, r) {
     const R = LC.trRegion(tr), x0 = tToX(R.s), w = (R.e - R.s) * tl.pps, band = trBand(r), sel = tl.selTr === tr.id;
     const g = x.createLinearGradient(0, band.y0, 0, band.y1); g.addColorStop(0, sel ? '#fff3c4' : '#f4f0ff'); g.addColorStop(.5, sel ? '#ffd86a' : '#d5c8f2'); g.addColorStop(1, sel ? '#f0b830' : '#a993dc');
     x.fillStyle = g; x.beginPath(); x.roundRect(x0, band.y0, w, band.y1 - band.y0, 3); x.fill();
     x.strokeStyle = sel ? '#a06a00' : '#5a4a8a'; x.lineWidth = sel ? 1.5 : 1; x.stroke();
     x.beginPath(); x.moveTo(x0 + 2, band.y1 - 2); x.lineTo(x0 + w - 2, band.y0 + 2); x.strokeStyle = 'rgba(60,40,110,.45)'; x.lineWidth = 1; x.stroke();
-    if (w > 50) { x.fillStyle = '#2a1f4a'; x.font = '10px Segoe UI'; x.textBaseline = 'middle'; x.fillText(LC.TRANSITIONS.find(t => t.id === tr.type).name, x0 + 5, (band.y0 + band.y1) / 2, w - 10); x.textBaseline = 'alphabetic'; }
+    if (w > 50) { x.fillStyle = '#2a1f4a'; x.font = '10px Segoe UI'; x.textBaseline = 'middle'; x.fillText(LC.trName(tr.type), x0 + 5, (band.y0 + band.y1) / 2, w - 10); x.textBaseline = 'alphabetic'; }
   }
   function drawRuler(x, W, H, dpr) {
     const P = LC.project; x.setTransform(dpr, 0, 0, dpr, 0, 0);

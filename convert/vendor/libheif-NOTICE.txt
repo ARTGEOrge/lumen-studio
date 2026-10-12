@@ -1,0 +1,6 @@
+libheif-bundle.js = libheif-js 1.23.5 (libheif-wasm/libheif-bundle.js), an Emscripten build of libheif
+(https://github.com/strukturag/libheif) packaged by catdad-experiments (https://github.com/catdad-experiments/libheif-js).
+libheif is licensed under the GNU Lesser General Public License v3.0 (see libheif.LICENSE); the libheif-js packaging is
+licensed as described in libheif-js.LICENSE. It is shipped unmodified, as a separate, replaceable file, and is loaded
+at runtime only when a HEIC/HEIF file is converted. You may replace vendor/libheif-bundle.js with your own build of the
+same interface. Source: https://www.npmjs.com/package/libheif-js/v/1.23.5 and https://github.com/strukturag/libheif

@@ -33,6 +33,7 @@ const BLENDS = [['source-over', 'Normal'], ['multiply', 'Multiply'], ['screen', 
 /* ---------- helpers ---------- */
 function mk(w, h) { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
 function cx(c) { return c.getContext('2d'); }
+function mkR(w, h) { const c = mk(w, h); c.getContext('2d', { willReadFrequently: true }); return c; }  // CPU-backed: cheap getImageData
 function clone(src) { const c = mk(src.width, src.height); cx(c).drawImage(src, 0, 0); return c; }
 function reset(c) { c.setTransform(1, 0, 0, 1, 0, 0); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over'; c.filter = 'none'; c.shadowColor = 'transparent'; }
 function hexToRgb(h) { h = h.replace('#', ''); if (h.length === 3) h = h.split('').map(x => x + x).join(''); const n = parseInt(h, 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
@@ -175,9 +176,16 @@ function renderText(L) {
 }
 
 /* ---------- document ---------- */
+const LAYER_TYPES = ['raster', 'text', 'adjust', 'group'];
+const validBlend = (b, group) => (group && b === 'pass-through') || BLENDS.some(x => x[0] === b) ? b : (group ? 'pass-through' : 'source-over');
 function layerFromSpec(o) {
-  const L = newLayer(o.name || 'Layer', o.canvas === undefined ? null : o.canvas, o.x || 0, o.y || 0, o.type || 'raster');
-  L.visible = o.visible ?? true; L.opacity = o.opacity ?? 1; L.blend = o.blend || 'source-over';
+  let type = LAYER_TYPES.includes(o.type) ? o.type : 'raster';
+  if (type === 'text' && (!o.text || typeof o.text !== 'object')) type = 'raster';
+  if (type === 'adjust' && (!o.adjust || !FILTERS[o.adjust.kind])) type = 'raster';
+  const num = (v, d) => Number.isFinite(+v) ? +v : d;
+  const L = newLayer(String(o.name ?? 'Layer').slice(0, 200), o.canvas === undefined ? null : o.canvas, Math.round(num(o.x, 0)), Math.round(num(o.y, 0)), type);
+  if (type === 'raster' && !L.canvas) setCanvas(L, mk(doc ? doc.w : 1, doc ? doc.h : 1));
+  L.visible = o.visible ?? true; L.opacity = clamp(num(o.opacity, 1), 0, 1); L.blend = validBlend(o.blend, type === 'group');
   if (o.mask) L.mask = { canvas: o.mask, enabled: o.maskEnabled ?? true };
   if (o.text) { L.text = { ...TEXT_DEFAULT, ...o.text }; renderText(L); if (o.name) L.name = o.name; }
   if (o.adjust) L.adjust = { kind: o.adjust.kind, params: { ...o.adjust.params } };
@@ -292,7 +300,7 @@ function restoreNode(n) {
   if (typeof ftActive === 'function' && ftActive()) ftCancel(true);
   const s = n.state, sizeChanged = s.w !== doc.w || s.h !== doc.h;
   doc.w = s.w; doc.h = s.h; doc.active = s.active; doc.editMask = s.editMask;
-  doc.layers = stateToLayers(s);
+  doc.layers = repairTree(stateToLayers(s));
   uid = Math.max(uid, ...doc.layers.map(L => L.id + 1));
   for (let a = n; a.parent; a = a.parent) a.parent.next = a;  // redo follows this branch
   if (sizeChanged) { comp = mk(doc.w, doc.h); setSel(null); fit(); }
@@ -416,7 +424,8 @@ function frame() {
   const pw = Math.round(W * dpr), ph = Math.round(H * dpr);
   if (view.width !== pw || view.height !== ph) { view.width = overlay.width = pw; view.height = overlay.height = ph; dirty = true; }
   if (dirty) { dirty = false; renderMain(); }
-  renderOverlay(); updateStatus();
+  renderOverlay(); renderRulers(); updateStatus();
+
 }
 function renderMain() {
   const c = vctx; c.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -460,13 +469,15 @@ function cross(c, x, y) {
   c.beginPath(); c.moveTo(x - 8, y); c.lineTo(x + 8, y); c.moveTo(x, y - 8); c.lineTo(x, y + 8);
   c.strokeStyle = '#000'; c.lineWidth = 3; c.stroke(); c.strokeStyle = '#fff'; c.lineWidth = 1; c.stroke();
 }
-const BRUSH_TOOLS = ['brush', 'eraser', 'clone', 'heal', 'spotheal', 'smudge', 'dodge'];
+const BRUSH_TOOLS = ['brush', 'eraser', 'clone', 'heal', 'spotheal', 'smudge', 'dodge', 'quicksel'];
 function renderOverlay() {
   const c = octx; c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, overlay.width, overlay.height);
   if (!doc) return;
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  if (tool === 'move' && !dragging) { const r = lrect(layer()); c.strokeStyle = '#3a8ee6aa'; c.lineWidth = 1; c.setLineDash([5, 4]); c.strokeRect(panX + r.x * zoom + .5, panY + r.y * zoom + .5, r.w * zoom, r.h * zoom); c.setLineDash([]); }
-  if (selection) { const e = edges(); c.imageSmoothingEnabled = false; c.drawImage(antPhase ? e.b : e.a, panX, panY, doc.w * zoom, doc.h * zoom); }
+  if (tool === 'move' && !dragging && !ft && layer().type !== 'group') { const r = lrect(layer()); c.strokeStyle = '#3a8ee6aa'; c.lineWidth = 1; c.setLineDash([5, 4]); c.strokeRect(panX + r.x * zoom + .5, panY + r.y * zoom + .5, r.w * zoom, r.h * zoom); c.setLineDash([]); }
+  if (selection && !(ft && ft.kind !== 'layer' && ft.kind !== 'text' && ft.kind !== 'mask')) { const e = edges(); c.imageSmoothingEnabled = false; c.drawImage(antPhase ? e.b : e.a, panX, panY, doc.w * zoom, doc.h * zoom); c.imageSmoothingEnabled = true; }
+  drawGuides(c);
+  if (ft) { drawFt(c); return; }
   if (doc.path && doc.path.pts.length) drawPath(c);
   if (preview) { c.save(); c.translate(panX, panY); c.scale(zoom, zoom); preview(c, 1 / zoom); c.restore(); }
   if (compare) { drawCompareOverlay(c); return; }

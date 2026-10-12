@@ -201,6 +201,11 @@ async function buildSample() {
   P(oil, 'knife', '#fff6dc', line(1460, 1012, 1630, 1012, 8, taper), { size: 18 });
   await frame();
   mark('oil');
+  // title: an editable text layer (Text tool), softly faded in with a layer mask
+  const title = new Layer('pixel', 'T: Lakeside Evening', W, H);
+  title.text = sanitizeTextProps({ text: 'Lakeside Evening', font: 'Georgia', size: 118, color: [1, 0.965, 0.88], align: 'center', italic: true, x: 1200, y: 1300, lineHeight: 1.2 });
+  title.opacity = 0.92; doc.root.push(title); renderTextLayer(title);
+  title.mask = newMask(title); { const mv = new Uint8Array(W * H); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) mv[y * W + x] = Math.round(255 * clamp(1.6 - Math.abs(x - 1200) / 520, 0, 1)); setMaskValues(title.mask, mv); }
   // done
   doc.active = oil;
   guides.sym = 'off';

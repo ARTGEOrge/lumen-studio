@@ -5,7 +5,7 @@ const LV = window.LV = {
   doc: null,            // { name, path, artboards:[{id,name,x,y,w,h}], active, guides:{x:[],y:[]}, swatches:[] }
   sel: [],              // selected items (top level objects for Selection tool, leaves for Direct Selection)
   selSegs: new Set(),   // selected anchor points (Direct Selection)
-  prefs: { rulers: true, grid: false, snapGrid: false, snapPoint: true, smart: true, guides: true, gridSize: 10, gridEvery: 10, bbox: true, moveArt: true },
+  prefs: { rulers: true, grid: false, snapGrid: false, snapPoint: true, smart: true, guides: true, gridSize: 10, gridEvery: 10, bbox: true, moveArt: true, smartAngles: true, angleInc: 45, smartSpacing: true, snapTol: 6 },
   paint: { fill: '#ffffff', stroke: '#1d2733', strokeWidth: 1, active: 'fill' },
   text: { family: 'Inter', weight: 400, size: 36, leading: 1.2, tracking: 0, align: 'left' },
   shape: { radius: 16, sides: 6, points: 5, inner: 50, smooth: 5 },
@@ -113,7 +113,8 @@ LV.zMap = () => { const m = new Map(); let i = 0; const walk = it => { m.set(it,
 LV.sortZ = items => { const m = LV.zMap(); return items.slice().sort((a, b) => m.get(a) - m.get(b)); };
 LV.reUid = it => { it.data.uid = Aero.uid(); (it.children || []).forEach(LV.reUid); return it; };
 LV.leaves = (it, out = []) => { if (it.children && !it.data.kind && !(it instanceof P.CompoundPath)) it.children.forEach(c => LV.leaves(c, out)); else out.push(it); return out; };
-LV.allObjects = () => { const out = []; P.project.layers.forEach(l => l.children.forEach(c => out.push(c))); return out; };
+LV.isoRoot = () => (LV.sym && LV.sym.editing && LV.sym.editing()) || null; // symbol editing ("isolation mode")
+LV.allObjects = () => { const iso = LV.isoRoot(); if (iso) return iso.children.slice(); const out = []; P.project.layers.forEach(l => l.children.forEach(c => out.push(c))); return out; };
 LV.selBounds = (items = LV.sel) => { let r = null; items.forEach(it => { const b = it.bounds; r = r ? r.unite(b) : b.clone(); }); return r; };
 LV.tol = (px = 4) => px / P.view.zoom;
 
@@ -121,7 +122,13 @@ LV.tol = (px = 4) => px / P.view.zoom;
 LV.hitTest = (pt, { leaf = false, tol = LV.tol(4), filter } = {}) => {
   const test = it => {
     if (!it.visible || it.locked || it.data.role === 'frame' && !leaf) return null;
+    if (leaf && it.data.role === 'blendSteps') return null;
+    if (it.data.role === 'blendSpine') return leaf && it.getNearestPoint(pt).getDistance(pt) <= tol * 1.5 ? it : null; // unpainted spine: hit near its line (direct selection)
     const k = LV.kind(it);
+    if (k === 'symbol') { // instance: hit its artwork as a whole (children live in the instance's own coordinate space)
+      if (!it.bounds.expand(tol * 2).contains(pt)) return null;
+      return it.hitTest(pt, { fill: true, stroke: true, tolerance: tol }) || it.children.some(c => (c instanceof P.PointText || c instanceof P.Raster) && c.bounds.contains(it.globalToLocal(pt))) ? it : null;
+    }
     if (k === 'areatext' || k === 'pathtext') {
       if (!it.bounds.expand(tol * 2).contains(pt)) return null;
       if (k === 'areatext') return it;
@@ -137,12 +144,14 @@ LV.hitTest = (pt, { leaf = false, tol = LV.tol(4), filter } = {}) => {
     if (it instanceof P.PointText || it instanceof P.Raster) return it.bounds.expand(tol).contains(pt) ? it : null;
     if (LV.isPathItem(it)) {
       const hasFill = it.hasFill(), hs = it.hasStroke();
-      const r = it.hitTest(pt, { fill: hasFill, stroke: true, tolerance: Math.max(tol, hs ? it.strokeWidth / 2 : 0), segments: leaf });
+      const r = it.hitTest(pt, { fill: hasFill, stroke: true, tolerance: Math.max(tol, hs ? it.strokeWidth / 2 * (LV.width ? LV.width.maxRatio(it) : 1) : 0), segments: leaf });
       if (!r && it.clipMask && leaf && it.hitTest(pt, { stroke: true, tolerance: tol })) return it;
       return r ? it : null;
     }
     return null;
   };
+  const iso = LV.isoRoot();
+  if (iso) { for (let j = iso.children.length - 1; j >= 0; j--) { const h = test(iso.children[j]); if (h && (!filter || filter(h))) return h; } return null; }
   const ls = P.project.layers;
   for (let i = ls.length - 1; i >= 0; i--) {
     const L = ls[i]; if (!L.visible || L.locked) continue;
@@ -178,9 +187,19 @@ LV.colorToSpec = col => {
   }
   return LV.css(col);
 };
+// paint spec from an untrusted file: css colour string or {type, angle, stops:[[css, offset]]}
+LV.sanitizeSpec = s => {
+  const col = c => { try { return LV.css(new P.Color(String(c))) || '#000000'; } catch (e) { return '#000000'; } };
+  if (s == null) return null;
+  if (typeof s === 'string') return col(s);
+  if (typeof s === 'object' && Array.isArray(s.stops) && s.stops.length >= 2) return { type: s.type === 'radial' ? 'radial' : 'linear', angle: isFinite(+s.angle) ? +s.angle : 0, stops: s.stops.slice(0, 64).map(st => [col(Array.isArray(st) ? st[0] : '#000'), Math.min(1, Math.max(0, +(Array.isArray(st) ? st[1] : 0) || 0))]) };
+  return null;
+};
 LV.hex = css => { try { const c = new P.Color(css); return c.toCSS(true); } catch (e) { return '#000000'; } };
 LV.paintTargets = it => {      // the items that actually carry the paint for an object
   const k = LV.kind(it);
+  if (k === 'symbol' || k === 'trace') return [];
+  if (k === 'blend') return it.children.filter(c => c.data.role === 'blendKey').flatMap(LV.paintTargets);
   if (k === 'areatext') return [it.children.find(c => c.data.role === 'text')].filter(Boolean);
   if (k === 'pathtext') return [it.children.find(c => c.data.role === 'glyphs')].filter(Boolean);
   if (it instanceof P.Group || it instanceof P.Layer) { const out = []; it.children.forEach(c => { if (!c.clipMask) out.push(...LV.paintTargets(c)); }); return out; }
@@ -227,7 +246,7 @@ LV.DEFAULT_SWATCHES = ['#ffffff', '#000000', '#e6e6e6', '#b3b3b3', '#808080', '#
 LV.newDoc = ({ w = 1080, h = 1080, name = 'Untitled-1', boardName = 'Artboard 1' } = {}) => {
   P.project.clear();
   new P.Layer({ name: 'Layer 1' });
-  LV.doc = { name, path: null, artboards: [{ id: Aero.uid(), name: boardName, x: 0, y: 0, w, h }], active: 0, guides: { x: [], y: [] }, swatches: LV.DEFAULT_SWATCHES.slice() };
+  LV.doc = { name, path: null, artboards: [{ id: Aero.uid(), name: boardName, x: 0, y: 0, w, h }], active: 0, guides: { x: [], y: [] }, swatches: LV.DEFAULT_SWATCHES.slice(), symbols: [] };
   LV.setSel([]);
   LV.hist.reset('New Document', LV.snapshot());
   Aero.setDoc(name, false);
@@ -240,10 +259,10 @@ LV.activeLayer = () => { let L = P.project.activeLayer; if (!L || !L.parent) { L
 LV.insert = it => { LV.activeLayer().addChild(it); LV.uidOf(it); return it; };
 
 /* ---------------- history ---------------- */
-LV.snapshot = () => JSON.stringify({ ab: LV.doc.artboards, active: LV.doc.active, guides: LV.doc.guides, swatches: LV.doc.swatches, layers: JSON.parse(P.project.exportJSON()), activeLayer: P.project.activeLayer ? P.project.activeLayer.index : 0 });
+LV.snapshot = () => JSON.stringify({ ab: LV.doc.artboards, active: LV.doc.active, guides: LV.doc.guides, swatches: LV.doc.swatches, symbols: LV.doc.symbols || [], layers: JSON.parse(P.project.exportJSON()), activeLayer: P.project.activeLayer ? P.project.activeLayer.index : 0 });
 LV.restore = (s, { keepSel = true } = {}) => {
   const st = JSON.parse(s), uids = keepSel ? LV.sel.map(it => it.data.uid) : [];
-  LV.doc.artboards = st.ab; LV.doc.active = Math.min(st.active, st.ab.length - 1); LV.doc.guides = st.guides || { x: [], y: [] }; LV.doc.swatches = st.swatches || LV.DEFAULT_SWATCHES.slice();
+  LV.doc.artboards = st.ab; LV.doc.active = Math.min(st.active, st.ab.length - 1); LV.doc.guides = st.guides || { x: [], y: [] }; LV.doc.swatches = st.swatches || LV.DEFAULT_SWATCHES.slice(); LV.doc.symbols = st.symbols || [];
   P.project.clear();
   P.project.importJSON(st.layers);
   if (!P.project.layers.length) new P.Layer({ name: 'Layer 1' });
@@ -255,6 +274,7 @@ LV.restore = (s, { keepSel = true } = {}) => {
 };
 LV.hist = new Aero.History({ max: 80, onChange: () => LV.emit('history') });
 LV.commit = label => {
+  LV.emit('precommit');
   LV.hist.push(label, LV.snapshot());
   LV.pruneSel(); LV.redraw(); LV.emit('changed');
 };

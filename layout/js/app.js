@@ -3,7 +3,7 @@
    (page content canvas + overlay canvas for guides, selection, caret, threads). */
 const S = window.S = {
   doc: null, images: {}, eng: null, hist: null, name: 'Untitled', path: null,
-  view: { z: 1, ox: 0, oy: 0 }, mode: { kind: 'doc' }, placed: [],
+  view: { z: 1, ox: 0, oy: 0 }, mode: { kind: 'doc' }, placed: [], sepPlate: null, swTarget: 'fill',
   sel: [], edit: null, content: null, cell: null, tool: 'select', curPage: 0, activeLayer: null,
   opt: { rulers: true, guides: true, baseline: false, frames: true, threads: true, snap: true, smart: true, preview: false, hidden: false, lockGuides: false },
   drag: null, smart: [], hover: null, loadedThread: null, clip: null, dirtyBase: true, mouse: { x: 0, y: 0 },
@@ -42,6 +42,7 @@ let fullTimer = null;
 function flushTyping() { clearTimeout(typingTimer); typingBurst = false; }
 function docChanged(rebuildPanels, hint) {
   const prev = S.eng;
+  Color.use(S.doc); Color.invalidate(); Engine.images = S.images;
   S.eng = hint && prev && prev.doc === S.doc ? new Engine(S.doc, prev, hint) : new Engine(S.doc);
   clearTimeout(fullTimer);
   if (hint) fullTimer = setTimeout(() => { if (S.eng.partial) { S.eng = new Engine(S.doc); requestRender(true); UI.refresh(); } }, 350);
@@ -65,7 +66,7 @@ function setDocument(doc, images, name, path) {
 function loadImageEl(id, im) {
   if (im.el) return;
   const el = new Image(); el.decoding = 'async'; im.el = el;
-  el.onload = () => { requestRender(true); UI.thumbsSoon(); };
+  el.onload = () => { if (S.doc) { Engine.images = S.images; S.eng = new Engine(S.doc); } requestRender(true); UI.thumbsSoon(); };
   el.src = im.data;
 }
 // add an image asset from bytes; resolves to id
@@ -151,12 +152,13 @@ function renderAll() {
   if (baseDirty) { renderBase(cv.getContext('2d'), cw, ch, dpr); baseDirty = false; }
   renderOverlay(ov.getContext('2d'), cw, ch, dpr);
   Rulers.draw();
+  if (window.Typo && Typo.isOpen) Typo.place();
 }
 function renderBase(ctx, cw, ch, dpr) {
   const { z, ox, oy } = S.view, pv = S.opt.preview, d = S.doc;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = pv ? '#7d8a98' : '#d3dce6'; ctx.fillRect(0, 0, cw, ch);
-  const env = { engine: S.eng, images: S.images, hidden: S.opt.hidden && !pv };
+  const env = { engine: S.eng, images: S.images, hidden: S.opt.hidden && !pv, opPreview: !!S.opt.opPreview };
   const vis = p => { const [sx, sy] = View.w2s(p.x, p.y); const pad = 400 * z; return sx + p.w * z > -pad && sx < cw + pad && sy + p.h * z > -pad && sy < ch + pad; };
   // page shadows + paper
   for (const p of S.placed) {
@@ -171,7 +173,7 @@ function renderBase(ctx, cw, ch, dpr) {
     ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (ox + p.x * z), dpr * (oy + p.y * z));
     if (pv) { ctx.beginPath(); ctx.rect(0, 0, p.w, p.h); ctx.clip(); }
     env.label = labelFor(p);
-    Render.drawPage(ctx, env, p.page, p.kind === 'doc' ? p.index : null);
+    Color.withPlate(S.sepPlate, () => Render.drawPage(ctx, env, p.page, p.kind === 'doc' ? p.index : null));
     ctx.restore();
   }
   // in preview, repaint a hairline between facing pages

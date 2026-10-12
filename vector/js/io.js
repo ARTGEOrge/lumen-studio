@@ -16,8 +16,23 @@
   LV.serialize = () => {
     const layers = JSON.parse(P.project.exportJSON()), images = {};
     walkJSON(layers, (cls, props) => { if (cls === 'Raster' && props.source && LV.images.has(props.source)) images[props.source] = LV.images.get(props.source); });
-    return JSON.stringify({ format: 'lumen-vector', version: 1, app: 'Lumen Vector', name: LV.doc.name, artboards: LV.doc.artboards, active: LV.doc.active, guides: LV.doc.guides, swatches: LV.doc.swatches, layers, images });
+    const symbols = LV.doc.symbols || [];
+    symbols.forEach(s => walkJSON(s.art, (cls, props) => { if (cls === 'Raster' && props.source && LV.images.has(props.source)) images[props.source] = LV.images.get(props.source); }));
+    return JSON.stringify({ format: 'lumen-vector', version: 2, app: 'Lumen Vector', name: LV.doc.name, artboards: LV.doc.artboards, active: LV.doc.active, guides: LV.doc.guides, swatches: LV.doc.swatches, symbols, layers, images });
   };
+  const KINDS = ['areatext', 'pathtext', 'trace', 'symbol', 'blend'];
+  // item data from an opened file is untrusted: keep only known, validated fields for the newer features
+  function sanitizeData(d) {
+    if (!d || typeof d !== 'object') return;
+    if ('fx' in d) { const v = LV.fx.sanitize(d.fx); if (v) d.fx = v; else delete d.fx; }
+    if ('width' in d) { const v = LV.width.sanitize(d.width); if (v) d.width = v; else delete d.width; }
+    if ('live' in d) { const v = LV.live.sanitize(d.live); if (v) d.live = v; else delete d.live; }
+    if ('kind' in d && !KINDS.includes(d.kind)) delete d.kind;
+    if (d.kind === 'trace') d.trace = LV.trace.sanitize(d.trace); else delete d.trace;
+    if (d.kind === 'blend') d.blend = LV.blend.sanitize(d.blend); else delete d.blend;
+    delete d.symEdit; delete d.tfill;
+    ['uid', 'sym', 'next', 'prev', 'role', 'text'].forEach(k => { if (k in d && typeof d[k] !== 'string') delete d[k]; });
+  }
   const ALLOWED = new Set(['Layer', 'Group', 'Path', 'CompoundPath', 'PointText', 'Raster', 'Shape', 'Color', 'Gradient', 'GradientStop', 'Segment', 'Point', 'Size', 'Rectangle', 'Matrix', 'Style']);
   function walkJSON(node, fn) {
     if (Array.isArray(node)) {
@@ -28,22 +43,30 @@
   LV.openLvec = (text, name, path) => {
     let d; try { d = JSON.parse(text); } catch (e) { throw new Error('This file is not valid JSON.'); }
     if (!d || d.format !== 'lumen-vector' || !Array.isArray(d.layers) || !Array.isArray(d.artboards) || !d.artboards.length) throw new Error('This is not a Lumen Vector document.');
-    // untrusted input: only plain paper item classes, no remote resources
-    walkJSON(d.layers, (cls, props, arr) => {
+    // untrusted input: only plain paper item classes, no remote resources, validated feature data
+    const check = node => walkJSON(node, (cls, props, arr) => {
       if (/^[A-Z]/.test(cls) && !ALLOWED.has(cls)) throw new Error('Unsupported object type in document: ' + cls);
       if (cls === 'Raster') {
         const src = String(props.source || ''), du = d.images && typeof d.images[src] === 'string' ? d.images[src] : src.startsWith('data:') ? src : null;
         props.source = du ? (LV.registerImage(du) || '') : ''; delete props.crossOrigin;
       }
+      if (props.data) sanitizeData(props.data);
     });
+    check(d.layers);
+    const symbols = LV.sym.sanitizeList(d.symbols, check);
     const ab = d.artboards.map(a => ({ id: String(a.id || Aero.uid()), name: String(a.name || 'Artboard'), x: +a.x || 0, y: +a.y || 0, w: Math.max(1, +a.w || 100), h: Math.max(1, +a.h || 100) }));
-    LV.doc = { name: name || d.name || 'Untitled', path: path || null, artboards: ab, active: 0, guides: d.guides && Array.isArray(d.guides.x) ? { x: d.guides.x.map(Number).filter(isFinite), y: (d.guides.y || []).map(Number).filter(isFinite) } : { x: [], y: [] }, swatches: Array.isArray(d.swatches) ? d.swatches : LV.DEFAULT_SWATCHES.slice() };
-    LV.restore(JSON.stringify({ ab, active: Math.min(+d.active || 0, ab.length - 1), guides: LV.doc.guides, swatches: LV.doc.swatches, layers: d.layers, activeLayer: 0 }), { keepSel: false });
+    LV.doc = { name: name || d.name || 'Untitled', path: path || null, artboards: ab, active: 0, guides: d.guides && Array.isArray(d.guides.x) ? { x: d.guides.x.map(Number).filter(isFinite), y: (d.guides.y || []).map(Number).filter(isFinite) } : { x: [], y: [] }, swatches: Array.isArray(d.swatches) ? d.swatches.map(LV.sanitizeSpec).filter(Boolean) : LV.DEFAULT_SWATCHES.slice(), symbols };
+    LV.restore(JSON.stringify({ ab, active: Math.min(+d.active || 0, ab.length - 1), guides: LV.doc.guides, swatches: LV.doc.swatches, symbols, layers: d.layers, activeLayer: 0 }), { keepSel: false });
     P.project.layers.forEach(L => L.children.forEach(c => { (c.data.kind === 'pathtext') && LV.layoutPathText(c); }));
+    // symbol instances always show their master (instances of a missing definition become plain groups)
+    LV.sym.instances().forEach(i => { if (!LV.sym.find(i.data.sym) || !LV.sym.fill(i)) { i.applyMatrix = true; delete i.data.kind; delete i.data.sym; } });
+    P.project.getItems({ match: it => it.data && it.data.kind === 'blend' }).forEach(g => LV.blend.regen(g, true));
+    P.project.getItems({ match: it => it.data && it.data.kind === 'trace' }).forEach(g => LV.trace.applyView(g));
     LV.hist.reset('Open', LV.snapshot()); Aero.setDoc(LV.doc.name, false); LV.fitBoard();
   };
   LV.save = async (as) => {
     if (LV.textEditing) LV.endTextEdit();
+    if (LV.isoRoot()) LV.sym.finishEdit();
     let name = LV.doc.name.replace(/\.[^.]+$/, '') + '.lvec';
     const p = await Aero.saveFile({ name, data: LV.serialize(), filters: [{ name: 'Lumen Vector', extensions: ['lvec'] }], path: as ? null : LV.doc.path });
     if (!p) return false;
@@ -121,7 +144,13 @@
       it.strokeColor = null; it.data.strokeAlign = null; g.insertAbove(it);
     });
     if (outline) ep.layers.forEach(L => LV.outlineAll(L));
+    // variable-width strokes have no SVG/PDF equivalent: replace them by their filled outline (+ a fill-only copy)
+    ep.getItems({ match: it => LV.width.active(it) }).forEach(it => { const x = LV.width.expand(it); if (!x) return; if (it.data.fx) { x.data.fx = it.data.fx; } x.insertAbove(it); it.remove(); });
     // PDF: gradients that fade in opacity cannot be expressed by svg2pdf -> rasterize just those objects (2x)
+    // PDF: live raster effects (shadows, glows, blur, feather) cannot be expressed by svg2pdf -> rasterise those objects (2x)
+    if (flatten) ep.getItems({ match: it => LV.fx.hasRaster(it) }).filter((it, _, all) => !all.some(o => o !== it && it.isDescendant(o))).forEach(it => {
+      const r = LV.fx.rasterize(it, 2); if (!r) return; r.insertAbove(it); it.remove();
+    });
     if (flatten) ep.getItems({ match: it => LV.isPathItem(it) && !(it.parent instanceof P.CompoundPath) && !it.clipMask && (alphaGrad(it.fillColor) || alphaGrad(it.strokeColor)) }).forEach(it => {
       const r = it.rasterize({ resolution: 144, insert: false }); if (!r) return;
       r.blendMode = it.blendMode; r.insertAbove(it); it.remove();
@@ -141,11 +170,13 @@
         if (item.data.tracking) node.setAttribute('letter-spacing', LV.round(item.data.tracking / 1000 * item.fontSize, 3));
       }
       if (item instanceof P.Raster) { const src = item.source, du = LV.images.get(src) || (String(src).startsWith('data:') ? src : null); if (du) node.setAttribute('href', du); }
-      return node;
+      return LV.fx.svgWrap(item, node, fxCtx);
     };
+    const fxCtx = { defs: [], n: 0 };
     let svg;
     try { svg = ep.exportSVG({ asString: false, bounds: new P.Rectangle(0, 0, ab.w, ab.h), matrix: new P.Matrix().translate(-ab.x, -ab.y), embedImages: false, onExport, precision: 3 }); }
     finally { ep.remove(); P.project.activate?.(); }
+    if (fxCtx.defs.length) { const defs = svg.querySelector('defs') || svg.insertBefore(document.createElementNS(SVGNS, 'defs'), svg.firstChild); fxCtx.defs.forEach(n => defs.appendChild(n)); }
     svg.querySelectorAll('[data-paper-data]').forEach(n => n.removeAttribute('data-paper-data'));
     // paper writes "none" for mixed group styles; that is invalid for these attributes (and breaks svg2pdf)
     const NO_NONE = ['stroke-width', 'stroke-linecap', 'stroke-linejoin', 'stroke-miterlimit', 'stroke-dashoffset', 'font-family', 'font-weight', 'font-size', 'text-anchor', 'fill-rule'];

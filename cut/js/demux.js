@@ -114,7 +114,7 @@
       this.frames.forEach(f => f.close()); this.frames = [];
       if (this.dec && this.dec.state !== 'closed') this.dec.close();
       this.err = null;
-      this.dec = new VideoDecoder({ output: f => { this.frames.push(f); this.out++; this.wake?.(); }, error: e => { this.err = e; this.wake?.(); } });
+      this.dec = new VideoDecoder({ output: f => { this.frames.push(f); this.out++; this.lastOut = performance.now(); this.wake?.(); }, error: e => { this.err = e; this.wake?.(); } });
       this.dec.configure(this.cfg);
       this.next = idx; this.ended = false; this.fed = 0; this.out = 0;
       this.lo = this.d.samples[idx]?.ts ?? 0;
@@ -135,8 +135,11 @@
       const T = Math.round(t * 1e6) + 1;
       const k = this.keyIndex(T);
       if (!this.dec || this.dec.state === 'closed' || T < this.lo || k > this.next || (this.frames.length && T < this.frames[0].timestamp)) this.reset(k);
+      const t0 = performance.now();
       for (let guard = 0; guard < 100000; guard++) {
         if (this.err) throw this.err;
+        // watchdog: a hardware decoder can stall under GPU pressure — report it so the caller can retry / fall back
+        if (performance.now() - Math.max(t0, this.lastOut || 0) > 4000) throw new Error('Decoder stalled');
         let i = -1; for (let j = 0; j < this.frames.length; j++) if (this.frames[j].timestamp <= T) i = j;
         if (i > 0) { this.frames.splice(0, i).forEach(f => f.close()); }
         const f0 = this.frames[0], have = f0 && f0.timestamp <= T, after = this.frames.some(f => f.timestamp > T);
@@ -146,7 +149,7 @@
         if (this.next < S.length) {
           if (this.fed - this.out >= this.ahead) { const ok = await this.wait(60); if (!ok) this.ahead = Math.min(64, this.ahead + 4); }
           else this.feed();
-        } else { await this.dec.flush(); this.ended = true; }
+        } else { const ok = await Promise.race([this.dec.flush().then(() => true), new Promise(r => setTimeout(() => r(false), 4000))]); if (!ok) throw new Error('Decoder stalled'); this.ended = true; }
       }
       return this.frames[0] || null;
     }
