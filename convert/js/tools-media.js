@@ -236,8 +236,7 @@
       ctx.progress(0.05, 'Decoding ' + f.name);
       const a = await decodeAudio(f); ctx.check();
       ctx.progress(0.25, 'Processing'); const p = prepare(a, o);
-      const r = await encodeAudio(p.chs, p.sr, o, x => { ctx.check(); ctx.progress(0.3 + 0.7 * x, 'Encoding ' + r_name()); });
-      function r_name() { return o.to.toUpperCase(); }
+      const r = await encodeAudio(p.chs, p.sr, o, x => { ctx.check(); ctx.progress(0.3 + 0.7 * x, 'Encoding ' + o.to.toUpperCase()); });
       return { name: `${baseName(f.name)}.${r.ext}`, blob: new Blob([r.bytes], { type: r.mime }), audio: true, info: `${fmtT(a.chs[0].length / a.sr)} · ${a.desc} → ${r.desc}${p.chs.length === 1 ? ' mono' : ''}` };
     }
   });
@@ -523,5 +522,5 @@
     }
   });
 
-  LC.mediaInternals = { parseWav, encodeWav, encodeFlac, encodeMp3, decodeAudio, resample, wsola, openVideo };
+  LC.mediaInternals = { parseWav, encodeWav, encodeFlac, encodeMp3, decodeAudio, resample, wsola, openVideo, seek, encodeVideo, encodeAudio, mixTo, outSize, audioOutOpts, isVideo, isAudio, fmtT, QBPP, even };
 })();

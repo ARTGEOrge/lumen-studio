@@ -7,9 +7,6 @@ Lumen Convert runs entirely in your browser. These libraries are shipped in this
 Library            Version   File(s)                                   Licence             Licence file
 -----------------  --------  ----------------------------------------  ------------------  -----------------------------
 fflate             0.8.3     fflate.js                                 MIT                 fflate.LICENSE
-pdf-lib            1.17.1    pdf-lib.min.js (bundles pako, MIT/Zlib)   MIT                 pdf-lib.LICENSE.md
-PDF.js (pdfjs-dist) 6.4.299  pdfjs/ (library, worker, cmaps, fonts,    Apache-2.0          pdfjs/LICENSE
-                             ICC profiles, wasm decoders)
 lamejs             1.2.7     lamejs.js (@breezystack/lamejs)           LGPL-3.0            lamejs-LICENSE.txt, lamejs-NOTICE.txt
 libheif / libheif-js 1.23.5  libheif-bundle.js                         LGPL-3.0            libheif.LICENSE, libheif-js.LICENSE, libheif-NOTICE.txt
 mammoth            1.13.0    mammoth.browser.min.js (bundles JSZip     BSD-2-Clause        mammoth.LICENSE
@@ -29,10 +26,25 @@ jsQR               1.4.0     jsQR.js                                   Apache-2.
 @pdf-lib/fontkit   1.1.1     fontkit.umd.min.js                        MIT                 fontkit.LICENSE
 DejaVu fonts       2.37      fonts/DejaVuSans.ttf, DejaVuSansMono.ttf, Bitstream Vera /   fonts/DejaVu.LICENSE
                              DejaVuSansMono-Bold.ttf (npm dejavu-fonts-ttf) DejaVu (permissive, embeddable)
+onnxruntime-web    1.17.3    ort/ort.wasm.min.js, ort/ort-wasm-simd-threaded.wasm   MIT (Microsoft)   ort/LICENSE
+U2-Netp model      -         models/u2netp.onnx (rembg's published export)          Apache-2.0        models/LICENSE-models.txt
+Real-ESRGAN model  v0.2.5.0  models/realesr-general-x4v3.onnx (exported here from the official weights)   BSD-3-Clause   models/LICENSE-models.txt
+UltraFace model    RFB-320   models/ultraface-rfb-320.onnx (onnx/models; unused initializers removed)   MIT   models/LICENSE-models.txt
+RNNoise            -         rnnoise/rnnoise.js, rnnoise.wasm (@jitsi/rnnoise-wasm 0.2.1)   BSD-3-Clause + Apache-2.0 wrapper   rnnoise/LICENSE-*
+woff2 (wawoff2)    2.0.1     wawoff2/compress_binding.js, decompress_binding.js (Google woff2 + brotli in WASM)   MIT   wawoff2/LICENSE
+three.js           r186      three-convert.min.js (subset: core, STL/OBJ/PLY/GLTF loaders, STL/OBJ/GLTF exporters,
+                             OrbitControls; bundled and minified with esbuild)   MIT   three.LICENSE
 
 Shared with other Lumen Studio apps (loaded by relative URL, not copied, so the site ships them once):
+  ../pdf/vendor/pdf-lib.min.js   pdf-lib 1.17.1 (bundles pako) - MIT - (../pdf/vendor/pdf-lib.LICENSE.md)
+  ../pdf/vendor/pdfjs/   PDF.js (pdfjs-dist 6.4.299: library, worker, cmaps, standard fonts, ICC profiles, wasm) - Apache-2.0 - (../pdf/vendor/pdfjs/LICENSE)
   ../layout/vendor/fonts/SourceSerif4_*.ttf, Montserrat_*.ttf   SIL Open Font License 1.1   (../layout/vendor/fonts/OFL-*.txt)
-      embedded (subset) into PDFs made by DOCX -> PDF and TXT -> PDF
+      embedded (subset) into PDFs made by DOCX -> PDF, TXT -> PDF and EPUB -> PDF
+  ../pdf/js/export.js, security.js, compare.js (+ the modules they import)   Lumen PDF's own code: layout analysis and
+      DOCX writer (PDF -> Word / Excel), AES-256 standard security handler (Protect / Unlock), word diff (Compare)
+  ../pdf/vendor/fonts/*.woff2   Allura, Caveat, Dancing Script, Great Vibes, Sacramento - OFL 1.1 - typed signatures
+  ../photo/vendor/libraw/   LibRaw (LGPL-2.1 or CDDL-1.0; unmodified separate files, libraw-wasm packaging ISC) - RAW -> JPEG/PNG
+  ../photo/vendor/ag-psd.js   ag-psd (MIT) - PSD -> PNG/JPEG
   ../pdf/vendor/tesseract/  tesseract.js 7.0.0 + tesseract.js-core 7.0.0 + English "best_int" data   Apache-2.0
       (../pdf/vendor/tesseract/NOTICE.txt) — loaded only when an OCR tool runs
 

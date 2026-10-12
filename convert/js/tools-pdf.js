@@ -463,7 +463,7 @@
   }
   const htmlDoc = (title, body) => `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>${esc(title)}</title>\n<style>body{max-width:46em;margin:2em auto;padding:0 1em;font:16px/1.6 Georgia,serif;color:#222}img{max-width:100%;height:auto}table{border-collapse:collapse}td,th{border:1px solid #bbb;padding:4px 8px;vertical-align:top}</style>\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
   register({
-    id: 'docx-convert', cat: 'pdf', glyph: 'doc', name: 'DOCX → HTML / text', keywords: 'docx word document html text txt markdown convert',
+    id: 'docx-convert', cat: 'docs', glyph: 'doc', name: 'DOCX → HTML / text', keywords: 'docx word document html text txt markdown convert',
     desc: 'Word documents to clean HTML (with images) or plain text.',
     accept: '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document', acceptText: 'Word .docx files', acceptTest: isDocx, multiple: true, zipName: 'docx-converted',
     options: [{ key: 'to', label: 'Convert to', type: 'select', value: 'html', options: [['html', 'HTML web page'], ['txt', 'Plain text'], ['md', 'Markdown']] }],
@@ -511,7 +511,7 @@
   }
 
   register({
-    id: 'docx-to-pdf', cat: 'pdf', glyph: 'doc', name: 'DOCX → PDF', keywords: 'docx word to pdf document print',
+    id: 'docx-to-pdf', cat: 'docs', glyph: 'doc', name: 'DOCX → PDF', keywords: 'docx word to pdf document print',
     desc: 'Word documents to PDF with headings, lists, tables and images.',
     accept: '.docx', acceptText: 'Word .docx files', acceptTest: isDocx, multiple: true, zipName: 'docx-pdf',
     options: [
@@ -541,7 +541,7 @@
     catch (e) { return new TextDecoder('windows-1252').decode(b); }
   }
   register({
-    id: 'txt-to-pdf', cat: 'pdf', glyph: 'text', name: 'TXT → PDF', keywords: 'text txt plain to pdf print code',
+    id: 'txt-to-pdf', cat: 'docs', glyph: 'text', name: 'TXT → PDF', keywords: 'text txt plain to pdf print code',
     desc: 'Plain text files to tidy, paginated PDFs.',
     accept: '.txt,.text,.log,.md,.csv,.json,.xml,.yml,.yaml,.ini,.js,.py,text/*', acceptText: 'Text files (.txt, .log, .md, code…)', acceptTest: f => /^text\//.test(f.type) || /^(txt|text|log|md|csv|json|xml|ya?ml|ini|cfg|js|ts|py|c|h|cpp|java|cs|go|rs|sh|bat|ps1|sql|html?|css)$/.test(extOf(f.name)), multiple: true, zipName: 'text-pdf',
     options: [
@@ -565,7 +565,7 @@
 
   /* EPUB → text */
   register({
-    id: 'epub-to-text', cat: 'pdf', glyph: 'book', name: 'EPUB → text', keywords: 'epub ebook book to txt text plain',
+    id: 'epub-to-text', cat: 'docs', glyph: 'book', name: 'EPUB → text', keywords: 'epub ebook book to txt text plain',
     desc: 'E-books to plain text, chapter by chapter in reading order.',
     accept: '.epub,application/epub+zip', acceptText: 'EPUB e-books (DRM-free)', acceptTest: f => extOf(f.name) === 'epub' || f.type === 'application/epub+zip', multiple: true, zipName: 'epub-text',
     async each(f, o, ctx) {

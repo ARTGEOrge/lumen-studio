@@ -1,0 +1,44 @@
+Models in this folder (loaded from this site only when the matching Lumen Convert tool runs)
+
+u2netp.onnx - U2-Net, small "U2-Netp" variant (salient object detection), used by "Remove image background".
+  Paper: Qin et al., "U2-Net: Going Deeper with Nested U-Structure for Salient Object Detection" (Pattern Recognition, 2020).
+  Source: https://github.com/xuebinqin/U-2-Net - Apache License 2.0.
+  ONNX export as published in the rembg project's model release
+  (https://github.com/danielgatis/rembg/releases/tag/v0.0.0, u2netp.onnx,
+  sha256 309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8).
+  Licensed under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+
+realesr-general-x4v3.onnx - Real-ESRGAN general "x4v3" compact model (SRVGGNetCompact), used by "AI image upscaler".
+  Weights: https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
+  (sha256 8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292), exported to ONNX (opset 17, dynamic
+  height/width) for Lumen Convert and checked against PyTorch (max abs difference 3.6e-6).
+  BSD 3-Clause License. Copyright (c) 2021, Xintao Wang. All rights reserved.
+  Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
+  following conditions are met:
+  1. Redistributions of source code must retain the above copyright notice, this list of conditions and the
+     following disclaimer.
+  2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the
+     following disclaimer in the documentation and/or other materials provided with the distribution.
+  3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote
+     products derived from this software without specific prior written permission.
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+  INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+  SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+ultraface-rfb-320.onnx - Ultra-Light-Fast-Generic-Face-Detector-1MB, RFB-320 variant, used by "Blur faces".
+  Source: https://github.com/onnx/models (validated/vision/body_analysis/ultraface/models/version-RFB-320.onnx,
+  sha256 34cd7e60aeff28744c657de7a3dc64e872d506741de66987f3426f2b79f88017); original project
+  https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB.
+  For Lumen Convert, initializers that were also listed as graph inputs, and 35 unused initializers
+  (batch-norm counters), were removed from the graph; no weights were changed.
+  MIT License. Copyright (c) 2019 linzai.
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+  documentation files (the "Software"), to deal in the Software without restriction, including without limitation
+  the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+  permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright
+  notice and this permission notice shall be included in all copies or substantial portions of the Software.
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.

@@ -5,12 +5,13 @@ window.LC = (() => {
   const tools = [], byId = {}, aliases = {};
   const CATS = [
     { id: 'img', name: 'Images', cls: 'c-img' },
-    { id: 'pdf', name: 'PDF & documents', cls: 'c-pdf' },
+    { id: 'pdf', name: 'PDF tools', cls: 'c-pdf' },
+    { id: 'docs', name: 'Documents & e-books', cls: 'c-docs' },
     { id: 'av', name: 'Audio & video', cls: 'c-av' },
     { id: 'data', name: 'Data & spreadsheets', cls: 'c-data' },
     { id: 'text', name: 'Text & code', cls: 'c-text' },
     { id: 'calc', name: 'Colours, units & time', cls: 'c-calc' },
-    { id: 'files', name: 'Archives, QR codes & checksums', cls: 'c-files' }];
+    { id: 'files', name: 'Archives, codes, fonts & 3D', cls: 'c-files' }];
 
   /* ---------- tiny helpers ---------- */
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -47,9 +48,11 @@ window.LC = (() => {
     }));
   }
   const vendorUrl = p => new URL('vendor/' + p, document.baseURI).href;
+  const pdfjsUrl = p => new URL('../pdf/vendor/pdfjs/' + p, document.baseURI).href;
   const lib = {
     fflate: () => loadScript('vendor/fflate.js', 'fflate'),
-    pdfLib: () => loadScript('vendor/pdf-lib.min.js', 'PDFLib'),
+    // PDF.js and pdf-lib are Lumen PDF's copies (same versions), shared by relative URL so the site ships them once
+    pdfLib: () => loadScript('../pdf/vendor/pdf-lib.min.js', 'PDFLib'),
     lame: () => loadScript('vendor/lamejs.js', 'lamejs'),
     yaml: () => loadScript('vendor/js-yaml.min.js', 'jsyaml'),
     marked: () => loadScript('vendor/marked.umd.js', 'marked'),
@@ -60,11 +63,11 @@ window.LC = (() => {
     qrcode: () => loadScript('vendor/qrcode.js', 'qrcode'),
     jsqr: () => loadScript('vendor/jsQR.js', 'jsQR'),
     gifenc: () => loaded.gifenc || (loaded.gifenc = import(vendorUrl('gifenc.esm.js'))),
-    pdfjs: () => loaded.pdfjs || (loaded.pdfjs = import(vendorUrl('pdfjs/pdf.min.js')).then(m => { m.GlobalWorkerOptions.workerSrc = vendorUrl('pdfjs/pdf.worker.min.js'); return m; }))
+    pdfjs: () => loaded.pdfjs || (loaded.pdfjs = import(pdfjsUrl('pdf.min.js')).then(m => { m.GlobalWorkerOptions.workerSrc = pdfjsUrl('pdf.worker.min.js'); return m; }))
   };
   // Open a PDF with pdf.js — fonts, cMaps and wasm come from the local vendor folder.
   async function openPdf(bytes, password) {
-    const pdfjs = await lib.pdfjs(), base = vendorUrl('pdfjs/');
+    const pdfjs = await lib.pdfjs(), base = pdfjsUrl('');
     const task = pdfjs.getDocument({ data: bytes.slice(), password: password || undefined, cMapUrl: base + 'cmaps/', cMapPacked: true, standardFontDataUrl: base + 'standard_fonts/',
       wasmUrl: base + 'wasm/', iccUrl: base + 'iccs/', isEvalSupported: false, enableXfa: false, verbosity: 0 });
     try { const doc = await task.promise; if (typeof doc.destroy !== 'function') doc.destroy = () => task.destroy(); return doc; }
@@ -198,6 +201,29 @@ window.LC = (() => {
     speed: '<path d="M4 18a9 9 0 1 1 16 0"/><path d="m12 13 4-5"/><circle cx="12" cy="13" r="1.5"/>',
     cut: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.5 7.5 20 18M8.5 16.5 20 6"/>',
     xml: '<path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/>',
+    cutout: '<path d="M12 3a4 4 0 0 1 4 4c0 2-1.5 4-4 4s-4-2-4-4a4 4 0 0 1 4-4zM5 21c0-4 3-7 7-7s7 3 7 7"/><path d="M3 3h2M19 3h2M3 21h1M20 21h1M3 9v2M21 9v2" />',
+    face: '<circle cx="12" cy="12" r="8"/><circle cx="9.5" cy="10.5" r=".9"/><circle cx="14.5" cy="10.5" r=".9"/><path d="M9 15c2 1.5 4 1.5 6 0"/><path d="M2 5V2h3M22 5V2h-3M2 19v3h3M22 19v3h-3"/>',
+    sparkle: '<path d="M10 3l1.6 4.4L16 9l-4.4 1.6L10 15l-1.6-4.4L4 9l4.4-1.6z"/><path d="M18 13l.8 2.2L21 16l-2.2.8L18 19l-.8-2.2L15 16l2.2-.8z"/>',
+    word: '<path d="M6 2h8l5 5v15H6z"/><path d="M14 2v5h5"/><path d="M8.5 11l1.2 6 2.3-4.5 2.3 4.5 1.2-6"/>',
+    ppt: '<rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M12 17v3M8 21h8"/><path d="M8 13V8h3a2 2 0 0 1 0 4H8"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="12" cy="16" r="1.3"/>',
+    unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/><circle cx="12" cy="16" r="1.3"/>',
+    sign: '<path d="M3 17c3-1 4-8 6-8s0 7 2 7 2-4 4-4 1 3 3 3 2-1 3-1"/><path d="M3 21h18"/>',
+    pagenum: '<path d="M6 2h12v20H6z"/><text x="9" y="19" style="font-size:7px">12</text><path d="M9 6h6M9 9h6"/>',
+    stamp: '<path d="M6 2h12v20H6z"/><path d="M8 16 16 8" /><text x="7.5" y="14" style="font-size:5px" transform="rotate(-45 12 12)">DRAFT</text>',
+    pages: '<rect x="3" y="6" width="8" height="12" rx="1"/><rect x="13" y="6" width="8" height="12" rx="1"/><path d="M7 2v2M17 2v2M7 20v2M17 20v2"/>',
+    info: '<path d="M6 2h8l5 5v15H6z"/><path d="M14 2v5h5"/><path d="M12.5 11v6M12.5 8.5v.5"/>',
+    compare: '<rect x="2" y="4" width="8" height="16" rx="1"/><rect x="14" y="4" width="8" height="16" rx="1"/><path d="M4.5 9h3M4.5 13h3M16.5 9h3M16.5 13h3"/><path d="M11 12h2"/>',
+    noise: '<path d="M2 12h2l2-5 3 10 3-8 3 6 2-3h5"/><path d="M4 20 20 4" />',
+    karaoke: '<rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8"/>',
+    record: '<rect x="2" y="4" width="20" height="14" rx="2"/><circle cx="12" cy="11" r="3.5"/><path d="M8 21h8"/>',
+    subtitle: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 13h5M13 13h5M6 16h8M16 16h2"/>',
+    cube: '<path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/>',
+    font: '<text x="1.5" y="17" style="font-size:14px;font-family:Georgia,serif">Ag</text>',
+    barcode: '<path d="M3 5v14M6 5v14M8 5v14M11 5v14M14 5v14M15.5 5v14M18 5v14M21 5v14"/>',
+    raw: '<rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="4"/><path d="M8 6l1.5-2h5L16 6"/>',
+    layers: '<path d="M12 3 2 8l10 5 10-5z"/><path d="M2 13l10 5 10-5"/><path d="M2 17.5 12 22l10-4.5"/>',
+    epub: '<path d="M4 4h6a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H4zM20 4h-6a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h6z"/><path d="M14.5 9h3M14.5 12h3"/>',
     units: '<path d="M3 16 16 3l5 5L8 21z"/><path d="m7 12 2 2M10 9l2 2M13 6l2 2"/>'
   };
   const glyph = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${G[name] || G.convert}</svg>`;
