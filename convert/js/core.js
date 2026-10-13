@@ -10,6 +10,7 @@ window.LC = (() => {
     { id: 'av', name: 'Audio & video', cls: 'c-av' },
     { id: 'data', name: 'Data & spreadsheets', cls: 'c-data' },
     { id: 'text', name: 'Text & code', cls: 'c-text' },
+    { id: 'code', name: 'Code', cls: 'c-code' },
     { id: 'calc', name: 'Colours, units & time', cls: 'c-calc' },
     { id: 'files', name: 'Archives, codes, fonts & 3D', cls: 'c-files' }];
 
@@ -224,6 +225,10 @@ window.LC = (() => {
     raw: '<rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="4"/><path d="M8 6l1.5-2h5L16 6"/>',
     layers: '<path d="M12 3 2 8l10 5 10-5z"/><path d="M2 13l10 5 10-5"/><path d="M2 17.5 12 22l10-4.5"/>',
     epub: '<path d="M4 4h6a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H4zM20 4h-6a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h6z"/><path d="M14.5 9h3M14.5 12h3"/>',
+    pyjs: '<text x="0.5" y="11" style="font-size:8.5px">py</text><path d="M3 15h12m-3-3 3 3-3 3"/><text x="11" y="23" style="font-size:8.5px">js</text>',
+    pyweb: '<rect x="2" y="3" width="20" height="18" rx="2"/><path d="M2 8h20"/><circle cx="5" cy="5.5" r=".6"/><circle cx="7.5" cy="5.5" r=".6"/><path d="m9 13-3 2.5L9 18M15 13l3 2.5-3 2.5"/>',
+    codehl: '<path d="m8 7-5 5 5 5M16 7l5 5-5 5"/><path d="M11 6h2M10 12h4M11 18h2"/>',
+    notebook: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 2v20"/><circle cx="14" cy="9" r="2.5"/><path d="M11 15h6M11 18h4"/>',
     units: '<path d="M3 16 16 3l5 5L8 21z"/><path d="m7 12 2 2M10 9l2 2M13 6l2 2"/>'
   };
   const glyph = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${G[name] || G.convert}</svg>`;

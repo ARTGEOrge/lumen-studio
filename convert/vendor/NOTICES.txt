@@ -34,6 +34,16 @@ RNNoise            -         rnnoise/rnnoise.js, rnnoise.wasm (@jitsi/rnnoise-wa
 woff2 (wawoff2)    2.0.1     wawoff2/compress_binding.js, decompress_binding.js (Google woff2 + brotli in WASM)   MIT   wawoff2/LICENSE
 three.js           r186      three-convert.min.js (subset: core, STL/OBJ/PLY/GLTF loaders, STL/OBJ/GLTF exporters,
                              OrbitControls; bundled and minified with esbuild)   MIT   three.LICENSE
+Brython            3.15.0    brython/brython.min.js (unmodified) and brython/brython_stdlib_lumen.js (a 44-module
+                             subset of brython_stdlib.js built by tools/deps/convert/build-brython-subset.js:
+                             math, random, time, json, re, datetime, collections, itertools, string, functools,
+                             heapq, bisect, copy, textwrap + their dependencies; turtle not included)
+                             BSD-3-Clause   brython/LICENSE.txt   - copied into pages made by Python -> web page
+highlight.js       11.12.0   highlight/highlight.min.js (common bundle) + dockerfile, haskell, matlab, nginx,
+                             powershell, scala language files   BSD-3-Clause   highlight/LICENSE
+
+The Python -> JavaScript parser, compiler and "py" runtime (js/py/*.js) are Lumen Studio's own code (MIT, same
+as the site). The runtime's random module reimplements CPython's Mersenne Twister so seeded sequences match.
 
 Shared with other Lumen Studio apps (loaded by relative URL, not copied, so the site ships them once):
   ../pdf/vendor/pdf-lib.min.js   pdf-lib 1.17.1 (bundles pako) - MIT - (../pdf/vendor/pdf-lib.LICENSE.md)
