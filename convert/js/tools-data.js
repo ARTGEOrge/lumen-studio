@@ -158,7 +158,7 @@
 
   const SAMPLE_CSV = 'id,name,email,city,score,active\n1,Ada Lovelace,ada@example.com,London,98.5,true\n2,"Grace Hopper",grace@example.com,"Arlington, VA",95,true\n3,Alan Turing,alan@example.com,Wilmslow,,false\n';
   const SAMPLE_JSON = '[\n  { "id": 1, "name": "Ada Lovelace", "skills": ["math", "poetry"], "address": { "city": "London", "zip": "W1" } },\n  { "id": 2, "name": "Grace Hopper", "skills": ["COBOL"], "address": { "city": "Arlington", "zip": "22201" } }\n]\n';
-  const SAMPLE_YAML = '# Site settings\ntitle: Lumen Convert\nversion: 2\nfeatures:\n  - offline\n  - private\n  - free\nauthor:\n  name: ARTGEOrge\n  url: https://example.com\n';
+  const SAMPLE_YAML = '# Site settings\ntitle: Lumen Convert\nversion: 2\nfeatures:\n  - offline\n  - private\n  - free\nauthor:\n  name: Nexus Play\n  url: https://example.com\n';
   const SAMPLE_XML = '<?xml version="1.0" encoding="UTF-8"?>\n<library name="City">\n  <book id="1" lang="en">\n    <title>Dune</title>\n    <year>1965</year>\n  </book>\n  <book id="2">\n    <title>Neuromancer</title>\n    <year>1984</year>\n  </book>\n</library>\n';
 
   /* 16 ─ CSV ⇄ JSON */
