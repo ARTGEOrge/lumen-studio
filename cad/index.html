@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen CAD</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body no-toolbox">
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd">
+        <button class="aero-btn" data-add="box" title="Box">▣ Box</button><button class="aero-btn" data-add="cylinder">◉ Cylinder</button><button class="aero-btn" data-add="sphere">● Sphere</button><button class="aero-btn" data-add="cone">▲ Cone</button><button class="aero-btn" data-add="torus">◎ Torus</button>
+        <span class="sep"></span><button class="aero-btn" data-add="extrude" title="Extrude a sketch">⬆ Extrude</button><button class="aero-btn" data-add="revolve" title="Revolve a sketch">↻ Revolve</button>
+        <span class="sep"></span>
+        <label>View <select id="viewSel"><option value="iso">Isometric</option><option value="front">Front</option><option value="top">Top</option><option value="right">Right</option></select></label>
+        <label><input type="checkbox" id="edges" checked> Edges</label>
+        <label><input type="checkbox" id="section"> Section</label><select id="secAxis" disabled><option>X</option><option selected>Y</option><option>Z</option></select><input type="range" id="secPos" min="0" max="1000" value="500" disabled style="width:90px">
+        <button class="aero-btn" id="bMeasure" title="Click two points on the part">📏 Measure</button>
+        <span class="hint" id="hint"></span>
+      </div>
+      <div class="aero-work" style="grid-template-columns:250px 1fr 300px">
+        <div class="aero-side left">
+          <div class="aero-ph"><span class="phi"></span>Features<span class="right" id="fCount"></span></div>
+          <div class="aero-list" id="tree" style="flex:1"></div>
+          <div class="aero-iconbar"><button class="aero-iconbtn" id="fUp" title="Move up">▲</button><button class="aero-iconbtn" id="fDown" title="Move down">▼</button><button class="aero-iconbtn" id="fSup" title="Suppress / unsuppress">⊘</button><button class="aero-iconbtn" id="fDup" title="Duplicate">⧉</button><button class="aero-iconbtn" id="fDel" title="Delete">✕</button></div>
+          <div class="aero-ph"><span class="phi"></span>Parameters</div>
+          <div class="params" id="params"></div>
+        </div>
+        <div class="aero-stage cad-stage" id="stage"><canvas id="cv"></canvas><div class="viewcube" id="vc"></div><div class="mtip" id="mtip"></div></div>
+        <div class="aero-side">
+          <div class="aero-ph"><span class="phi"></span><span id="propTitle">Properties</span></div>
+          <div class="aero-pane props" id="props"></div>
+          <div class="aero-ph"><span class="phi"></span>Mass properties</div>
+          <div class="aero-pane" id="mass"></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span id="st2"></span><span id="st3"></span></div>
+    </div>
+  </div>
+</div>
+<script src="../kit/aero.js"></script>
+<script src="vendor/three-cad.min.js"></script>
+<script src="js/kernel.js"></script><script src="js/sample.js"></script><script src="js/viewport.js"></script><script src="js/app.js"></script>
+</body></html>

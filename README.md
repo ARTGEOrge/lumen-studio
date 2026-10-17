@@ -18,6 +18,10 @@ Everything runs locally in the browser (or in the Windows desktop app); nothing 
 | Lumen Proto | XD | `proto/` |
 | Lumen PDF | Acrobat | `pdf/` |
 | Lumen Plan (engineering) | Primavera P6 | `plan/` |
+| Lumen Lab (engineering) | MATLAB | `lab/` |
+| Lumen PCB (engineering) | Altium Designer | `pcb/` |
+| Lumen CAD (engineering) | CATIA | `cad/` |
+| Lumen Flow (engineering) | Ansys Fluent | `flow/` |
 | Lumen Convert (web page, not an app) | — | `convert/` |
 
 ## Layout
@@ -32,8 +36,10 @@ Serve this folder with cross-origin isolation headers (needed for threaded WASM)
 `node desktop/photo/scripts/serve.js 5180 .` then open http://localhost:5180/.
 
 ## Engineering apps
-Newer apps for engineers, on the same kit. Each has Node tests in `<app>/tests/` (`node plan/tests/cpm.test.js`, `node plan/tests/io.test.js`).
+Newer apps for engineers, on the same kit. Each has Node tests in `<app>/tests/` (`node plan/tests/cpm.test.js`, `node plan/tests/io.test.js`, `node lab/tests/engine.test.js`).
 They ship as their own installers, versioned separately: `APP_VERSION=1.0.0 node scripts/build-apps.js plan` in `C:\code\lumen-suite`,
-released under tags like `plan-v1.0.0`. Planned next: Lab (MATLAB), PCB (Altium), CAD (CATIA), Flow (Fluent).
+released under tags like `plan-v1.0.0` and `lab-v1.0.0`. More tests: `node pcb/tests/core.test.js`, `node cad/tests/kernel.test.js`, `node flow/tests/validate.test.js`
+(add `FLOW_LONG=1` for the 2-minute vortex-shedding run). Lumen Flow is validated against Ghia et al. (1982) and the exact
+Poiseuille profile; CAD's three.js subset is bundled from `tools/deps/convert/cad-three-entry.js` with the local esbuild.
 
 Adobe and its product names are trademarks of Adobe Inc. Lumen Studio is not affiliated with Adobe.

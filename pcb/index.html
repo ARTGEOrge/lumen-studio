@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen PCB</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd">
+        <span class="modes"><button class="aero-btn mode on" data-m="sch">Schematic</button><button class="aero-btn mode" data-m="pcb">PCB</button></span>
+        <span class="sep"></span>
+        <span id="schBar"><button class="aero-btn" id="bAnno">Annotate</button><button class="aero-btn" id="bErc">Check (ERC)</button><button class="aero-btn pri" id="bSync" title="Update PCB from schematic (F8)">Update PCB →</button></span>
+        <span id="pcbBar" hidden><label>Layer <select id="layer"><option value="top">Top copper</option><option value="bottom">Bottom copper</option></select></label>
+          <label>Track <select id="trackW"><option>0.2</option><option selected>0.25</option><option>0.3</option><option>0.4</option><option>0.5</option><option>0.8</option><option>1.0</option></select> mm</label>
+          <label>Grid <select id="grid"><option value="0.25">0.25</option><option value="0.5">0.5</option><option value="0.635" selected>0.635</option><option value="1.27">1.27</option></select></label>
+          <button class="aero-btn" id="bDrc">Check (DRC)</button><button class="aero-btn pri" id="bFab">Gerbers…</button></span>
+        <span class="hint" id="hint"></span>
+      </div>
+      <div class="aero-work" style="grid-template-columns:1fr 270px">
+        <div class="aero-stage pcb-stage" id="stage"><canvas id="cv"></canvas></div>
+        <div class="aero-side">
+          <div id="libBox">
+            <div class="aero-ph"><span class="phi"></span>Library<span class="right" id="libCount"></span></div>
+            <div class="aero-pane" style="padding-bottom:4px"><input type="search" id="libSearch" placeholder="Search parts…" style="width:100%;box-sizing:border-box"></div>
+            <div class="aero-list" id="lib" style="height:210px"></div>
+          </div>
+          <div class="aero-ph"><span class="phi"></span>Properties</div>
+          <div class="aero-pane" id="props"></div>
+          <div class="aero-ph"><span class="phi"></span><span id="msgTitle">Messages</span><span class="right" id="msgCount"></span></div>
+          <div class="aero-list" id="msgs" style="flex:1;min-height:80px"></div>
+          <div class="aero-iconbar" id="layerBar" hidden></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span id="st2"></span><span id="st3"></span></div>
+    </div>
+  </div>
+</div>
+<script src="../kit/aero.js"></script>
+<script src="js/lib.js"></script><script src="js/core.js"></script><script src="js/sample.js"></script>
+<script src="js/view.js"></script><script src="js/sch.js"></script><script src="js/board.js"></script><script src="js/app.js"></script>
+</body></html>

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Lab</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body no-toolbox">
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd">
+        <button class="aero-btn" id="bRun" title="Run the script in the editor (F5)">▶ Run</button>
+        <button class="aero-btn" id="bSection" title="Run the section at the cursor (Ctrl+Enter)">▶ Section</button>
+        <button class="aero-btn" id="bStop" title="Stop the running code (Ctrl+Break, or Ctrl+C in the Command Window)" disabled>■ Stop</button>
+        <span class="sep"></span>
+        <button class="aero-btn" id="bNew" title="New script (Ctrl+N)">＋ Script</button>
+        <button class="aero-btn" id="bOpen" title="Open .m, .csv or workspace files (Ctrl+O)">Open…</button>
+        <button class="aero-btn" id="bSave" title="Save the script (Ctrl+S)">Save</button>
+        <button class="aero-btn" id="bImport" title="Import a CSV file as a variable">Import data…</button>
+        <span class="sep"></span>
+        <button class="aero-btn" id="bClearWs" title="Clear all variables">Clear workspace</button>
+        <button class="aero-btn" id="bCloseFigs" title="Close all figures">Close figures</button>
+        <span class="hint" id="hint"></span>
+      </div>
+      <div class="lab-work" id="work">
+        <div class="aero-side left lab-left" id="left">
+          <div class="aero-ph"><span class="phi"></span>Current Folder<span class="right" id="nFiles"></span></div>
+          <div class="aero-list files" id="files"></div>
+          <div class="aero-iconbar">
+            <button class="aero-iconbtn" id="fNew" title="New script">New</button>
+            <button class="aero-iconbtn" id="fFunc" title="New function file">Function</button>
+            <button class="aero-iconbtn" id="fRename" title="Rename the selected file">Rename</button>
+            <button class="aero-iconbtn" id="fDel" title="Delete the selected file">Delete</button>
+          </div>
+          <div class="hsplit" id="splitL"></div>
+          <div class="aero-ph"><span class="phi ws-i"></span>Workspace<span class="right" id="nVars"></span></div>
+          <div class="ws" id="ws"></div>
+          <div class="aero-iconbar">
+            <button class="aero-iconbtn" id="wOpen" title="Open the selected variable">Open</button>
+            <button class="aero-iconbtn" id="wPlot" title="Plot the selected variable">Plot</button>
+            <button class="aero-iconbtn" id="wCsv" title="Export the selected variable as CSV">Export</button>
+            <button class="aero-iconbtn" id="wDel" title="Clear the selected variable">Clear</button>
+          </div>
+        </div>
+        <div class="vsplit" id="split1"></div>
+        <div class="lab-center" id="center">
+          <div class="editor-pane">
+            <div class="aero-tabs ed-tabs" id="edTabs"></div>
+            <div class="editors" id="editors"></div>
+            <div class="vareditor" id="varEd" hidden></div>
+          </div>
+          <div class="hsplit" id="split2"></div>
+          <div class="cmdwin-pane">
+            <div class="aero-ph"><span class="phi cw-i"></span>Command Window<span class="right" id="busy"></span></div>
+            <div class="cmdwin" id="cmdwin">
+              <div id="cwOut"></div>
+              <div class="cw-line"><span class="prompt" id="prompt">&gt;&gt;</span><textarea id="cwIn" rows="1" spellcheck="false" autocomplete="off" wrap="soft" aria-label="Command"></textarea></div>
+            </div>
+            <div class="complete" id="complete" hidden></div>
+          </div>
+        </div>
+        <div class="vsplit" id="split3"></div>
+        <div class="lab-right" id="right">
+          <div class="aero-ph"><span class="phi fig-i"></span>Figures<span class="right" id="figInfo"></span></div>
+          <div class="aero-tabs fig-tabs" id="figTabs"></div>
+          <div class="fig-stage" id="figStage"><canvas id="figCanvas"></canvas><div class="fig-empty" id="figEmpty"><b>No figures yet</b>Plot something — for example<br><code>plot(sin(0:0.1:10))</code> or <code>surf(peaks)</code></div><div class="ftip" id="ftip"></div></div>
+          <div class="aero-iconbar">
+            <button class="aero-iconbtn" id="gPng" title="Save the figure as a PNG image">Save PNG</button>
+            <button class="aero-iconbtn" id="gCopy" title="Copy the figure to the clipboard">Copy</button>
+            <button class="aero-iconbtn" id="gReset" title="Undo zoom, pan and rotation (or double-click the plot)">Reset view</button>
+            <button class="aero-iconbtn" id="gClose" title="Close this figure">Close</button>
+          </div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span id="st2"></span><span id="st3"></span><span id="st4"></span></div>
+    </div>
+  </div>
+</div>
+<script src="../kit/aero.js"></script>
+<script src="js/mat.js"></script><script src="js/linalg.js"></script><script src="js/lang.js"></script><script src="js/interp.js"></script>
+<script src="js/lib.js"></script><script src="js/numerics.js"></script><script src="js/graphics.js"></script><script src="js/help.js"></script><script src="js/engine.js"></script>
+<script src="js/plotview.js"></script><script src="js/samples.js"></script><script src="js/editor.js"></script><script src="js/app.js"></script>
+</body></html>

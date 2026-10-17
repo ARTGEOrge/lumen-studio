@@ -9,5 +9,9 @@
   { "id": "layout",   "name": "Lumen Layout",   "like": "InDesign",      "desc": "Page layout and publishing", "ext": ["llay"] },
   { "id": "proto",    "name": "Lumen Proto",    "like": "XD",            "desc": "UI design and clickable prototypes", "ext": ["lproto"] },
   { "id": "pdf",      "name": "Lumen PDF",      "like": "Acrobat",       "desc": "Read, annotate, sign and organize PDFs", "ext": ["pdf"] },
-  { "id": "plan",     "name": "Lumen Plan",     "like": "Primavera P6",  "desc": "Project scheduling: critical path, Gantt, baselines, resources", "ext": ["lplan", "xer"] }
+  { "id": "plan",     "name": "Lumen Plan",     "like": "Primavera P6",  "desc": "Project scheduling: critical path, Gantt, baselines, resources", "ext": ["lplan", "xer"] },
+  { "id": "lab",      "name": "Lumen Lab",      "like": "MATLAB",        "desc": "Numeric computing: matrices, scripts, linear algebra, ODEs and plots", "ext": ["m", "lmat"] },
+  { "id": "pcb",      "name": "Lumen PCB",      "like": "Altium Designer", "desc": "Schematic capture and two-layer PCB layout with DRC and Gerber export", "ext": ["lpcb"] },
+  { "id": "cad",      "name": "Lumen CAD",      "like": "CATIA",         "desc": "Parametric 3D part modelling with a feature tree and STL export", "ext": ["lcad"] },
+  { "id": "flow",     "name": "Lumen Flow",     "like": "Ansys Fluent",  "desc": "2D fluid flow simulation: cylinders, airfoils, channels, validated benchmarks", "ext": ["lflow"] }
 ]

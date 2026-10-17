@@ -1,0 +1,21 @@
+#cmd{overflow:hidden;flex-wrap:nowrap}
+#cmd>*,#cmd span>*{flex:none;white-space:nowrap}
+#cmd span{display:inline-flex;align-items:center;gap:6px}
+.modes .mode{min-width:86px}
+.modes .mode.on{background:linear-gradient(#cfe7fc,#a9d0f5);border-color:#5b8ec6;box-shadow:inset 0 1px 2px rgba(0,0,0,.2)}
+.pcb-stage{background:#fbfbf6}
+.pcb-stage canvas{position:absolute;inset:0;display:block;touch-action:none}
+.libitem{display:flex;align-items:center;gap:8px}
+.libitem canvas{flex:none;background:#fbfbf6;border:1px solid #dfe6ee;border-radius:2px}
+.libitem .nm{flex:1;overflow:hidden;text-overflow:ellipsis}
+.libitem .nm small{display:block;color:var(--dim)}
+.pform{display:grid;grid-template-columns:auto 1fr;gap:5px 8px;align-items:center}
+.pform label{color:var(--navy)}
+.pform input,.pform select{font:inherit;min-width:0;width:100%;box-sizing:border-box}
+.pform .ro{color:var(--dim)}
+.msg{white-space:normal!important;line-height:1.3}
+.msg b{color:#a01818;font-weight:600}
+.msg.ok b{color:#2d7d2d}
+.lyr{display:flex;align-items:center;gap:4px;padding:2px 6px;cursor:default;font-size:11.5px}
+.lyr i{display:inline-block;width:10px;height:10px;border:1px solid rgba(0,0,0,.4)}
+.lyr.off{opacity:.4}
