@@ -124,6 +124,46 @@
   const shareLayer = (a, b) => a.layers.some(l => b.layers.includes(l));
   const bbox = it => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; it.core.forEach(([x, y]) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }); return [x0 - it.r, y0 - it.r, x1 + it.r, y1 + it.r]; };
 
+
+  // ---------- copper pours (zones) ----------
+  // zone = { net, layer, clearance } fills the whole board (minus the edge clearance) on one layer, keeps `clearance`
+  // from copper of every other net, joins same-net copper solidly, and drops islands that touch none of its net.
+  const fillCache = new Map();
+  function fillZone(board, zone, pinNet, res = 0.1) {
+    const key = JSON.stringify([board.w, board.h, board.parts, board.tracks, board.vias, board.rules && board.rules.edge, zone, res]) + (pinNet ? [...pinNet].join() : '');
+    if (fillCache.has(key)) return fillCache.get(key);
+    const nx = Math.ceil(board.w / res), ny = Math.ceil(board.h / res), grid = new Int32Array(nx * ny);   // 0 empty, -1 blocked, >0 island id
+    const edge = Math.max(zone.clearance, (board.rules && board.rules.edge) || 0.3), cl = zone.clearance + res * 0.71;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const x = (i + 0.5) * res, y = (j + 0.5) * res; if (x < edge || y < edge || x > board.w - edge || y > board.h - edge) grid[j * nx + i] = -1; }
+    const items = copper(board, pinNet).filter(it => it.layers.includes(zone.layer)), seeds = [];
+    items.forEach(it => {
+      const same = it.net === zone.net, b = bbox(it), m = same ? 0 : cl;
+      const i0 = Math.max(0, Math.floor((b[0] - m) / res)), i1 = Math.min(nx - 1, Math.ceil((b[2] + m) / res)), j0 = Math.max(0, Math.floor((b[1] - m) / res)), j1 = Math.min(ny - 1, Math.ceil((b[3] + m) / res));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        const k = j * nx + i; if (grid[k] === -1) continue;
+        const g = gap(it, { core: [[(i + 0.5) * res, (j + 0.5) * res]], r: 0 });
+        if (!same && g < cl) grid[k] = -1; else if (same && g <= 0) seeds.push(k);
+      }
+    });
+    // flood fill from same-net copper; everything else is an isolated island and is removed
+    let id = 0; const isl = [];
+    seeds.forEach(k0 => { if (grid[k0] !== 0) return; id++; let n = 0; const st = [k0]; grid[k0] = id;
+      while (st.length) { const k = st.pop(); n++; const i = k % nx, j = (k - i) / nx; if (i > 0 && !grid[k - 1]) { grid[k - 1] = id; st.push(k - 1); } if (i < nx - 1 && !grid[k + 1]) { grid[k + 1] = id; st.push(k + 1); } if (j > 0 && !grid[k - nx]) { grid[k - nx] = id; st.push(k - nx); } if (j < ny - 1 && !grid[k + nx]) { grid[k + nx] = id; st.push(k + nx); } }
+      isl.push(n); });
+    const out = { res, nx, ny, grid, islands: id, area: isl.reduce((a, b) => a + b, 0) * res * res, zone };
+    if (fillCache.size > 20) fillCache.clear(); fillCache.set(key, out); return out;
+  }
+  // filled area as rectangles (row runs merged downwards) — used for drawing and Gerber regions
+  function zoneRects(f) {
+    const { nx, ny, grid, res } = f, open = new Map(), out = [];
+    for (let j = 0; j <= ny; j++) {
+      const runs = new Map(); if (j < ny) { let i = 0; while (i < nx) { if (grid[j * nx + i] > 0) { const a = i; while (i < nx && grid[j * nx + i] > 0) i++; runs.set(a + ':' + i, [a, i]); } else i++; } }
+      open.forEach((r, k) => { if (!runs.has(k)) { out.push([r.a * res, r.j0 * res, r.b * res, j * res]); open.delete(k); } });
+      runs.forEach(([a, b], k) => { if (!open.has(k)) open.set(k, { a, b, j0: j }); });
+    }
+    return out;
+  }
+
   // which pads end up electrically joined by copper (touching items on a common layer)
   function connectivity(board, pinNet) {
     const items = copper(board, pinNet), dsu = new DSU();
@@ -132,6 +172,16 @@
       const a = bb[i], b = bb[j]; if (a[2] < b[0] || b[2] < a[0] || a[3] < b[1] || b[3] < a[1]) continue;
       if (shareLayer(items[i], items[j]) && gap(items[i], items[j]) <= 1e-6) dsu.union(i, j);
     }
+    // a pour joins every same-net item it touches (on its layer) through the same filled island
+    (board.zones || []).forEach(z => {
+      const f = fillZone(board, z, pinNet), first = new Map();
+      items.forEach((it, idx) => {
+        if (!it.layers.includes(z.layer) || it.net !== z.net) return;
+        const [x, y] = it.core[0], i = Math.floor(x / f.res), j = Math.floor(y / f.res); if (i < 0 || j < 0 || i >= f.nx || j >= f.ny) return;
+        const id = f.grid[j * f.nx + i]; if (id <= 0) return;
+        if (first.has(id)) dsu.union(first.get(id), idx); else first.set(id, idx);
+      });
+    });
     return { items, dsu };
   }
   // ratsnest: per net, join the copper islands with the shortest pad-to-pad lines (Prim's MST over islands)
@@ -201,6 +251,9 @@
     const draw = (pts, d) => { use(d); body.push(`${X(pts[0][0])}${Y(pts[0][1])}D02*`); for (let i = 1; i < pts.length; i++) body.push(`${X(pts[i][0])}${Y(pts[i][1])}D01*`); };
     const padAp = (p, grow = 0) => { const w = +(p.w + 2 * grow).toFixed(4), h = +(p.h + 2 * grow).toFixed(4); return aperture(p.shape === 'round' ? `C,${w}` : p.shape === 'oval' ? `O,${w}X${h}` : `R,${w}X${h}`); };
     const copperLayer = layer === 'top' || layer === 'bottom' ? layer : layer === 'mask_top' ? 'top' : layer === 'mask_bottom' ? 'bottom' : null;
+    if (layer === 'top' || layer === 'bottom') (board.zones || []).filter(z => z.layer === layer).forEach(z => {   // pours as G36/G37 regions
+      zoneRects(fillZone(board, z, pinNet)).forEach(([x0, y0, x1, y1]) => { body.push('G36*', `${X(x0)}${Y(y0)}D02*`, `${X(x1)}${Y(y0)}D01*`, `${X(x1)}${Y(y1)}D01*`, `${X(x0)}${Y(y1)}D01*`, `${X(x0)}${Y(y0)}D01*`, 'G37*'); });
+    });
     if (layer === 'top' || layer === 'bottom') {
       (board.tracks || []).filter(t => t.layer === layer).forEach(t => draw(t.pts, aperture(`C,${t.w}`)));
       (board.vias || []).forEach(v => flash(v.x, v.y, aperture(`C,${v.dia}`)));
@@ -248,9 +301,9 @@
     const all = [...parts, ...central, new Uint8Array(e.buffer)], out = new Uint8Array(all.reduce((s, b) => s + b.length, 0)); let p = 0; all.forEach(b => { out.set(b, p); p += b.length; });
     return out;
   }
-  function fabFiles(board, name = 'board') {
+  function fabFiles(board, name = 'board', pinNet = null) {
     return [['top', '-F_Cu.gtl'], ['bottom', '-B_Cu.gbl'], ['mask_top', '-F_Mask.gts'], ['mask_bottom', '-B_Mask.gbs'], ['silk_top', '-F_Silkscreen.gto'], ['outline', '-Edge_Cuts.gm1']]
-      .map(([l, ext]) => ({ name: name + ext, data: gerber(board, l) })).concat([{ name: name + '.drl', data: drill(board) }]);
+      .map(([l, ext]) => ({ name: name + ext, data: gerber(board, l, pinNet) })).concat([{ name: name + '.drl', data: drill(board) }]);
   }
 
   // place footprints that aren't on the board yet, in a grid inside the outline
@@ -272,6 +325,6 @@
     return added;
   }
 
-  const api = { xform, pinsOf, netlist, annotate, erc, padsOf, silkOf, padShape, copper, coreDist, gap, connectivity, ratsnest, drc, gerber, drill, bom, zip, crc32, fabFiles, syncBoard, rot2 };
+  const api = { fillZone, zoneRects, xform, pinsOf, netlist, annotate, erc, padsOf, silkOf, padShape, copper, coreDist, gap, connectivity, ratsnest, drc, gerber, drill, bom, zip, crc32, fabFiles, syncBoard, rot2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.PcbCore = api;
 })(typeof self !== 'undefined' ? self : this);

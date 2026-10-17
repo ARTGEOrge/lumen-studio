@@ -113,8 +113,9 @@
     }
     if (A.mode === 'pcb') {
       const b = A.doc.board;
-      el.innerHTML = `<div class="pform"><label>Board</label><span>${b.w} × ${b.h} mm</span><label>Clearance</label><span class="ro">${b.rules.clearance} mm</span><label>Min track</label><span class="ro">${b.rules.track} mm</span><label>Via</label><span class="ro">${b.rules.viaDia} / ${b.rules.viaDrill} mm drill</span></div><button class="aero-btn small" id="bSetup" style="margin-top:6px">Board setup…</button>`;
-      $('bSetup').onclick = boardSetup; return;
+      const zones = (b.zones || []).map((z, i) => { const f = Core.fillZone(b, z, A.pinNet); return `<label>Pour ${i + 1}</label><span>${esc(z.net)} · ${z.layer} · ${z.clearance} mm gap · ${f.area.toFixed(0)} mm² <button class="aero-btn small" data-zdel="${i}">✕</button></span>`; }).join('');
+      el.innerHTML = `<div class="pform">${zones}<label>Board</label><span>${b.w} × ${b.h} mm</span><label>Clearance</label><span class="ro">${b.rules.clearance} mm</span><label>Min track</label><span class="ro">${b.rules.track} mm</span><label>Via</label><span class="ro">${b.rules.viaDia} / ${b.rules.viaDrill} mm drill</span></div><button class="aero-btn small" id="bSetup" style="margin-top:6px">Board setup…</button>`;
+      $('bSetup').onclick = boardSetup; el.querySelectorAll('[data-zdel]').forEach(x => x.onclick = () => A.commit('Remove pour', d => d.board.zones.splice(+x.dataset.zdel, 1))); return;
     }
     el.innerHTML = `<span class="dim">Pick a part from the library, or select something to edit it.</span>`;
   }
@@ -198,6 +199,14 @@
       { key: 'drill', label: 'Minimum drill (mm)', type: 'number', value: b.rules.drill, min: 0.1, step: 0.05 }, { key: 'edge', label: 'Copper to edge (mm)', type: 'number', value: b.rules.edge, min: 0, step: 0.05 },
     ], onOK: v => A.commit('Board setup', d => { d.board.w = +v.w; d.board.h = +v.h; ['clearance', 'track', 'viaDia', 'viaDrill', 'drill', 'edge'].forEach(k => d.board.rules[k] = +v[k]); }) });
   }
+  function addPour() {
+    const nets = A.netlist.nets.map(n => n.name).sort((a, b) => (b === 'GND') - (a === 'GND') || a.localeCompare(b));
+    if (!nets.length) return Aero.alert('Copper pour', 'Add nets in the schematic first.');
+    Aero.dialog({ title: 'Copper pour', instruction: 'Fills the board on one layer with copper on a net (usually GND), keeping clear of every other net. Pads of that net join it directly, and islands that touch none of them are removed.', fields: [
+      { key: 'net', label: 'Net', type: 'select', options: nets, value: nets[0] }, { key: 'layer', label: 'Layer', type: 'select', options: [['bottom', 'Bottom copper'], ['top', 'Top copper']], value: 'bottom' },
+      { key: 'clearance', label: 'Clearance (mm)', type: 'number', value: 0.4, min: 0.1, step: 0.05 },
+    ], onOK: v => { setMode('pcb'); A.commit('Copper pour', d => { (d.board.zones = d.board.zones || []).push({ net: v.net, layer: v.layer, clearance: Math.max(0.1, +v.clearance) }); }); Aero.toast(`Poured ${v.net} on ${v.layer} copper`); } });
+  }
   A.editPart = () => { const i = $('props').querySelector('input'); if (i) { i.focus(); i.select(); } };
   A.editLabel = A.editPart;
 
@@ -216,7 +225,7 @@
     const unrouted = A.rats.unroutedNets;
     if ((drcErr.length || unrouted) && !await Aero.confirm('Export Gerbers', `${drcErr.length ? drcErr.length + ' DRC problem(s)' : ''}${drcErr.length && unrouted ? ' and ' : ''}${unrouted ? unrouted + ' unrouted net(s)' : ''}. Export anyway?`)) return;
     const base = A.docName.replace(/[^\w.-]+/g, '_');
-    const files = Core.fabFiles(A.doc.board, base); files.push({ name: base + '-BOM.csv', data: Core.bom(A.doc.sch) });
+    const files = Core.fabFiles(A.doc.board, base, A.pinNet); files.push({ name: base + '-BOM.csv', data: Core.bom(A.doc.sch) });
     await Aero.saveFile({ name: base + '-gerbers.zip', data: Core.zip(files), filters: [{ name: 'ZIP archive', extensions: ['zip'] }] });
   }
   async function exportBom() { await Aero.saveFile({ name: A.docName + '-BOM.csv', data: Core.bom(A.doc.sch), filters: [{ name: 'CSV', extensions: ['csv'] }] }); }
@@ -235,13 +244,13 @@
         ['Gerbers + drill + BOM (.zip)…', '', exportFab], ['Bill of materials (.csv)…', '', exportBom], ['Netlist (.csv)…', '', exportNetlist], ['Image of this view (.png)…', '', exportPng]],
       Edit: [['Undo', 'Ctrl+Z', () => restore(hist.undo())], ['Redo', 'Ctrl+Y', () => restore(hist.redo())], '-', ['Delete', 'Delete', del], ['Rotate', 'R', () => A.mode === 'sch' ? SchEditor.rotateSel() : BoardEditor.rotateSel()], ['Mirror / flip side', 'F', () => A.mode === 'sch' ? SchEditor.mirrorSel() : BoardEditor.flipSel()]],
       Place: [['Part…', '', () => { setMode('sch'); $('libSearch').focus(); }], ['Wire', 'W', () => { setMode('sch'); A.setTool('wire'); }], ['Net label', 'L', () => { setMode('sch'); A.setTool('label'); }], ['Ground', 'G', () => { setMode('sch'); startPlace('GND'); }], ['Power rail…', 'P', () => { setMode('sch'); startPlace('VCC'); }], '-',
-        ['Route track', 'X', () => { setMode('pcb'); A.setTool('route'); }], ['Via', '', () => { setMode('pcb'); A.setTool('via'); }]],
+        ['Route track', 'X', () => { setMode('pcb'); A.setTool('route'); }], ['Via', '', () => { setMode('pcb'); A.setTool('via'); }], ['Copper pour…', '', addPour]],
       Design: [['Annotate references', '', () => A.commit('Annotate', d => Core.annotate(d.sch))], ['Check schematic (ERC)', 'F7', () => { setMode('sch'); runCheck('erc'); }], ['Update PCB from schematic', 'F8', syncPcb], '-', ['Check design rules (DRC)', 'F9', () => { setMode('pcb'); runCheck('drc'); }], ['Board setup…', '', () => { setMode('pcb'); boardSetup(); }]],
       View: [['Schematic', 'F2', () => setMode('sch')], ['PCB', 'F3', () => setMode('pcb')], '-', ['Fit to window', 'Home', () => { (A.mode === 'sch' ? SchEditor : BoardEditor).fit(); render(); }],
         { label: 'Top copper', checked: () => A.layers.top, fn: () => { A.layers.top = !A.layers.top; renderLayerBar(); render(); } }, { label: 'Bottom copper', checked: () => A.layers.bottom, fn: () => { A.layers.bottom = !A.layers.bottom; renderLayerBar(); render(); } },
         { label: 'Silkscreen', checked: () => A.layers.silk, fn: () => { A.layers.silk = !A.layers.silk; renderLayerBar(); render(); } }, { label: 'Ratsnest', checked: () => A.layers.rats, fn: () => { A.layers.rats = !A.layers.rats; renderLayerBar(); render(); } }],
       Help: [['How to make a board', '', () => Aero.alert('Making a board in Lumen PCB',
-        '1. Schematic: pick parts from the Library and click to place them (R rotates). Draw wires with W; end a wire on a pin or another wire. Name nets with labels (L) — pins with the same label name are connected. Add Ground (G) and power rails (P).\n2. Check the schematic (F7) for unconnected pins.\n3. Update PCB (F8): footprints appear on the board with white ratsnest lines showing what still needs connecting.\n4. Arrange footprints, then route (X): click a pad, click to add corners, finish on the other pad. Press V while routing to drop a via and continue on the other layer.\n5. Run DRC (F9) until it is clean, then File → Gerbers to get a zip any PCB fab accepts (copper, mask, silk, outline, Excellon drill, BOM).\n\nNot included yet: copper pours, autorouter, more than two layers, signal-integrity analysis.')]],
+        '1. Schematic: pick parts from the Library and click to place them (R rotates). Draw wires with W; end a wire on a pin or another wire. Name nets with labels (L) — pins with the same label name are connected. Add Ground (G) and power rails (P).\n2. Check the schematic (F7) for unconnected pins.\n3. Update PCB (F8): footprints appear on the board with white ratsnest lines showing what still needs connecting.\n4. Arrange footprints, then route (X): click a pad, click to add corners, finish on the other pad. Press V while routing to drop a via and continue on the other layer.\n5. Run DRC (F9) until it is clean, then File → Gerbers to get a zip any PCB fab accepts (copper, mask, silk, outline, Excellon drill, BOM).\n\nGround planes: Place → Copper pour fills a layer with a net and is exported as Gerber regions.\n\nNot included yet: autorouter, thermal relief spokes, more than two layers, signal-integrity analysis.')]],
     } });
   tb = Aero.toolbox($('tools'), TOOLS, id => { if (id && id !== A.tool) A.setTool(id); });
   // mode-aware single-key shortcuts

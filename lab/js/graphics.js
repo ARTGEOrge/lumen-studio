@@ -58,14 +58,15 @@
     // start a new plot in the current axes (clears it unless hold is on)
     function newplot() {
       const ax = gca();
+      if (ax.yy && !ax.hold) { ax.series = ax.series.filter(s => s.yside !== ax.yySide); touch(); return ax; }
       if (!ax.hold) {
         const keep = { id: ax.id, sub: ax.sub, hold: false };
         Object.assign(ax, { series: [], colorIdx: 0, title: '', subtitle: '', xlabel: '', ylabel: '', zlabel: '', legend: null, grid: ax.grid, minor: ax.minor, xlim: null, ylim: null, zlim: null, clim: null, view: null, axis: [], xscale: 'linear', yscale: 'linear', colorbar: false, shading: 'faceted', polar: false, ydir: 'normal' }, keep);
       }
       touch(); return ax;
     }
-    const nextColor = ax => { const c = ORDER[ax.colorIdx % ORDER.length]; ax.colorIdx++; return c; };
-    const add = (ax, s) => { s.h = G.nextObj++; ax.series.push(s); touch(); return num(s.h); };
+    const nextColor = ax => { if (ax.yy) return ORDER[ax.yySide === 'right' ? 1 : 0]; const c = ORDER[ax.colorIdx % ORDER.length]; ax.colorIdx++; return c; };
+    const add = (ax, s) => { s.h = G.nextObj++; if (ax.yy) s.yside = ax.yySide; ax.series.push(s); touch(); return num(s.h); };
     // name/value pairs → props
     function nvProps(a, start) {
       const p = {};
@@ -367,7 +368,13 @@
       const s = Str(a[0]).toLowerCase(); ax.hold = s === 'on' || s === 'all'; touch();
     };
     L.ishold = () => M.bool(gca().hold);
-    const label = key => (a) => { const ax = gca(); if (!a.length) return; const v = a[0]; ax[key] = v.type === 'cell' ? v.data.map(x => Str(x)).join('\n') : Str(v); touch(); };
+    const label = key => (a) => { const ax = gca(); if (!a.length) return; const v = a[0], t = v.type === 'cell' ? v.data.map(x => Str(x)).join('\n') : Str(v); if (key === 'ylabel' && ax.yy && ax.yySide === 'right') ax.yy.ylabel = t; else ax[key] = t; touch(); };
+    L.yyaxis = a => {
+      const ax = gca(), side = a.length ? Str(a[a.length - 1]).toLowerCase() : 'left';
+      if (side !== 'left' && side !== 'right') fail("yyaxis: use yyaxis left or yyaxis right.");
+      if (!ax.yy) { ax.yy = { ylabel: '', ylim: null }; ax.series.forEach(s => { s.yside = 'left'; }); }
+      ax.yySide = side; touch();
+    };
     L.title = label('title'); L.subtitle = label('subtitle'); L.xlabel = label('xlabel'); L.ylabel = label('ylabel'); L.zlabel = label('zlabel');
     L.sgtitle = a => { gcf().title = Str(a[0]); touch(); };
     L.legend = a => {
@@ -397,7 +404,7 @@
       }
       touch();
     };
-    const limFn = key => (a, nout) => { const ax = gca(); if (!a.length) return M.rowVec(ax[key] || [0, 1]); if (isStr(a[0])) { if (/auto/i.test(Str(a[0]))) ax[key] = null; } else { const l = vec(a[0]); if (l.length !== 2 || !(l[1] > l[0])) fail('Limits must be a 2-element vector of increasing numeric values.'); ax[key] = l; } touch(); };
+    const limFn = key => (a, nout) => { const ax = gca(), tgt = key === 'ylim' && ax.yy && ax.yySide === 'right' ? ax.yy : ax; const k = key === 'ylim' && tgt === ax.yy ? 'ylim' : key; if (!a.length) return M.rowVec(tgt[k] || [0, 1]); if (isStr(a[0])) { if (/auto/i.test(Str(a[0]))) tgt[k] = null; } else { const l = vec(a[0]); if (l.length !== 2 || !(l[1] > l[0])) fail('Limits must be a 2-element vector of increasing numeric values.'); tgt[k] = l; } touch(); };
     L.xlim = limFn('xlim'); L.ylim = limFn('ylim'); L.zlim = limFn('zlim');
     L.caxis = (a) => { const ax = gca(); if (a.length && !isStr(a[0])) ax.clim = vec(a[0]); else ax.clim = null; touch(); };
     L.clim = L.caxis;

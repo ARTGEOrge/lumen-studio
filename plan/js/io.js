@@ -19,6 +19,29 @@
   const XER_CSTR = { CS_MSOA: 'SNET', CS_MSOB: 'SNLT', CS_MSO: 'MSO', CS_MEOA: 'FNET', CS_MEOB: 'FNLT', CS_MEO: 'FNLT' };
   const XER_CSTR_OUT = { SNET: 'CS_MSOA', SNLT: 'CS_MSOB', MSO: 'CS_MSO', FNET: 'CS_MEOA', FNLT: 'CS_MEOB' };
 
+
+  // P6 keeps work weeks and holidays in CALENDAR.clndr_data: "(0||CalendarData()( (0||DaysOfWeek()(…)) (0||Exceptions()(…)) ))",
+  // days 1 = Sunday … 7 = Saturday, exception dates as serial day numbers counted from 1899-12-30
+  const XER_EPOCH = Date.UTC(1899, 11, 30);
+  const serialOf = d => Math.round((Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)) - XER_EPOCH) / 86400000);
+  const dateOfSerial = n => new Date(XER_EPOCH + n * 86400000).toISOString().slice(0, 10);
+  function clndrData(cal) {
+    const wk = (cal && cal.workweek) || [false, true, true, true, true, true, false];
+    const days = wk.map((w, i) => w ? `(0||${i + 1}()((0||0(s|08:00|f|12:00)())(0||1(s|13:00|f|17:00)())))` : `(0||${i + 1}()())`).join('');
+    const ex = ((cal && cal.holidays) || []).map((h, i) => `(0||${i}(d|${serialOf(h)})())`).join('');
+    return `(0||CalendarData()((0||DaysOfWeek()(${days}))(0||VIEW(ShowTotal|Y)())(0||Exceptions()(${ex}))))`;
+  }
+  function parseClndrData(txt) {
+    if (!txt || !/DaysOfWeek/.test(txt)) return null;
+    const wk = [false, false, false, false, false, false, false];
+    const dw = txt.slice(txt.indexOf('DaysOfWeek'), txt.indexOf('Exceptions') > 0 ? txt.indexOf('Exceptions') : undefined);
+    for (let d = 1; d <= 7; d++) { const m = new RegExp('\\(0\\|\\|' + d + '\\(\\)\\(([\\s\\S]*?)\\)\\)(?=\\s*\\(0\\|\\|' + (d + 1) + '\\(\\)|\\s*\\)|\\s*$)').exec(dw); wk[d - 1] = !!(m && /s\|/.test(m[1])); }
+    if (!wk.some(Boolean)) return null;
+    const holidays = [], exi = txt.indexOf('Exceptions');
+    if (exi >= 0) { const re = /\(0\|\|\d+\(d\|(\d+)\)\(\s*\)\)/g; let m; while ((m = re.exec(txt.slice(exi)))) holidays.push(dateOfSerial(+m[1])); }
+    return { workweek: wk, holidays: [...new Set(holidays)].sort() };
+  }
+
   function importXER(text) {
     const T = parseXerTables(text);
     if (!T.TASK) throw new Error('No TASK table found — is this a Primavera P6 .xer export?');
@@ -61,8 +84,10 @@
       a.resources.push({ res: resOf.get(tr.rsrc_id), units: Math.round(u * 100) / 100 || 1 });
     });
     const firstStart = T.TASK.rows.map(t => d10(t.act_start_date || t.target_start_date || t.early_start_date)).filter(Boolean).sort()[0];
+    const calRow = T.CALENDAR && (T.CALENDAR.rows.find(r => r.clndr_id === proj.clndr_id) || T.CALENDAR.rows.find(r => r.default_flag === 'Y') || T.CALENDAR.rows[0]);
+    const calendar = calRow ? parseClndrData(calRow.clndr_data) : null;
     return { name: proj.proj_short_name || 'Imported P6 project', start: d10(proj.plan_start_date) || firstStart || new Date().toISOString().slice(0, 10),
-      dataDate: d10(proj.last_recalc_date) || null, activities: acts, links, resources };
+      dataDate: d10(proj.last_recalc_date) || null, activities: acts, links, resources, ...(calendar ? { calendar } : {}) };
   }
 
   function exportXER(p, sched) {
@@ -70,9 +95,9 @@
     const tbl = (name, fields) => { L.push('%T\t' + name); L.push('%F\t' + fields.join('\t')); };
     const dt = s => s ? s + ' 08:00' : '';
     L.push(['ERMHDR', '19.12', new Date().toISOString().slice(0, 10), 'Project', 'admin', 'Lumen Plan', 'dbxDatabaseNoName', 'Project Management', 'USD'].join('\t'));
-    tbl('CALENDAR', ['clndr_id', 'default_flag', 'clndr_name', 'proj_id', 'base_clndr_id', 'last_chng_date', 'clndr_type', 'day_hr_cnt', 'week_hr_cnt', 'month_hr_cnt', 'year_hr_cnt']);
+    tbl('CALENDAR', ['clndr_id', 'default_flag', 'clndr_name', 'proj_id', 'base_clndr_id', 'last_chng_date', 'clndr_type', 'day_hr_cnt', 'week_hr_cnt', 'month_hr_cnt', 'year_hr_cnt', 'clndr_data']);
     const wd = (p.calendar && p.calendar.workweek || [0, 1, 1, 1, 1, 1, 0]).filter(Boolean).length;
-    row([1, 'Y', 'Standard', '', '', '', 'CA_Base', HRS, HRS * wd, HRS * wd * 4, HRS * wd * 52]);
+    row([1, 'Y', 'Standard', '', '', '', 'CA_Base', HRS, HRS * wd, HRS * wd * 4, HRS * wd * 52, clndrData(p.calendar)]);
     tbl('PROJECT', ['proj_id', 'proj_short_name', 'plan_start_date', 'last_recalc_date', 'clndr_id']);
     row([1, p.name || 'Project', dt(p.start), dt(p.dataDate || p.start), 1]);
     tbl('PROJWBS', ['wbs_id', 'proj_id', 'obs_id', 'seq_num', 'proj_node_flag', 'status_code', 'wbs_short_name', 'wbs_name', 'parent_wbs_id']);
@@ -209,6 +234,6 @@
     return { name: 'Imported CSV', start: new Date().toISOString().slice(0, 10), activities: acts, links, resources: [] };
   }
 
-  const api = { importXER, exportXER, importMSPXML, exportMSPXML, exportCSV, importCSV, parseCSV, parseXerTables };
+  const api = { clndrData, parseClndrData, importXER, exportXER, importMSPXML, exportMSPXML, exportCSV, importCSV, parseCSV, parseXerTables };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.PlanIO = api;
 })(typeof self !== 'undefined' ? self : this);

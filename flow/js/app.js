@@ -11,11 +11,11 @@
   const DYE = lerpStops([[18, 24, 34], [40, 70, 120], [240, 240, 255]]);
 
   // ---------- setup ----------
-  function fluidProps(c) { const fl = FC.FLUIDS[c.fluid] || FC.FLUIDS.custom; return { nu: c.fluid === 'custom' ? c.nu : fl.nu, rho: c.fluid === 'custom' ? c.rho : fl.rho }; }
+  function fluidProps(c) { const fl = FC.FLUIDS[c.fluid] || FC.FLUIDS.custom; return { nu: c.fluid === 'custom' ? c.nu : fl.nu, rho: c.fluid === 'custom' ? c.rho : fl.rho, Pr: c.fluid === 'custom' ? (c.Pr || 1) : fl.Pr, cp: c.fluid === 'custom' ? (c.cp || 1000) : fl.cp }; }
   function build() {
-    const c = A.cfg, { nu, rho } = fluidProps(c), ny = Math.max(8, Math.round(c.nx * c.Ly / c.Lx));
-    const side = t => ({ type: t, u: t === 'inlet' || t === 'moving' ? c.U : 0, v: 0 });
-    A.f = new FS.Flow({ nx: c.nx, ny, Lx: c.Lx, Ly: c.Ly, nu, rho, sides: { left: side(c.sides.left), right: side(c.sides.right), top: side(c.sides.top), bottom: side(c.sides.bottom) } });
+    const c = A.cfg, { nu, rho, Pr, cp } = fluidProps(c), ny = Math.max(8, Math.round(c.nx * c.Ly / c.Lx)), H = c.heat && c.heat.on ? c.heat : null;
+    const side = (t, k) => ({ type: t, u: t === 'inlet' || t === 'moving' ? c.U : 0, v: 0, T: H && H.sideT && H.sideT[k] != null && H.sideT[k] !== '' ? +H.sideT[k] : null });
+    A.f = new FS.Flow({ nx: c.nx, ny, Lx: c.Lx, Ly: c.Ly, nu, rho, sides: { left: side(c.sides.left, 'left'), right: side(c.sides.right, 'right'), top: side(c.sides.top, 'top'), bottom: side(c.sides.bottom, 'bottom') }, heat: H ? { Pr, cp, Tin: +H.Tin, Tbody: +H.Tbody } : null });
     if (c.painted) { const s = c.painted; A.f.setObstacles((x, y) => { const i = Math.min(c.nx, Math.max(1, Math.floor(x / A.f.dx) + 1)), j = Math.min(ny, Math.max(1, Math.floor(y / A.f.dy) + 1)); return s[(j - 1) * c.nx + (i - 1)] === 1; }); }
     else A.f.setObstacles(FC.obstacleFn(c.obstacle, FS));
     // start the interior at the inflow speed so the first seconds aren't spent accelerating
@@ -50,11 +50,15 @@
         ${o.type === 'naca' ? `<label>NACA code</label><input data-k="obstacle.code" value="${esc(o.code || '0012')}">` : ''}
         ${o.type === 'rect' ? `<label>x, y (m)</label><span style="display:flex;gap:4px"><input data-k="obstacle.x" type="number" step="any" value="${o.x}"><input data-k="obstacle.y" type="number" step="any" value="${o.y}"></span><label>w, h (m)</label><span style="display:flex;gap:4px"><input data-k="obstacle.w" type="number" step="any" value="${o.w}"><input data-k="obstacle.h" type="number" step="any" value="${o.h}"></span>`
           : `<label>Centre x, y (m)</label><span style="display:flex;gap:4px"><input data-k="obstacle.x" type="number" step="any" value="${o.x}"><input data-k="obstacle.y" type="number" step="any" value="${o.y}"></span><label>${o.type === 'naca' ? 'Chord' : 'Size'} (m)</label><input data-k="obstacle.size" type="number" step="any" value="${o.size}"><label>Angle (°)</label><input data-k="obstacle.angle" type="number" step="any" value="${o.angle || 0}">`}` : ''}
+      <h4>Heat transfer</h4><label>Simulate heat</label><input type="checkbox" data-k="heat.on" ${c.heat && c.heat.on ? 'checked' : ''} style="width:auto">
+      ${c.heat && c.heat.on ? `<label>Inflow / start (°C)</label><input data-k="heat.Tin" type="number" step="any" value="${c.heat.Tin}"><label>Bodies (°C)</label><input data-k="heat.Tbody" type="number" step="any" value="${c.heat.Tbody}">${['top', 'bottom', 'left', 'right'].filter(k => c.sides[k] === 'wall' || c.sides[k] === 'slip').map(k => `<label>${k[0].toUpperCase() + k.slice(1)} wall (°C)</label><input data-k="heat.sideT.${k}" type="number" step="any" placeholder="insulated" value="${c.heat.sideT && c.heat.sideT[k] != null ? c.heat.sideT[k] : ''}">`).join('')}<span class="note">Prandtl number ${fluidProps(c).Pr} for this fluid.</span>` : ''}
       ${c.painted ? `<h4>Obstacle</h4><span class="note">Hand-drawn. <button class="aero-btn small" id="clearPaint">Clear drawing</button></span>` : ''}
     </div>`;
     $('setup').querySelectorAll('[data-k]').forEach(el => el.onchange = () => {
-      const ks = el.dataset.k.split('.'); let o2 = A.cfg; for (let i = 0; i < ks.length - 1; i++) o2 = o2[ks[i]];
-      const v = el.type === 'number' || ks[0] === 'nx' ? +el.value : el.value; if (el.type === 'number' && !(isFinite(v))) return; o2[ks[ks.length - 1]] = v;
+      const ks = el.dataset.k.split('.'); if (ks[0] === 'heat' && !A.cfg.heat) A.cfg.heat = { on: false, Tin: 20, Tbody: 60, sideT: {} }; if (ks[1] === 'sideT' && !A.cfg.heat.sideT) A.cfg.heat.sideT = {};
+      let o2 = A.cfg; for (let i = 0; i < ks.length - 1; i++) o2 = o2[ks[i]];
+      const v = el.type === 'checkbox' ? el.checked : ks[1] === 'sideT' && el.value === '' ? null : el.type === 'number' || ks[0] === 'nx' ? +el.value : el.value; if (el.type === 'number' && v !== null && !(isFinite(v))) return; o2[ks[ks.length - 1]] = v;
+      if (ks.join('.') === 'heat.on' && v) $('field').value = 'T';
       if (ks[0] === 'fluid' && v === 'custom') { const fp = FC.FLUIDS[A.cfg.fluid] || {}; A.cfg.nu = A.cfg.nu || 1e-6; A.cfg.rho = A.cfg.rho || 1000; }
       if (ks[0] === 'Lx' || ks[0] === 'Ly' || ks[0] === 'nx') A.cfg.painted = null;
       if (ks[1] === 'size' && A.cfg.obstacle) A.cfg.ref = v;
@@ -94,7 +98,7 @@
   const toDom = (L, sx, sy) => [(sx - L.ox) / L.s, (L.oy - sy) / L.s];
   function fieldValue(kind, i, j) {
     const f = A.f, k = j * f.W + i;
-    switch (kind) { case 'p': return f.p[k] * f.rho; case 'vort': return f.vorticity(i, j); case 'dye': return f.dye[k]; case 'u': return f.cellVel(i, j)[0]; case 'v': return f.cellVel(i, j)[1]; default: { const [u, v] = f.cellVel(i, j); return Math.hypot(u, v); } }
+    switch (kind) { case 'T': return f.heat ? f.T[k] : 0; case 'p': return f.p[k] * f.rho; case 'vort': return f.vorticity(i, j); case 'dye': return f.dye[k]; case 'u': return f.cellVel(i, j)[0]; case 'v': return f.cellVel(i, j)[1]; default: { const [u, v] = f.cellVel(i, j); return Math.hypot(u, v); } }
   }
   function draw() {
     if (!A.f) return;
@@ -108,7 +112,8 @@
     if (kind === 'vort') { const s = [...vals].filter(v => v === v).map(Math.abs).sort((a, b) => a - b); const m = s[Math.floor(s.length * 0.98)] || 1; lo = -m; hi = m; }
     else if (sym) { const m = Math.max(Math.abs(lo), Math.abs(hi)) || 1; if (kind === 'p') { /* pressure: centre on the median so small gauge offsets don't wash out */ const s = [...vals].filter(v => v === v).sort((a, b) => a - b); const med = s[Math.floor(s.length / 2)] || 0, mm = Math.max(hi - med, med - lo) || 1; lo = med - mm; hi = med + mm; } else { lo = -m; hi = m; } }
     if (kind === 'dye') { lo = 0; hi = 1; }
-    const cmap = kind === 'dye' ? DYE : sym ? COOLWARM : VIRIDIS, span = hi - lo || 1;
+    if (kind === 'T' && f.heat) { const ts = [f.heat.Tin, f.heat.Tbody, ...['left', 'right', 'top', 'bottom'].map(k => f.sides[k].T).filter(x => x != null)]; lo = Math.min(...ts); hi = Math.max(...ts); }
+    const cmap = kind === 'dye' ? DYE : sym || kind === 'T' ? COOLWARM : VIRIDIS, span = hi - lo || 1;
     for (let j = 0; j < f.ny; j++) for (let i = 0; i < f.nx; i++) { const v = vals[j * f.nx + i], o = ((f.ny - 1 - j) * f.nx + i) * 4; if (v !== v) { img.data[o] = 120; img.data[o + 1] = 124; img.data[o + 2] = 130; img.data[o + 3] = 255; continue; } const c = cmap((v - lo) / span); img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255; }
     og.putImageData(img, 0, 0);
     const [x0, y0] = toScr(L, 0, A.cfg.Ly); g.imageSmoothingEnabled = true; g.drawImage(off, x0, y0, A.cfg.Lx * L.s, A.cfg.Ly * L.s);
@@ -125,7 +130,7 @@
     // colour bar
     const cbx = L.w - 44, cby = 40, cbh = L.h - 100; for (let k = 0; k < cbh; k++) { const c = cmap(1 - k / cbh); g.fillStyle = `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`; g.fillRect(cbx, cby + k, 12, 1.5); }
     g.fillStyle = '#dfe6ee'; g.font = '11px Segoe UI'; g.textAlign = 'right';
-    const unit = { speed: 'm/s', u: 'm/s', v: 'm/s', p: 'Pa', vort: '1/s', dye: '' }[kind];
+    const unit = { speed: 'm/s', u: 'm/s', v: 'm/s', p: 'Pa', vort: '1/s', dye: '', T: '°C' }[kind];
     g.save(); g.translate(cbx - 4, cby + cbh / 2); g.rotate(-Math.PI / 2); g.textAlign = 'center'; g.fillText($('field').selectedOptions[0].text + (unit ? ` (${unit})` : ''), 0, 0); g.restore();
     g.textAlign = 'left'; g.fillText(fmt(hi), cbx - 2, cby - 6); g.fillText(fmt(lo), cbx - 2, cby + cbh + 14);
     // scale bar & probe
@@ -162,6 +167,7 @@
     const hasBody = f.solid.some(Boolean);
     $('results').innerHTML = `<div class="kv"><b>Reynolds</b><span>${fmt(c.U * c.ref / nu, 1)}</span><b>Time step</b><span>${fmt(f.dt)} s · ${f.steps.toLocaleString()} steps</span>
       ${hasBody ? `<b>Drag Cd</b><span>${last ? fmt(last.Cd) : '—'} <span class="dim">(mean ${fmt(mean('Cd'))})</span></span><b>Lift Cl</b><span>${last ? fmt(last.Cl) : '—'} <span class="dim">(mean ${fmt(mean('Cl'))})</span></span><b>Strouhal</b><span>${isFinite(St) ? fmt(St) : '<span class="dim">— (needs a few shed vortices)</span>'}</span>` : ''}
+      ${f.heat && hasBody ? (() => { const hb = f.heatFromBodies(), dT = f.heat.Tbody - f.heat.Tin, o = c.obstacle; const Nu = o && o.type === 'circle' && !c.painted && dT ? hb.Q / (Math.PI * hb.k * dT) : NaN; return `<b>Heat from body</b><span>${fmt(hb.Q, 2)} W per m of depth</span>${isFinite(Nu) ? `<b>Nusselt</b><span>${fmt(Nu, 2)} <span class="dim">(h = ${fmt(Nu * hb.k / c.ref, 1)} W/m²K)</span></span>` : ''}`; })() : ''}
       <b>Max speed</b><span>${fmt(maxSpeed())} m/s</span><b>Continuity</b><span>max |∇·u| ${fmt(f.divergence())} 1/s · ${f.cgIters} CG iterations</span>${probe}</div>`;
     $('st1').textContent = A.running ? 'Running…' : 'Paused'; $('st2').textContent = `${f.nx}×${f.ny} grid · dx ${fmt(f.dx)} m`; $('st3').textContent = A.tool ? (A.tool === 'paint' ? 'Drawing obstacles' : 'Erasing obstacles') : 'Click the flow to place a probe';
     drawChart();
@@ -221,8 +227,8 @@
 
   // ---------- files ----------
   function fieldsCSV() {
-    const f = A.f, rows = ['x_m,y_m,solid,u_m_s,v_m_s,speed_m_s,p_Pa,vorticity_1_s'];
-    for (let j = 1; j <= f.ny; j++) for (let i = 1; i <= f.nx; i++) { const k = j * f.W + i, [u, v] = f.cellVel(i, j); rows.push([((i - 0.5) * f.dx).toFixed(6), ((j - 0.5) * f.dy).toFixed(6), f.solid[k], u.toExponential(5), v.toExponential(5), Math.hypot(u, v).toExponential(5), (f.p[k] * f.rho).toExponential(5), f.vorticity(i, j).toExponential(5)].join(',')); }
+    const f = A.f, rows = ['x_m,y_m,solid,u_m_s,v_m_s,speed_m_s,p_Pa,vorticity_1_s' + (A.f.heat ? ',T_C' : '')];
+    for (let j = 1; j <= f.ny; j++) for (let i = 1; i <= f.nx; i++) { const k = j * f.W + i, [u, v] = f.cellVel(i, j); rows.push([((i - 0.5) * f.dx).toFixed(6), ((j - 0.5) * f.dy).toFixed(6), f.solid[k], u.toExponential(5), v.toExponential(5), Math.hypot(u, v).toExponential(5), (f.p[k] * f.rho).toExponential(5), f.vorticity(i, j).toExponential(5)].concat(f.heat ? [f.T[k].toFixed(4)] : []).join(',')); }
     return rows.join('\n') + '\n';
   }
   function vtk() { // legacy VTK structured points — opens in ParaView
@@ -230,6 +236,7 @@
     const each = fn => { const o = []; for (let j = 1; j <= f.ny; j++) for (let i = 1; i <= f.nx; i++) o.push(fn(i, j, j * f.W + i)); return o; };
     L.push(...each((i, j) => { const [u, v] = f.cellVel(i, j); return `${u} ${v} 0`; }));
     L.push('SCALARS pressure float 1', 'LOOKUP_TABLE default', ...each((i, j, k) => f.p[k] * f.rho), 'SCALARS vorticity float 1', 'LOOKUP_TABLE default', ...each((i, j) => f.vorticity(i, j)), 'SCALARS solid int 1', 'LOOKUP_TABLE default', ...each((i, j, k) => f.solid[k]));
+    if (f.heat) L.push('SCALARS temperature float 1', 'LOOKUP_TABLE default', ...each((i, j, k) => f.T[k]));
     return L.join('\n') + '\n';
   }
   const histCSV = () => 't_s,Cd,Cl,max_div,cg_iterations\n' + A.hist.map(p => [p.t, p.Cd, p.Cl, p.div, p.cg].join(',')).join('\n') + '\n';
@@ -245,7 +252,7 @@
       Run: [['Run / pause', 'Space', () => setRun(!A.running)], ['One step', 'S', () => { A.f.step(); record(); draw(); renderResults(); }], ['Reset', 'Ctrl+R', () => { setRun(false); build(); }]],
       Cases: Object.entries(FC.CASES).map(([k, c]) => [c.name, '', () => { $('caseSel').value = k; loadCase(k); }]),
       Help: [['About the solver', '', () => Aero.alert('About Lumen Flow',
-        'Lumen Flow solves the 2D incompressible Navier–Stokes equations on a staggered grid with the projection method of Griebel et al. (NaSt2D): blended central/upwind advection, explicit viscosity, and a pressure Poisson equation solved by conjugate gradients with an incomplete-Cholesky preconditioner.\n\nIt is checked against the lid-driven cavity benchmark of Ghia, Ghia & Shin (1982) at Re = 100 (RMS error 0.0025 on the centre line) and the exact Poiseuille channel profile — see the Validation tab.\n\nLimits: 2D, laminar, constant density, uniform grid with stair-stepped bodies. There is no turbulence model, heat transfer, compressibility or 3D, so results at high Reynolds numbers are qualitative. Use it to learn and explore — use OpenFOAM, SU2 or Fluent for engineering sign-off.')]],
+        'Lumen Flow solves the 2D incompressible Navier–Stokes equations on a staggered grid with the projection method of Griebel et al. (NaSt2D): blended central/upwind advection, explicit viscosity, and a pressure Poisson equation solved by conjugate gradients with an incomplete-Cholesky preconditioner.\n\nIt is checked against the lid-driven cavity benchmark of Ghia, Ghia & Shin (1982) at Re = 100 (RMS error 0.0025 on the centre line) and the exact Poiseuille channel profile — see the Validation tab.\n\nHeat: temperature is carried by the flow and diffuses with α = ν/Pr; bodies and walls can be held at fixed temperatures. A heated cylinder at Re = 40 matches the Churchill–Bernstein Nusselt correlation.\n\nLimits: 2D, laminar, constant density (no buoyancy), uniform grid with stair-stepped bodies. There is no turbulence model, compressibility or 3D, so results at high Reynolds numbers are qualitative. Use it to learn and explore — use OpenFOAM, SU2 or Fluent for engineering sign-off.')]],
     } });
   Object.entries(FC.CASES).forEach(([k, c]) => $('caseSel').add(new Option(c.name, k)));
   $('caseSel').onchange = () => loadCase($('caseSel').value);

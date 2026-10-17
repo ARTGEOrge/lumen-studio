@@ -19,7 +19,9 @@
     const order = A.layer === 'top' ? ['bottom', 'top'] : ['top', 'bottom'];
     const selNet = A.sel && A.sel.net;
     order.forEach(layer => {
-      if (!vis[layer]) return; const alpha = layer === A.layer ? 1 : 0.55; g.globalAlpha = alpha;
+      if (!vis[layer]) return; const alpha = layer === A.layer ? 1 : 0.55;
+      (b.zones || []).filter(z => z.layer === layer).forEach(z => { g.globalAlpha = alpha * 0.55; g.fillStyle = COL[layer]; g.beginPath(); Core.zoneRects(Core.fillZone(b, z, A.pinNet)).forEach(([x0, y0, x1, y1]) => g.rect(x0, y0 - 0.01, x1 - x0, y1 - y0 + 0.02)); g.fill(); });   // one path: no seams
+      g.globalAlpha = alpha;
       b.tracks.forEach((t, i) => { if (t.layer !== layer) return; const sel = A.sel && A.sel.kind === 'track' && A.sel.i === i; g.strokeStyle = sel ? COL.sel : COL[layer]; g.lineWidth = t.w; if (selNet && t.net === selNet && !sel) g.strokeStyle = '#ffb3ae'; g.beginPath(); t.pts.forEach((p, k) => k ? g.lineTo(...p) : g.moveTo(...p)); g.stroke(); });
       g.globalAlpha = 1;
     });

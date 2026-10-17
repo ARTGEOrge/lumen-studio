@@ -43,7 +43,6 @@ t('NACA 0012 shape is symmetric with 12% thickness', () => {
   assert.ok(ins(0.3, 0.059) && !ins(0.3, 0.061) && ins(0.3, -0.059) && !ins(1.01, 0) && !ins(-0.01, 0));
 });
 
-console.log(`\n${n} tests passed`);
 // Optional long run (≈2 min): FLOW_LONG=1 node flow/tests/validate.test.js
 if (process.env.FLOW_LONG) t('cylinder at Re = 100 sheds vortices with a Strouhal number near 0.17', () => {
   global.self = global; require('../js/cases.js'); const FC = global.FlowCases, c = FC.CASES.cylinder, o = c.obstacle;
@@ -56,3 +55,25 @@ if (process.env.FLOW_LONG) t('cylinder at Re = 100 sheds vortices with a Strouha
   console.log(`   St ${St.toFixed(3)} (unconfined literature 0.164–0.166; 17% blockage raises it)`);
   assert.ok(St > 0.15 && St < 0.2);
 });
+// (appended) heat transfer
+t('heat: steady conduction between a hot and a cold wall is linear', () => {
+  const f = new Flow({ nx: 40, ny: 10, Lx: 1, Ly: 0.25, nu: 1e-3, sides: { left: { type: 'wall', T: 100 }, right: { type: 'wall', T: 0 } }, heat: { Pr: 1, Tin: 50, Tbody: 0, cp: 1 } });
+  while (f.t < 800) f.step();
+  let worst = 0; for (let i = 1; i <= f.nx; i++) { const x = (i - 0.5) * f.dx, exact = 100 * (1 - x); worst = Math.max(worst, Math.abs(f.T[5 * f.W + i] - exact)); }
+  console.log(`   worst error ${worst.toFixed(3)} °C of 100 °C span`); assert.ok(worst < 0.5);
+});
+t('heat: a heated cylinder at Re = 40, Pr = 0.71 matches the Churchill–Bernstein correlation (within 25%)', () => {
+  const D = 0.02, U = 0.03, nu = 1.5e-5, f = new Flow({ nx: 200, ny: 60, Lx: 0.4, Ly: 0.12, nu, rho: 1.2, sides: { left: { type: 'inlet', u: U }, right: { type: 'outlet' }, top: { type: 'slip' }, bottom: { type: 'slip' } }, heat: { Pr: 0.71, Tin: 20, Tbody: 60, cp: 1005 } });
+  f.setObstacles((x, y) => (x - 0.08) ** 2 + (y - 0.06) ** 2 <= (D / 2) ** 2);
+  for (let j = 1; j <= f.ny; j++) for (let i = 0; i <= f.nx; i++) { const k = j * f.W + i; if (!f.solid[k] && !f.solid[k + 1]) f.u[k] = U; }
+  while (f.t < 30) f.step();
+  const { Q, k } = f.heatFromBodies(), Nu = Q / (Math.PI * k * 40), Re = U * D / nu, Pr = 0.71;
+  const cb = 0.3 + 0.62 * Math.sqrt(Re) * Math.cbrt(Pr) / Math.pow(1 + Math.pow(0.4 / Pr, 2 / 3), 0.25) * Math.pow(1 + Math.pow(Re / 282000, 5 / 8), 4 / 5);
+  console.log(`   Nu ${Nu.toFixed(2)} vs correlation ${cb.toFixed(2)} (Re ${Re})`); assert.ok(Math.abs(Nu - cb) / cb < 0.25);
+});
+
+t('inflow from outside the domain is handled with and without heat (large time step)', () => {
+  for (const heat of [null, { Pr: 1, Tin: 50, Tbody: 0, cp: 1 }]) { const f = new Flow({ nx: 40, ny: 10, Lx: 1, Ly: 0.25, nu: 1e-3, tau: 3, sides: { left: { type: 'inlet', u: 5 }, right: { type: 'outlet' } }, heat }); for (let k = 0; k < 20; k++) f.step(); if (heat) assert.ok(Math.abs(f.T[5 * f.W + 1] - 50) < 1e-6); }
+});
+
+process.on('exit', () => console.log(`\n${n} tests passed`));

@@ -82,3 +82,13 @@ console.log(`\n${n} tests passed`);
   const b = K.box(10, 10, 10).union(K.place(K.box(10, 10, 10), { x: 10 }));   // coplanar fused faces: the seam must disappear
   const e2 = K.featureEdges(b); const len = e2.reduce((s, [p, q]) => s + K.V.len(K.V.sub(q, p)), 0);
   if (Math.abs(len - (4 * 20 + 4 * 10 + 4 * 10)) > 1e-6) throw new Error('fused box edge length ' + len); console.log('ok crease edges ignore T-junctions and seams'); }
+// (appended) drawings: a box with a through-hole shows the hole as hidden (dashed) lines in the front view only
+{ const s = K.box(40, 20, 10).subtract(K.place(K.cylinder(4, 30, 32), { z: -10 }));
+  const E = K.featureEdges(s, 28), front = K.edgeVisibility(s, E, [0, -1, 0], 0.5), top = K.edgeVisibility(s, E, [0, 0, 1], 0.5);
+  const hidLen = segs => segs.filter(x => !x.vis).reduce((a, x) => a + K.V.len(K.V.sub(x.b, x.a)), 0);
+  if (!(hidLen(front) > 5)) throw new Error('front view should show the hole as hidden lines: ' + hidLen(front));
+  const visLen = segs => segs.filter(x => x.vis).reduce((a, x) => a + K.V.len(K.V.sub(x.b, x.a)), 0);   // from above: outline + hole rim visible (the bottom edges are rightly hidden)
+  if (Math.abs(visLen(top) - (2 * (40 + 20) + 32 * 2 * 4 * Math.sin(Math.PI / 32))) > 0.5) throw new Error('top view visible length ' + visLen(top));
+  const d = K.drawingSVG(s, { name: 'Test block' });
+  if (!/FRONT VIEW/.test(d.svg) || !/>40</.test(d.svg) || !/>10</.test(d.svg) || !/>20</.test(d.svg) || !/stroke-dasharray/.test(d.svg)) throw new Error('drawing content');
+  console.log('ok three-view drawing with hidden lines and overall dimensions (scale ' + d.scale + ')'); }

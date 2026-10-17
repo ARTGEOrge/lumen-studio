@@ -68,4 +68,14 @@ t('CSV import understands "A; B SS+2" predecessors', () => {
   assert.deepStrictEqual(q.links, [{ from: 'A', to: 'B', type: 'FS', lag: 0 }, { from: 'A', to: 'C', type: 'SS', lag: 1 }, { from: 'B', to: 'C', type: 'FS', lag: 0 }]);
 });
 
+
+t('XER keeps the work week and holidays (P6 clndr_data)', () => {
+  const xer = IO.exportXER(p, s);
+  assert.ok(/clndr_data/.test(xer) && /\(0\|\|5\(\)\(\(0\|\|0\(s\|08:00/.test(xer));
+  const back = IO.importXER(xer);   // no calendar copied over this time
+  assert.deepStrictEqual(back.calendar, { workweek: p.calendar.workweek, holidays: p.calendar.holidays });
+  assert.deepStrictEqual(sig(back), sig(p));
+  assert.strictEqual(IO.parseClndrData(IO.clndrData({ workweek: [true, false, false, false, false, false, true], holidays: ['2027-01-01'] })).holidays[0], '2027-01-01');
+});
+
 console.log(`\n${n} tests passed`);

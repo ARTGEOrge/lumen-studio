@@ -138,6 +138,29 @@ scores = [72 85 90; 64 78 88; 80 82 95];
 bar(scores); legend('Q1', 'Q2', 'Q3', 'Location', 'northwest'); grid on
 title('Grouped bars'); xlabel('Team')
 `;
+  const signals = `%% Signal processing: filter design, zero-phase filtering and peak finding
+fs = 200;  t = (0:599) / fs;
+rng(7)
+x = sin(2*pi*3*t) + 0.5*sin(2*pi*9*t) + 0.4*randn(size(t));
+
+[b, a] = butter(4, 12 / (fs/2));       % 12 Hz low-pass
+y = filtfilt(b, a, x);                 % no phase lag
+[pks, locs] = findpeaks(y, t, 'MinPeakProminence', 0.8);
+fprintf('%d peaks in 3 s (the main tone is 3 Hz)\\n', numel(pks));
+
+figure(7); clf
+subplot(2, 1, 1)
+plot(t, x, 'Color', [0.7 0.7 0.7]); hold on
+plot(t, y, 'LineWidth', 1.4)
+plot(locs, pks, 'rv', 'MarkerFaceColor', 'r'); hold off
+grid on; legend('noisy', 'filtfilt', 'peaks'); title('Butterworth low-pass + findpeaks'); xlabel('Time (s)')
+
+subplot(2, 1, 2)
+[h, w] = freqz(b, a, 256, fs);
+yyaxis left;  plot(w, 20*log10(abs(h))); ylabel('Magnitude (dB)'); ylim([-80 5])
+yyaxis right; plot(w, unwrap(angle(h)) * 180/pi); ylabel('Phase (deg)')
+grid on; title('Filter response'); xlabel('Frequency (Hz)')
+`;
   // deterministic "noisy" data for the curve-fitting sample
   function measurements() {
     let s = 7; const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
@@ -146,7 +169,7 @@ title('Grouped bars'); xlabel('Team')
     return rows.join('\n') + '\n';
   }
   window.LabSamples = {
-    files: () => ({ 'welcome.m': welcome, 'lorenz.m': lorenz, 'curvefit.m': curvefit, 'contours.m': contours, 'projectile.m': projectile, 'statistics.m': stats, 'measurements.csv': measurements() }),
+    files: () => ({ 'welcome.m': welcome, 'lorenz.m': lorenz, 'curvefit.m': curvefit, 'contours.m': contours, 'projectile.m': projectile, 'statistics.m': stats, 'signals.m': signals, 'measurements.csv': measurements() }),
     first: 'welcome.m',
   };
 })();

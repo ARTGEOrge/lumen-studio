@@ -113,15 +113,18 @@
     const ml = off ? 10 : (small ? 46 : 58) * fs, mb = off ? 10 : ((ax.xlabel ? 40 : 26) + (small ? -4 : 0)) * fs;
     const mt = (ax.title ? (ax.subtitle ? 44 : 30) : 14) * fs;
     const showCb = ax.colorbar && !off;
-    const mr = (showCb ? 70 : 20) * fs;
+    const yy = ax.yy && !off ? ax.yy : null;   // yyaxis: a second y axis on the right
+    const mr = (showCb ? 70 : 20) * fs + (yy ? (yy.ylabel ? 58 : 44) * fs : 0);
     let P = { x: R.x + ml + (ax.ylabel ? 14 * fs : 0), y: R.y + mt, w: 0, h: 0 }; P.w = Math.max(20, R.x + R.w - mr - P.x); P.h = Math.max(20, R.y + R.h - mb - P.y);
     if (ax.axis.includes('square') || ax.polar) { const s = Math.min(P.w, P.h); P.x += (P.w - s) / 2; P.y += (P.h - s) / 2; P.w = P.h = s; }
-    const B = axesBounds(ax, false);
+    const B = axesBounds(yy ? { ...ax, series: ax.series.filter(s => s.yside !== 'right') } : ax, false);
+    const BR = yy ? axesBounds({ ...ax, series: ax.series.filter(s => s.yside === 'right') }, false) : null;
+    if (BR) { B.x = [Math.min(B.x[0], BR.x[0]), Math.max(B.x[1], BR.x[1])]; if (!finite(B.y[0])) B.y = [0, 1]; }
     const tight = ax.axis.includes('tight') || hasKind(ax, 'image', 'surf', 'contour');
     const logx = ax.xscale === 'log', logy = ax.yscale === 'log';
     const lim = (k, isLog, count, given) => {
       if (given) return given.slice();
-      let [lo, hi] = B[k]; if (!finite(lo)) { lo = 0; hi = 1; }
+      let [lo, hi] = (k === 'yR' ? BR.y : B[k]); if (!finite(lo)) { lo = 0; hi = 1; }
       if (isLog) { if (lo <= 0) { lo = Math.min(...ax.series.flatMap(s => Array.from(s[k] || [])).filter(v => v > 0)); if (!finite(lo)) lo = 1; } return [Math.pow(10, Math.floor(Math.log10(lo))), Math.pow(10, Math.ceil(Math.log10(Math.max(hi, lo * 10))))]; }
       if (tight && lo < hi) return [lo, hi];
       const l = niceLimits(lo, hi, count); l.step = niceStep((hi - lo || Math.abs(lo) || 1) / Math.max(1, count)); return l;
@@ -139,6 +142,8 @@
     const clim = ax.clim || (finite(B.c[0]) ? (B.c[0] === B.c[1] ? [B.c[0] - 1, B.c[1] + 1] : B.c) : [0, 1]);
     const cm = cmap(fig, ax);
     const T = { X, Y, P, xl, yl, clim, cm, fs, logx, logy };
+    let TR = null, ylR = null, YR = null;
+    if (yy) { ylR = yy.ylim ? yy.ylim.slice() : lim('yR', false, yCount, null); YR = v => P.y + P.h - (v - ylR[0]) / (ylR[1] - ylR[0]) * P.h; TR = { ...T, Y: YR, yl: ylR }; }
     const tk = (l, count) => l.step && !ov.xlim && !ov.ylim ? stepTicks(l[0], l[1], l.step) : ticks(l[0], l[1], count);
     let xt = logx ? { list: logTicks(xl[0], xl[1]) } : tk(xl, xCount), yt = logy ? { list: logTicks(yl[0], yl[1]) } : tk(yl, yCount);
     // bar charts label their categories
@@ -152,7 +157,7 @@
       if (ax.grid) { ctx.strokeStyle = GRID; ctx.beginPath(); xt.list.forEach(v => { const x = Math.round(X(v)) + 0.5; ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); }); yt.list.forEach(v => { const y = Math.round(Y(v)) + 0.5; ctx.moveTo(P.x, y); ctx.lineTo(P.x + P.w, y); }); ctx.stroke(); }
     }
     ctx.save(); ctx.beginPath(); ctx.rect(P.x, P.y, P.w, P.h); ctx.clip();
-    for (const s of ax.series) drawSeries2D(ctx, s, T, ax);
+    for (const s of ax.series) drawSeries2D(ctx, s, s.yside === 'right' && TR ? TR : T, ax);
     ctx.restore();
     // unclipped labels and markers on top
     for (const s of ax.series) if (s.kind === 'text') { ctx.fillStyle = rgb(s.color || [0, 0, 0]); ctx.font = `${(s.fontSize || 10) * 1.2 * fs}px ${FONT}`; ctx.textAlign = s.halign === 'center' ? 'center' : s.halign === 'right' ? 'right' : 'left'; ctx.textBaseline = 'middle'; ctx.fillText(s.str, X(s.x), Y(s.y)); }
@@ -163,25 +168,33 @@
       if (ax.box) ctx.rect(x0, y0, x1 - x0, y1 - y0); else { ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.lineTo(x1, y1); }
       const tl = 5;
       xt.list.forEach(v => { const x = Math.round(X(v)) + 0.5; if (x < x0 - 1 || x > x1 + 1) return; ctx.moveTo(x, y1); ctx.lineTo(x, y1 - tl); if (ax.box) { ctx.moveTo(x, y0); ctx.lineTo(x, y0 + tl); } });
-      yt.list.forEach(v => { const y = Math.round(Y(v)) + 0.5; if (y < y0 - 1 || y > y1 + 1) return; ctx.moveTo(x0, y); ctx.lineTo(x0 + tl, y); if (ax.box) { ctx.moveTo(x1, y); ctx.lineTo(x1 - tl, y); } });
+      yt.list.forEach(v => { const y = Math.round(Y(v)) + 0.5; if (y < y0 - 1 || y > y1 + 1) return; ctx.moveTo(x0, y); ctx.lineTo(x0 + tl, y); if (ax.box && !yy) { ctx.moveTo(x1, y); ctx.lineTo(x1 - tl, y); } });
       ctx.stroke();
+      if (yy) { // right-hand axis in the second color
+        const yt2 = ylR.step ? stepTicks(ylR[0], ylR[1], ylR.step) : ticks(ylR[0], ylR[1], yCount), f2 = tickFormatter(yt2.list, yt2.step), col = rgb(G.ORDER[1]);
+        ctx.strokeStyle = col; ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(x1, y0); ctx.lineTo(x1, y1);
+        yt2.list.forEach(v => { const y = Math.round(YR(v)) + 0.5; if (y < y0 - 1 || y > y1 + 1) return; ctx.moveTo(x1, y); ctx.lineTo(x1 - tl, y); }); ctx.stroke();
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; yt2.list.forEach(v => { const y = YR(v); if (y >= P.y - 2 && y <= P.y + P.h + 2) ctx.fillText(f2.f(v), x1 + 6 * fs, y); });
+        if (yy.ylabel) { const w2 = Math.max(...yt2.list.map(v => ctx.measureText(f2.f(v)).width)); ctx.save(); ctx.font = `${11.5 * fs}px ${FONT}`; ctx.translate(x1 + w2 + 14 * fs, P.y + P.h / 2); ctx.rotate(Math.PI / 2); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText(yy.ylabel, 0, 0); ctx.restore(); }
+        ctx.strokeStyle = AXC; ctx.fillStyle = rgb(G.ORDER[0]);
+      }
       const xf = logx ? null : tickFormatter(xt.list, xt.step), yf = logy ? null : tickFormatter(yt.list, yt.step);
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       let lastX = -Infinity;
       xt.list.forEach(v => { const x = X(v); if (x < P.x - 2 || x > P.x + P.w + 2) return; const s = logx ? '' : xf.f(v); const w = logx ? 30 : ctx.measureText(s).width; if (x - w / 2 < lastX + 4) return; lastX = x + w / 2; if (logx) powLabel(ctx, v, x, y1 + 5, 'center', fs); else ctx.fillText(s, x, y1 + 5 * fs); });
-      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; if (yy) ctx.fillStyle = rgb(G.ORDER[0]);
       yt.list.forEach(v => { const y = Y(v); if (y < P.y - 2 || y > P.y + P.h + 2) return; if (logy) powLabel(ctx, v, x0 - 6, y, 'right', fs); else ctx.fillText(yf.f(v), x0 - 6 * fs, y); });
       if (xf && xf.exp) { ctx.textAlign = 'right'; ctx.textBaseline = 'top'; powText(ctx, '×10', xf.exp, x1, y1 + 20 * fs, fs); }
       if (yf && yf.exp) { ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; powText(ctx, '×10', yf.exp, x0, y0 - 3, fs); }
       // labels
       ctx.font = `${11.5 * fs}px ${FONT}`; ctx.fillStyle = AXC;
       if (ax.xlabel) { ctx.textAlign = 'center'; ctx.textBaseline = 'top'; multi(ctx, ax.xlabel, P.x + P.w / 2, y1 + 21 * fs, 14 * fs); }
-      if (ax.ylabel) { ctx.save(); const yw = Math.max(...yt.list.map(v => logy ? 30 : ctx.measureText(yf.f(v)).width)); ctx.translate(x0 - yw - 16 * fs, P.y + P.h / 2); ctx.rotate(-Math.PI / 2); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText(ax.ylabel, 0, 0); ctx.restore(); }
+      if (ax.ylabel) { ctx.save(); const yw = Math.max(...yt.list.map(v => logy ? 30 : ctx.measureText(yf.f(v)).width)); ctx.translate(x0 - yw - 16 * fs, P.y + P.h / 2); ctx.rotate(-Math.PI / 2); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; if (yy) ctx.fillStyle = rgb(G.ORDER[0]); ctx.fillText(ax.ylabel, 0, 0); ctx.restore(); }
     }
     drawTitle(ctx, ax, P, fs);
     if (ax.legend) drawLegend(ctx, ax, P, fs);
     if (showCb) drawColorbar(ctx, P, clim, cm, fs);
-    return { ax, P, kind: '2d', X, Y, xl, yl, logx, logy, rev, inv: { x: px => fromPx(px, P.x, P.w, xl, logx, false), y: py => fromPx(py, P.y, P.h, yl, logy, !rev) } };
+    return { ax, P, kind: '2d', X, Y, YR, xl, yl, logx, logy, rev, inv: { x: px => fromPx(px, P.x, P.w, xl, logx, false), y: py => fromPx(py, P.y, P.h, yl, logy, !rev) } };
   }
   function fromPx(p, o, len, l, isLog, flip) { let f = (p - o) / len; if (flip) f = 1 - f; if (isLog) return Math.pow(10, Math.log10(l[0]) + f * (Math.log10(l[1]) - Math.log10(l[0]))); return l[0] + f * (l[1] - l[0]); }
   function multi(ctx, text, x, y, lh) { String(text).split('\n').forEach((t, i) => ctx.fillText(t, x, y + i * lh)); }
@@ -581,7 +594,8 @@
     let best = null, bd = 144;
     for (const s of layout.ax.series) {
       if (!(s.kind === 'line' || s.kind === 'scatter' || s.kind === 'stem')) continue;
-      for (let i = 0; i < s.x.length; i++) { const x = layout.X(s.x[i]), y = layout.Y(s.y[i]); const d = (x - px) ** 2 + (y - py) ** 2; if (d < bd) { bd = d; best = { s, i, x, y, X: s.x[i], Y: s.y[i] }; } }
+      const Yf = s.yside === 'right' && layout.YR ? layout.YR : layout.Y;
+      for (let i = 0; i < s.x.length; i++) { const x = layout.X(s.x[i]), y = Yf(s.y[i]); const d = (x - px) ** 2 + (y - py) ** 2; if (d < bd) { bd = d; best = { s, i, x, y, X: s.x[i], Y: s.y[i] }; } }
     }
     return best;
   }

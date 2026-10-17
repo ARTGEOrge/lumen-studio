@@ -4,7 +4,7 @@
   const M = typeof module === 'object' && module.exports ? require('./mat.js') : root.LabMat;
   const KW = new Set(['if', 'elseif', 'else', 'end', 'for', 'parfor', 'while', 'break', 'continue', 'return', 'function', 'switch', 'case', 'otherwise', 'try', 'catch', 'global', 'persistent', 'do', 'until', 'endfunction', 'endif', 'endfor', 'endwhile']);
   // words that accept "command syntax" (hold on, format long, close all …)
-  const CMD = new Set(['hold', 'grid', 'axis', 'close', 'clc', 'clear', 'clearvars', 'format', 'figure', 'clf', 'box', 'colorbar', 'colormap', 'shading', 'legend', 'more', 'warning', 'who', 'whos', 'help', 'doc', 'rotate3d', 'disp', 'echo', 'load', 'save', 'type', 'edit', 'cd', 'pkg', 'tic', 'drawnow', 'syms']);
+  const CMD = new Set(['hold', 'grid', 'axis', 'close', 'clc', 'clear', 'clearvars', 'format', 'figure', 'clf', 'box', 'colorbar', 'colormap', 'shading', 'legend', 'more', 'warning', 'who', 'whos', 'help', 'doc', 'rotate3d', 'disp', 'echo', 'load', 'save', 'type', 'edit', 'cd', 'pkg', 'tic', 'drawnow', 'syms', 'yyaxis', 'fclose']);
   const synErr = (msg, line) => { const e = new M.LabError(msg, 'MATLAB:parse'); e.line = line; throw e; };
 
   // ---------- lexer ----------

@@ -1,6 +1,6 @@
 // Lumen Lab — engine worker. Runs code off the UI thread so long computations never freeze the window.
 // A SharedArrayBuffer carries the Stop flag, pause() sleeps and input() replies.
-importScripts('mat.js', 'linalg.js', 'lang.js', 'interp.js', 'lib.js', 'numerics.js', 'graphics.js', 'help.js', 'engine.js');
+importScripts('mat.js', 'linalg.js', 'lang.js', 'interp.js', 'lib.js', 'numerics.js', 'toolbox.js', 'graphics.js', 'help.js', 'engine.js');
 
 let In = null, ctrl = null, inbuf = null, outBuf = '', outKind = 'out', flushT = 0, lastFig = -1, filesDirty = false;
 const send = m => postMessage(m);

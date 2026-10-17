@@ -17,7 +17,7 @@
 
   const A = window.PlanApp = {
     P: null, S: null, rows: [], sel: new Set(), cur: null, ppd: 14, viewStart: null, viewEnd: null, collapsed: new Set(),
-    view: { links: true, baseline: true, float: true, labels: 'name', critOnly: false, filter: '' },
+    view: { links: true, baseline: true, float: true, labels: 'name', critOnly: false, filter: '', lookahead: 0 },
     filePath: null, docName: 'Untitled',
   };
   const hist = new Aero.History({ max: 120 });
@@ -52,11 +52,12 @@
       if (!sum) {
         const x = A.S.results.get(a.id);
         if (A.view.critOnly && !(x && x.critical)) return;
+        if (A.view.lookahead && x) { const d0 = A.P.dataDate || A.P.start, d1 = C.addDays(d0, 7 * A.view.lookahead); if (x.status === 'done' || x.finish < d0 || x.start > d1) return; }
         if (f && !(a.id.toLowerCase().includes(f) || a.name.toLowerCase().includes(f))) return;
-      } else if ((A.view.critOnly || f)) {
+      } else if ((A.view.critOnly || f || A.view.lookahead)) {
         // show a WBS row only if something under it survives the filter
         const lv = a.level || 0; let any = false;
-        for (let j = i + 1; j < acts.length && (acts[j].level || 0) > lv; j++) { const b = acts[j], x = A.S.results.get(b.id); if (A.S.summary[j]) continue; if ((!A.view.critOnly || (x && x.critical)) && (!f || b.id.toLowerCase().includes(f) || b.name.toLowerCase().includes(f))) { any = true; break; } }
+        for (let j = i + 1; j < acts.length && (acts[j].level || 0) > lv; j++) { const b = acts[j], x = A.S.results.get(b.id); if (A.S.summary[j]) continue; const d0 = A.P.dataDate || A.P.start, la = !A.view.lookahead || (x && x.status !== 'done' && x.finish >= d0 && x.start <= C.addDays(d0, 7 * A.view.lookahead)); if (la && (!A.view.critOnly || (x && x.critical)) && (!f || b.id.toLowerCase().includes(f) || b.name.toLowerCase().includes(f))) { any = true; break; } }
         if (!any) return;
       }
       out.push(a);
@@ -381,6 +382,7 @@
         { label: 'Baseline bars', checked: () => A.view.baseline, fn: () => { A.view.baseline = !A.view.baseline; Gantt.draw(); } },
         { label: 'Float bars', checked: () => A.view.float, fn: () => { A.view.float = !A.view.float; Gantt.draw(); } },
         { label: 'Resource labels on bars', checked: () => A.view.labels === 'res', fn: () => { A.view.labels = A.view.labels === 'res' ? 'name' : 'res'; Gantt.draw(); } }, '-',
+        ...[2, 3, 6].map(w => ({ label: `${w}-week look-ahead`, checked: () => A.view.lookahead === w, fn: () => { A.view.lookahead = A.view.lookahead === w ? 0 : w; buildRows(); render(); Aero.toast(A.view.lookahead ? `Showing unfinished work from the data date to ${C.addDays(A.P.dataDate || A.P.start, 7 * w)}` : 'Showing all activities'); } })),
         { label: 'Critical activities only', checked: () => A.view.critOnly, fn: () => { A.view.critOnly = !A.view.critOnly; $('critOnly').checked = A.view.critOnly; buildRows(); render(); } },
         ['Expand all', '', () => { A.collapsed.clear(); buildRows(); render(); }], ['Collapse all', '', () => { A.P.activities.forEach((a, i) => A.S.summary[i] && A.collapsed.add(a.id)); buildRows(); render(); }], '-',
         ['Go to project start', 'Home', () => Gantt.scrollToDate(A.P.start)], ['Go to data date', '', () => Gantt.scrollToDate(A.P.dataDate || A.P.start)]],

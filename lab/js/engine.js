@@ -4,7 +4,7 @@
   const node = typeof module === 'object' && module.exports;
   const I = node ? require('./interp.js') : root.LabInterp;
   const Lib = node ? require('./lib.js') : root.LabLib;
-  if (node) { require('./numerics.js'); }
+  if (node) { require('./numerics.js'); require('./toolbox.js'); }
   const G = node ? require('./graphics.js') : root.LabGraphics;
   function create(opts = {}) {
     const In = new I.Interp(opts);

@@ -262,7 +262,7 @@
 
   // Crease edges that survive the T-junctions booleans leave behind: group polygon edges by the line they lie on,
   // split each line into elementary intervals, and keep an interval when the faces touching it disagree in normal.
-  function featureEdges(solid, angleDeg = 25) {
+  function featureEdges(solid, angleDeg = 25, viewDir = null) {   // viewDir adds silhouettes: edges where the surface turns away
     const cosT = Math.cos(angleDeg * Math.PI / 180), groups = new Map(), q = x => Math.round(x * 1e3);
     solid.polys.forEach((p, pi) => {
       for (let i = 0; i < p.v.length; i++) {
@@ -282,13 +282,85 @@
       for (let k = 0; k + 1 < cuts.length; k++) {
         const m = (cuts[k] + cuts[k + 1]) / 2, ns = g.segs.filter(s => s[0] <= m && s[1] >= m).map(s => s[2]);
         let crease = ns.length === 1;
-        for (let i = 0; i < ns.length && !crease; i++) for (let j = i + 1; j < ns.length; j++) if (V.dot(ns[i], ns[j]) < cosT && V.dot(ns[i], ns[j]) > -0.999) { crease = true; break; }
+        for (let i = 0; i < ns.length && !crease; i++) for (let j = i + 1; j < ns.length; j++) if ((V.dot(ns[i], ns[j]) < cosT && V.dot(ns[i], ns[j]) > -0.999) || (viewDir && (V.dot(ns[i], viewDir) > 1e-9) !== (V.dot(ns[j], viewDir) > 1e-9) && V.dot(ns[i], ns[j]) > -0.999)) { crease = true; break; }
         if (ns.length && crease) { if (runStart == null) runStart = cuts[k]; }
         else if (runStart != null) { out.push([V.add(g.foot, V.mul(g.d, runStart)), V.add(g.foot, V.mul(g.d, cuts[k]))]); runStart = null; }
       }
       if (runStart != null) out.push([V.add(g.foot, V.mul(g.d, runStart)), V.add(g.foot, V.mul(g.d, cuts[cuts.length - 1]))]);
     });
     return out;
+  }
+
+
+  // ---------- 2D drawing: third-angle three-view sheet with hidden lines ----------
+  // For each view, crease edges are cut into short pieces; a piece is hidden when a ray from it toward the viewer hits the part.
+  function edgeVisibility(solid, edges, dir, step) {
+    const tris = solid.triangles(), out = [];
+    const bb = tris.map(t => [Math.min(t[0][0], t[1][0], t[2][0]), Math.min(t[0][1], t[1][1], t[2][1]), Math.min(t[0][2], t[1][2], t[2][2]), Math.max(t[0][0], t[1][0], t[2][0]), Math.max(t[0][1], t[1][1], t[2][1]), Math.max(t[0][2], t[1][2], t[2][2])]);
+    const ax = dir.findIndex(v => v !== 0), sg = dir[ax], o1 = (ax + 1) % 3, o2 = (ax + 2) % 3, EPS = 1e-6;
+    const blocked = p => {
+      for (let i = 0; i < tris.length; i++) {
+        const b = bb[i]; if (p[o1] < b[o1] - EPS || p[o1] > b[o1 + 3] + EPS || p[o2] < b[o2] - EPS || p[o2] > b[o2 + 3] + EPS) continue;
+        if (sg > 0 ? b[ax + 3] <= p[ax] : b[ax] >= p[ax]) continue;
+        const [a, c, d] = tris[i], e1 = V.sub(c, a), e2 = V.sub(d, a), h = V.cross(dir, e2), det = V.dot(e1, h); if (Math.abs(det) < 1e-12) continue;
+        const f = 1 / det, s0 = V.sub(p, a), u = f * V.dot(s0, h); if (u < -1e-9 || u > 1 + 1e-9) continue;
+        const q = V.cross(s0, e1), v = f * V.dot(dir, q); if (v < -1e-9 || u + v > 1 + 1e-9) continue;
+        if (f * V.dot(e2, q) > step * 0.02) return true;
+      }
+      return false;
+    };
+    edges.forEach(([a, b]) => {
+      const L = V.len(V.sub(b, a)), n = Math.max(1, Math.ceil(L / step)); let cur = null;
+      for (let k = 0; k < n; k++) {
+        const m = V.lerp(a, b, (k + 0.5) / n), vis = !blocked(m), p0 = V.lerp(a, b, k / n), p1 = V.lerp(a, b, (k + 1) / n);
+        if (cur && cur.vis === vis) cur.b = p1; else { if (cur) out.push(cur); cur = { a: p0, b: p1, vis }; }
+      }
+      if (cur) out.push(cur);
+    });
+    return out;
+  }
+  function drawingSVG(solid, opts = {}) {
+    const m = massProps(solid), size = m.size, mn = m.min, step = Math.max(...size) / 160;
+    const views = [
+      { name: 'FRONT', dir: [0, -1, 0], u: p => p[0] - mn[0], v: p => p[2] - mn[2] },
+      { name: 'TOP', dir: [0, 0, 1], u: p => p[0] - mn[0], v: p => p[1] - mn[1] },
+      { name: 'RIGHT', dir: [1, 0, 0], u: p => p[1] - mn[1], v: p => p[2] - mn[2] },
+    ];
+    // A4 landscape in millimetres, room kept for the title block
+    const W = 297, H = 210, gap = 22, areaW = W - 20 - 2 * gap, areaH = H - 50 - 2 * gap;
+    const scales = [1, 2, 5, 10, 20, 50, 100].flatMap(k => [k, 1 / k]).sort((a, b) => b - a);
+    const sc = scales.find(s => (size[0] + size[1]) * s <= areaW && (size[2] + size[1]) * s <= areaH) || 1 / 200;
+    const fx = 20 + gap, fy = H - 45 - gap;   // bottom-left corner of the front view on paper
+    const place = { FRONT: [fx, fy], TOP: [fx, fy - size[2] * sc - gap], RIGHT: [fx + size[0] * sc + gap, fy] };
+    const f2 = x => +x.toFixed(2), out = [];
+    out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}" font-family="Segoe UI, Arial, sans-serif">`,
+      `<rect x="0" y="0" width="${W}" height="${H}" fill="#fff"/><rect x="8" y="8" width="${W - 16}" height="${H - 16}" fill="none" stroke="#000" stroke-width="0.5"/>`);
+    views.forEach(vw => {
+      const [ox, oy] = place[vw.name], P = p => [f2(ox + vw.u(p) * sc), f2(oy - vw.v(p) * sc)];
+      const segs = edgeVisibility(solid, featureEdges(solid, 28, vw.dir), vw.dir, step);
+      out.push(`<g id="${vw.name.toLowerCase()}">`);
+      const line = (s, style) => { const [x1, y1] = P(s.a), [x2, y2] = P(s.b); if (x1 !== x2 || y1 !== y2) out.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" ${style}/>`); };
+      segs.filter(s => !s.vis).forEach(s => line(s, 'stroke="#555" stroke-width="0.18" stroke-dasharray="1.2 0.8"'));
+      segs.filter(s => s.vis).forEach(s => line(s, 'stroke="#000" stroke-width="0.35" stroke-linecap="round"'));
+      out.push(`<text x="${f2(ox)}" y="${f2(oy + 12)}" font-size="3" fill="#333">${vw.name} VIEW</text></g>`);
+    });
+    // overall dimensions
+    const dim = (x1, y1, x2, y2, txt, vertical) => {
+      const a = 1.6, t = vertical ? `<text x="${f2(x1 - 2)}" y="${f2((y1 + y2) / 2)}" font-size="3" text-anchor="middle" transform="rotate(-90 ${f2(x1 - 2)} ${f2((y1 + y2) / 2)})">${txt}</text>` : `<text x="${f2((x1 + x2) / 2)}" y="${f2(y1 - 1.2)}" font-size="3" text-anchor="middle">${txt}</text>`;
+      const ar = vertical ? `<path d="M${x1} ${y1} l-0.6 ${-a} h1.2z M${x2} ${y2} l-0.6 ${a} h1.2z"/>` : `<path d="M${x1} ${y1} l${a} -0.6 v1.2z M${x2} ${y2} l${-a} -0.6 v1.2z"/>`;
+      return `<g fill="#000" stroke="#000" stroke-width="0.18"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>${ar}</g>${t}`;
+    };
+    const num = x => String(+x.toFixed(2));
+    out.push(dim(f2(fx), f2(fy + 6), f2(fx + size[0] * sc), f2(fy + 6), num(size[0]), false));
+    out.push(dim(f2(fx - 6), f2(fy), f2(fx - 6), f2(fy - size[2] * sc), num(size[2]), true));
+    const [rx, ry] = place.RIGHT; out.push(dim(f2(rx), f2(ry + 6), f2(rx + size[1] * sc), f2(ry + 6), num(size[1]), false));
+    // title block
+    const tb = [W - 8 - 120, H - 8 - 30], scaleTxt = sc >= 1 ? `${sc}:1` : `1:${Math.round(1 / sc)}`;
+    const rows = [['PART', opts.name || 'Part'], ['MATERIAL', opts.material || '—'], ['MASS', opts.mass || '—'], ['SCALE', scaleTxt + '   UNITS mm   THIRD-ANGLE'], ['DRAWN', (opts.date || new Date().toISOString().slice(0, 10)) + '   Lumen CAD']];
+    out.push(`<g font-size="3"><rect x="${tb[0]}" y="${tb[1]}" width="120" height="30" fill="none" stroke="#000" stroke-width="0.4"/>`);
+    rows.forEach(([k, v], i) => { const y = tb[1] + 6 * i; if (i) out.push(`<line x1="${tb[0]}" y1="${y}" x2="${tb[0] + 120}" y2="${y}" stroke="#000" stroke-width="0.2"/>`); out.push(`<text x="${tb[0] + 2}" y="${y + 4.3}" fill="#555">${k}</text><text x="${tb[0] + 26}" y="${y + 4.3}" font-weight="${i ? 400 : 600}">${String(v).replace(/[<&]/g, c => c === '<' ? '&lt;' : '&amp;')}</text>`); });
+    out.push(`<line x1="${tb[0] + 24}" y1="${tb[1]}" x2="${tb[0] + 24}" y2="${tb[1] + 30}" stroke="#000" stroke-width="0.2"/></g></svg>`);
+    return { svg: out.join('\n'), scale: sc };
   }
 
   // ---------- STL / OBJ ----------
@@ -313,6 +385,6 @@
     return L.concat(fs).join('\n') + '\n';
   }
 
-  const api = { featureEdges, V, Solid, Poly, Plane, fromFaces, box, cylinder, cone, sphere, torus, extrude, revolve, loopOf, triangulate, area2, evalExpr, evalParams, build, toolOf, volumeOf, massProps, toSTL, fromSTL, toOBJ, place, rotMat };
+  const api = { drawingSVG, edgeVisibility, featureEdges, V, Solid, Poly, Plane, fromFaces, box, cylinder, cone, sphere, torus, extrude, revolve, loopOf, triangulate, area2, evalExpr, evalParams, build, toolOf, volumeOf, massProps, toSTL, fromSTL, toOBJ, place, rotMat };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.CadKernel = api;
 })(typeof self !== 'undefined' ? self : this);

@@ -6,11 +6,14 @@
   'use strict';
   // sides: {left,right,bottom,top} each {type:'wall'|'slip'|'inlet'|'outlet'|'moving', u, v}
   class Flow {
-    constructor({ nx, ny, Lx, Ly, nu, rho = 1, sides, tau = 0.5, maxCG = 400, tolCG = 1e-5 }) {
+    constructor({ nx, ny, Lx, Ly, nu, rho = 1, sides, tau = 0.5, maxCG = 400, tolCG = 1e-5, heat = null }) {
       Object.assign(this, { nx, ny, Lx, Ly, nu, rho, tau, maxCG, tolCG });
+      // heat = { Pr, Tin, Tbody, cp } — temperature is carried by the flow and diffuses with α = ν / Pr; sides may set { T }
+      this.heat = heat; this.alpha = heat ? nu / heat.Pr : 0;
       this.dx = Lx / nx; this.dy = Ly / ny; this.W = nx + 2; this.H = ny + 2; const N = this.W * this.H;
       this.u = new Float64Array(N); this.v = new Float64Array(N); this.p = new Float64Array(N); this.F = new Float64Array(N); this.G = new Float64Array(N);
       this.solid = new Uint8Array(N); this.dye = new Float32Array(N); this.dye2 = new Float32Array(N);
+      this.T = new Float64Array(N).fill(heat ? heat.Tin : 0); this.T2 = new Float64Array(N);
       this.sides = { left: { type: 'wall' }, right: { type: 'wall' }, bottom: { type: 'wall' }, top: { type: 'wall' }, ...sides };
       this.t = 0; this.steps = 0; this.dt = 0; this.cgIters = 0; this.divMax = 0;
       // CG work arrays over fluid cells
@@ -103,7 +106,7 @@
     }
     computeDt() {
       let um = 1e-12, vm = 1e-12; for (let k = 0; k < this.u.length; k++) { const a = Math.abs(this.u[k]), b = Math.abs(this.v[k]); if (a > um) um = a; if (b > vm) vm = b; }
-      const { dx, dy, nu, tau } = this; const diff = 0.5 / (nu * (1 / (dx * dx) + 1 / (dy * dy)));
+      const { dx, dy, tau } = this, nu = Math.max(this.nu, this.alpha); const diff = 0.5 / (nu * (1 / (dx * dx) + 1 / (dy * dy)));
       this.dt = tau * Math.min(diff, dx / um, dy / vm); this.umax = Math.max(um, vm); return this.dt;
     }
     computeFG() {
@@ -188,8 +191,46 @@
       this.dye.set(dye2);
     }
     step() {
-      this.computeDt(); this.applyBC(); this.computeFG(); this.solveP(); this.correct(); this.applyBC(); this.advectDye();
+      this.computeDt(); this.applyBC(); this.computeFG(); this.solveP(); this.correct(); this.applyBC(); this.advectDye(); if (this.heat) this.stepT();
       this.t += this.dt; this.steps++;
+    }
+
+    // ---------- heat ----------
+    // temperature a neighbour presents across a face: body/side wall at fixed T, inflow at Tin, otherwise insulated
+    ghostT(k, side) {
+      const sd = this.sides[side], h = this.heat;
+      if (sd.type === 'inlet') return 2 * h.Tin - this.T[k];
+      if (sd.T != null && sd.type !== 'outlet') return 2 * sd.T - this.T[k];
+      return this.T[k];
+    }
+    stepT() {
+      const { nx, ny, W, dx, dy, dt, T, T2, alpha } = this, s = this.solid, h = this.heat, Tb = h.Tbody;
+      // semi-Lagrangian advection (bilinear), then explicit diffusion with the boundary rules above
+      const inL = this.sides.left.type === 'inlet', inR = this.sides.right.type === 'inlet';
+      const sample = (x, y) => { if ((x < 0 && inL) || (x > this.Lx && inR)) return h.Tin; const fi = Math.min(nx - 1e-6, Math.max(0, x / dx - 0.5)) + 1, fj = Math.min(ny - 1e-6, Math.max(0, y / dy - 0.5)) + 1; const i = Math.min(nx - 1, Math.floor(fi)), j = Math.min(ny - 1, Math.floor(fj)), a = fi - i, b = fj - j, k = j * W + i;
+        const v = (kk, other) => s[kk] ? T[other] : T[kk]; return (1 - a) * (1 - b) * v(k, k) + a * (1 - b) * v(k + 1, k) + (1 - a) * b * v(k + W, k) + a * b * v(k + W + 1, k); };
+      for (let j = 1; j <= ny; j++) for (let i = 1; i <= nx; i++) { const k = j * W + i; if (s[k]) { T2[k] = Tb; continue; } const uc = (this.u[k] + this.u[k - 1]) / 2, vc = (this.v[k] + this.v[k - W]) / 2; T2[k] = sample((i - 0.5) * dx - uc * dt, (j - 0.5) * dy - vc * dt); }
+      T.set(T2);
+      const ax = alpha * dt / (dx * dx), ay = alpha * dt / (dy * dy);
+      for (let j = 1; j <= ny; j++) for (let i = 1; i <= nx; i++) {
+        const k = j * W + i; if (s[k]) continue; const c = T[k];
+        const nb = (kk, inside, side) => !inside ? this.ghostT(k, side) : s[kk] ? 2 * Tb - c : T[kk];
+        T2[k] = c + ax * (nb(k - 1, i > 1, 'left') - 2 * c + nb(k + 1, i < nx, 'right')) + ay * (nb(k - W, j > 1, 'bottom') - 2 * c + nb(k + W, j < ny, 'top'));
+      }
+      for (let j = 1; j <= ny; j++) for (let i = 1; i <= nx; i++) { const k = j * W + i; if (!s[k]) T[k] = T2[k]; }
+    }
+    // heat leaving the bodies per metre of depth (W/m) and the wetted (stair-step) perimeter
+    heatFromBodies() {
+      if (!this.heat) return { Q: 0, per: 0 };
+      const { nx, ny, W, dx, dy, T } = this, s = this.solid, k = this.alpha * this.rho * (this.heat.cp || 1000), Tb = this.heat.Tbody; let Q = 0, per = 0;
+      for (let j = 1; j <= ny; j++) for (let i = 1; i <= nx; i++) {
+        const c = j * W + i; if (!s[c]) continue;
+        if (this.isFluid(i + 1, j)) { Q += k * (Tb - T[c + 1]) / (dx / 2) * dy; per += dy; }
+        if (this.isFluid(i - 1, j)) { Q += k * (Tb - T[c - 1]) / (dx / 2) * dy; per += dy; }
+        if (this.isFluid(i, j + 1)) { Q += k * (Tb - T[c + W]) / (dy / 2) * dx; per += dx; }
+        if (this.isFluid(i, j - 1)) { Q += k * (Tb - T[c - W]) / (dy / 2) * dx; per += dx; }
+      }
+      return { Q, per, k };
     }
     // ---------- outputs ----------
     cellVel(i, j) { const k = j * this.W + i; return [(this.u[k] + this.u[k - 1]) / 2, (this.v[k] + this.v[k - this.W]) / 2]; }

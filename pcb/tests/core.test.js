@@ -108,3 +108,21 @@ t('syncBoard places new footprints and drops deleted ones', () => {
 });
 
 console.log(`\n${n} tests passed`);
+// (appended) copper pour
+t('copper pour joins its net, keeps clearance, and is exported as Gerber regions', () => {
+  const p = samplePcb(), nl = Core.netlist(p.sch), b = p.board;
+  b.zones = [{ net: 'GND', layer: 'bottom', clearance: 0.4 }];
+  const f = Core.fillZone(b, b.zones[0], nl.pinNet);
+  assert.ok(f.area > 0.6 * b.w * b.h, 'mostly filled: ' + f.area);
+  // no filled cell may sit within the clearance of copper on another net
+  const others = Core.copper(b, nl.pinNet).filter(it => it.layers.includes('bottom') && it.net !== 'GND');
+  let worst = Infinity;
+  for (let j = 0; j < f.ny; j += 2) for (let i = 0; i < f.nx; i += 2) { if (f.grid[j * f.nx + i] <= 0) continue; const c = { core: [[(i + 0.5) * f.res, (j + 0.5) * f.res]], r: 0 }; others.forEach(o => { worst = Math.min(worst, Core.gap(o, c)); }); }
+  assert.ok(worst >= 0.4 - 1e-9, 'clearance kept: ' + worst);
+  const rn = Core.ratsnest(b, nl.pinNet);
+  assert.ok(!rn.lines.some(l => l.net === 'GND'), 'GND fully joined by the pour');
+  assert.strictEqual(rn.unroutedNets, 6);
+  const g = Core.gerber(b, 'bottom', nl.pinNet); assert.ok(/G36\*/.test(g) && /G37\*/.test(g));
+  assert.ok(!Core.drc(b, nl.pinNet).some(e => e.type === 'Short' || e.type === 'Clearance'));
+});
+console.log('(copper pour test appended)');
