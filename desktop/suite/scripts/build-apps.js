@@ -5,6 +5,8 @@ const { build, Platform } = require('electron-builder');
 const ROOT = path.resolve(__dirname, '..'), SITE = path.resolve(ROOT, '..', 'lumen-studio');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const APPS = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps.json'), 'utf8'));
+// APP_VERSION=1.0.0 builds a newer app at its own version (e.g. Lumen Plan) without bumping the suite
+const VER = process.env.APP_VERSION || pkg.version;
 const ids = process.argv.slice(2).length ? process.argv.slice(2) : APPS.map(a => a.id).filter(id => id !== 'photo');
 const SKIP = /(^|[\\/])(node_modules|tools|_template|tests)([\\/]|$)|screenshot\.(png|jpg)$|\.map$/;
 const copy = (src, dst) => {
@@ -28,11 +30,11 @@ const single = path.join(ROOT, 'single.json'), appsDir = path.join(ROOT, 'apps')
       const config = {
         ...pkg.build,
         appId: 'com.lumenstudio.' + id, productName: name,
-        extraMetadata: { name: 'lumen-' + id, productName: name, description: `${name} - ${meta.desc}` },
+        extraMetadata: { version: VER, name: 'lumen-' + id, productName: name, description: `${name} - ${meta.desc}` },
         files: ['main.js', 'preload.js', 'apps.json', 'single.json', 'apps/**/*', 'build/icons/' + id + '.png', 'package.json'],
         directories: { output: path.join('dist-apps', id), buildResources: 'build' },
         win: { icon: 'build/icons/' + id + '.ico', target: [{ target: 'nsis', arch: ['x64'] }] },
-        nsis: { ...pkg.build.nsis, shortcutName: name, artifactName: `${slug}-Setup-${pkg.version}.exe` },
+        nsis: { ...pkg.build.nsis, shortcutName: name, artifactName: `${slug}-Setup-${VER}.exe` },
         npmRebuild: false,       // no native modules; skips a memory-hungry child process
         compression: 'normal',   // maximum needs more RAM than small PCs have
         fileAssociations: meta.ext.filter(e => !['pdf', 'svg', 'psd'].includes(e)).map(e => ({ ext: e, name: `${name} file`, role: 'Editor' }))

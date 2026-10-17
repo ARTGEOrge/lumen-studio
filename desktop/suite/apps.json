@@ -8,5 +8,6 @@
   { "id": "sound",    "name": "Lumen Sound",    "like": "Audition",      "desc": "Audio editing, cleanup and mixing", "ext": ["lsnd"] },
   { "id": "layout",   "name": "Lumen Layout",   "like": "InDesign",      "desc": "Page layout and publishing", "ext": ["llay"] },
   { "id": "proto",    "name": "Lumen Proto",    "like": "XD",            "desc": "UI design and clickable prototypes", "ext": ["lproto"] },
-  { "id": "pdf",      "name": "Lumen PDF",      "like": "Acrobat",       "desc": "Read, annotate, sign and organize PDFs", "ext": ["pdf"] }
+  { "id": "pdf",      "name": "Lumen PDF",      "like": "Acrobat",       "desc": "Read, annotate, sign and organize PDFs", "ext": ["pdf"] },
+  { "id": "plan",     "name": "Lumen Plan",     "like": "Primavera P6",  "desc": "Project scheduling: critical path, Gantt, baselines, resources", "ext": ["lplan", "xer"] }
 ]

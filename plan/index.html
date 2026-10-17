@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Plan</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body no-toolbox">
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd">
+        <button class="aero-btn" id="bAdd" title="Add activity below the selection (Insert)">＋ Activity</button>
+        <button class="aero-btn" id="bMile" title="Add milestone (Ctrl+M)">◆ Milestone</button>
+        <button class="aero-btn" id="bWbs" title="Add WBS group (Ctrl+G)">▤ WBS</button>
+        <span class="sep"></span>
+        <button class="aero-btn" id="bOut" title="Outdent (Alt+Left)">⇤</button>
+        <button class="aero-btn" id="bIn" title="Indent (Alt+Right)">⇥</button>
+        <button class="aero-btn" id="bLink" title="Link selected activities finish-to-start (Ctrl+L)">🔗 Link</button>
+        <button class="aero-btn" id="bDel" title="Delete (Delete)">✕</button>
+        <span class="sep"></span>
+        <label>Zoom <select id="zoom"><option value="40">Days</option><option value="14" selected>Weeks</option><option value="4">Months</option><option value="1.2">Quarters</option></select></label>
+        <label>Baseline <select id="blSel"></select></label>
+        <label><input type="checkbox" id="critOnly"> Critical only</label>
+        <input type="search" id="filter" placeholder="Filter activities…" style="width:150px">
+        <span class="hint" id="hint"></span>
+      </div>
+      <div class="plan-work" id="work">
+        <div class="plan-top" id="top">
+          <div class="plan-table" id="tableWrap"><div class="ptable" id="table"></div></div>
+          <div class="vsplit" id="vsplit"></div>
+          <div class="plan-gantt" id="ganttWrap"><div id="ganttSpace"></div><canvas id="gantt"></canvas></div>
+        </div>
+        <div class="hsplit" id="hsplit"></div>
+        <div class="plan-bottom" id="bottom">
+          <div class="aero-tabs" id="tabs">
+            <span class="aero-tab on" data-t="general">General</span><span class="aero-tab" data-t="rel">Relationships</span><span class="aero-tab" data-t="asg">Resources</span>
+            <span class="aero-tab" data-t="usage">Resource usage</span><span class="aero-tab" data-t="reslist">Resource list</span><span class="aero-tab" data-t="ev">Earned value</span><span class="aero-tab" data-t="bl">Baselines</span><span class="aero-tab" data-t="log">Schedule log</span>
+          </div>
+          <div class="tabbody" id="tabbody"></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span id="st2"></span><span id="st3"></span><span id="st4"></span></div>
+    </div>
+  </div>
+</div>
+<div class="gtip" id="tip"></div>
+<script src="../kit/aero.js"></script>
+<script src="js/cpm.js"></script><script src="js/io.js"></script><script src="js/sample.js"></script>
+<script src="js/gantt.js"></script><script src="js/panels.js"></script><script src="js/app.js"></script>
+</body></html>

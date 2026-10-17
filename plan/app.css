@@ -1,0 +1,66 @@
+#cmd{overflow:hidden;flex-wrap:nowrap}
+#cmd>*{flex:none;white-space:nowrap}
+.plan-work{display:grid;grid-template-rows:1fr 5px var(--bottom-h,240px);min-height:0;min-width:0;background:#fff}
+.plan-top{display:grid;grid-template-columns:var(--table-w,640px) 5px 1fr;min-height:0;min-width:0}
+.vsplit,.hsplit{background:linear-gradient(90deg,#dbe6f2,#f6f9fd,#c9d8e9)}
+.vsplit{cursor:col-resize}
+.hsplit{cursor:row-resize;background:linear-gradient(#dbe6f2,#f6f9fd,#c9d8e9)}
+
+/* activity table (div grid so every row is exactly 24px, matching the Gantt) */
+.plan-table{overflow:auto;min-width:0;position:relative}
+.ptable{min-width:100%;width:max-content;font-size:12px}
+.prow{display:grid;grid-template-columns:var(--cols);height:24px;border-bottom:1px solid #edf1f6;align-items:center;cursor:default}
+.prow>div{padding:0 5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;height:23px;line-height:23px;border-right:1px solid #f0f3f7}
+.prow .num{text-align:right;font-variant-numeric:tabular-nums}
+.prow:hover{background:#f3f8fe}
+.prow.sel{background:linear-gradient(var(--sel-top),var(--sel-bot));box-shadow:inset 0 0 0 1px var(--sel-border)}
+.prow.sum{font-weight:600;background:#eef3f9}
+.prow.sum.sel{background:linear-gradient(#e4f0fc,#c5def6)}
+.prow.crit .c-name{color:#b4141e}
+.prow.done{color:#6c7a88}
+.phead{position:sticky;top:0;z-index:2;height:40px;border-bottom:1px solid #a7bcd6;background:linear-gradient(#fbfdff,#e8f0fa 55%,#dbe7f5);color:var(--navy);font-weight:600}
+.phead>div{height:39px;line-height:14px;white-space:normal;display:flex;align-items:flex-end;padding-bottom:4px;border-right:1px solid #c8d6e6}
+.phead>div.num{justify-content:flex-end;text-align:right}
+.twisty{display:inline-block;width:12px;color:#456;cursor:pointer;font-size:9px}
+.prow input.cell{width:100%;height:20px;box-sizing:border-box;border:1px solid #3c7fb1;font:inherit;padding:0 3px;outline:none}
+.neg{color:#c0141e;font-weight:600}
+.pos{color:#2d7d2d}
+
+/* gantt */
+.plan-gantt{position:relative;overflow:auto;min-width:0;background:#fff}
+#gantt{position:sticky;left:0;top:0;display:block}
+#ganttSpace{position:absolute;left:0;top:0;pointer-events:none}
+.gtip{position:fixed;z-index:50;pointer-events:none;display:none;background:linear-gradient(#fff,#e4ecf7);border:1px solid #76797c;border-radius:3px;box-shadow:2px 2px 4px rgba(0,0,0,.25);padding:5px 8px;font-size:11.5px;line-height:1.45;max-width:320px}
+.gtip b{color:var(--navy)}
+
+/* bottom detail pane */
+.plan-bottom{display:flex;flex-direction:column;min-height:0;background:#fff}
+.tabbody{flex:1;overflow:auto;padding:8px 10px;min-height:0;position:relative}
+.tabbody.flush{padding:0;overflow:hidden}
+.dgrid{display:grid;grid-template-columns:repeat(4,auto 1fr);gap:5px 10px;align-items:center;max-width:1100px}
+.dgrid label{color:var(--navy);text-align:right;white-space:nowrap}
+.dgrid input,.dgrid select,.dgrid textarea{font:inherit;min-width:0}
+.dgrid .ro{padding:2px 4px;background:#f2f6fa;border:1px solid #dde6ef;border-radius:2px;font-variant-numeric:tabular-nums;min-height:16px}
+.dgrid .wide{grid-column:span 7}
+.mini{border-collapse:collapse;font-size:12px;min-width:420px}
+.mini th{text-align:left;color:var(--navy);font-weight:600;padding:3px 8px;background:linear-gradient(#fbfdff,#e3ecf6);border:1px solid #c5d5e8}
+.mini td{padding:2px 8px;border:1px solid #e1e8f0}
+.mini td input,.mini td select{font:inherit;width:100%;box-sizing:border-box}
+.mini td.num{text-align:right;font-variant-numeric:tabular-nums}
+.mini tr.drv td:first-child{border-left:3px solid #d02030}
+.cols2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+.evgrid{display:grid;grid-template-columns:330px 1fr;gap:14px;height:100%}
+.evgrid canvas{width:100%;height:100%;min-height:160px;display:block}
+.kv{display:grid;grid-template-columns:auto 1fr auto;gap:2px 10px;font-variant-numeric:tabular-nums}
+.kv b{color:var(--navy);font-weight:600}
+.kv .num{text-align:right}
+.kv .ex{color:var(--dim);font-size:11px}
+.usage{display:flex;flex-direction:column;height:100%}
+.usage .bar{display:flex;gap:10px;align-items:center;padding:4px 10px;border-bottom:1px solid var(--line)}
+.usage canvas{flex:1;width:100%;min-height:0;display:block}
+.empty{color:var(--dim);padding:20px;text-align:center}
+
+@media print{
+  .aero-cmdbar,.hsplit,.plan-bottom,.aero-status,.vsplit{display:none!important}
+  .plan-work{grid-template-rows:1fr!important}
+}

@@ -24,6 +24,7 @@ const ICONS = {
   pdf: { c: ['#ff8a7a', '#b3150a'], g: poly([[70, 40], [158, 40], [194, 76], [194, 216], [70, 216]]), cut: or(poly([[158, 40], [158, 76], [194, 76]]), rect(90, 104, 174, 116, 4), rect(90, 130, 174, 142, 4), rect(90, 156, 150, 168, 4)) },
   convert: { c: ['#ffd36b', '#d9821a'], g: or(rect(56, 84, 172, 106, 10), poly([[160, 62], [204, 95], [160, 128]]), rect(84, 150, 200, 172, 10), poly([[96, 128], [52, 161], [96, 194]])) },
   studio: { c: ['#7fd0ff', '#1d4f9a'], g: or(rect(58, 58, 122, 122, 14), rect(134, 58, 198, 122, 14), rect(58, 134, 122, 198, 14)), extra: rect(134, 134, 198, 198, 14) },
+  plan: { c: ['#a9c6ec', '#24497e'], g: or(rect(52, 62, 132, 86, 8), rect(92, 104, 176, 128, 8), rect(120, 146, 186, 170, 8), poly([[204, 180], [222, 198], [204, 216], [186, 198]]), polyline([[132, 74], [146, 74], [146, 100]], 6), polyline([[176, 116], [190, 116], [190, 142]], 6)) },
   lumen: null
 };
 function render(name, spec) {
@@ -51,6 +52,7 @@ function render(name, spec) {
   const ih = Buffer.alloc(13); ih.writeUInt32BE(S, 0); ih.writeUInt32BE(S, 4); ih[8] = 8; ih[9] = 6;
   fs.writeFileSync(path.join(__dirname, '..', 'kit', 'icons', name + '.png'), Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ih), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]));
 }
-for (const [n, s] of Object.entries(ICONS)) if (s) render(n, s);
-fs.copyFileSync(path.join(__dirname, '..', 'kit', 'icons', 'photo.png'), path.join(__dirname, '..', 'kit', 'icons', 'lumen.png'));
+const only = process.argv.slice(2);
+for (const [n, s] of Object.entries(ICONS)) if (s && (!only.length || only.includes(n))) render(n, s);
+if (!only.length) fs.copyFileSync(path.join(__dirname, '..', 'kit', 'icons', 'photo.png'), path.join(__dirname, '..', 'kit', 'icons', 'lumen.png'));
 console.log('icons done');
