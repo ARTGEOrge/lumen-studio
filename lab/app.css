@@ -115,3 +115,32 @@
 .preview table{border-collapse:collapse;font:11.5px var(--mono)}
 .preview td,.preview th{border:1px solid #e1e8f0;padding:1px 6px;text-align:right}
 .preview th{background:#eef3f9;color:var(--navy);font-family:var(--font)}
+
+/* v1.2 — debugger and profiler */
+.gutter div{position:relative;cursor:pointer}
+.gutter div:hover::before{content:'';position:absolute;left:3px;top:50%;width:9px;height:9px;margin-top:-5px;border-radius:50%;background:rgba(214,40,40,.25)}
+.gutter div.bp::before,.gutter div.bp:hover::before{content:'';position:absolute;left:3px;top:50%;width:9px;height:9px;margin-top:-5px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#ff8a8a,#d22 60%,#a00);box-shadow:0 0 0 1px #900}
+.gutter div.bpc::before,.gutter div.bpc:hover::before{background:radial-gradient(circle at 35% 35%,#ffd27a,#e8900c 60%,#b06000);box-shadow:0 0 0 1px #8a4b00}
+.gutter div.dbg{background:#d9f2d9;color:#1d6b1d;font-weight:600}
+.gutter div.dbg::after{content:'';position:absolute;right:1px;top:50%;margin-top:-5px;border:5px solid transparent;border-left:7px solid #1f9d1f}
+.hl .ln.dbgl{background:#e3f6e3;box-shadow:inset 3px 0 #2aa12a}
+.cw-line.debug .prompt{color:#0a7a2a;font-weight:600}
+#cmd .dbg-btn{display:none}
+#cmd.debugging .dbg-btn{display:inline-flex}
+#cmd.debugging .run-btn{display:none}
+.dbg-banner{color:#0a6a24;font-weight:600}
+.prof{font-size:12px}
+.prof .tbl{max-height:250px;overflow:auto;border:1px solid #c5d5e8;background:#fff}
+.prof table{border-collapse:collapse;width:100%}
+.prof th{position:sticky;top:0;background:linear-gradient(#fbfdff,#e3ecf6);color:var(--navy);font-weight:600;text-align:left;padding:3px 6px;border-bottom:1px solid #c5d5e8}
+.prof td{padding:2px 6px;border-bottom:1px solid #f0f3f7;white-space:nowrap}
+.prof td.n{text-align:right;font-family:var(--mono)}
+.prof tr[data-fn]{cursor:pointer}
+.prof tr[data-fn]:hover td{background:#eef5fd}
+.prof tr.sel td{background:#dcebfc}
+.prof .bar{display:inline-block;height:9px;background:linear-gradient(#7fb2ec,#3b7fd1);border-radius:2px;vertical-align:middle}
+.prof .code{font-family:var(--mono);white-space:pre;color:#333}
+.prof h4{margin:10px 0 4px;color:var(--navy);font-weight:600}
+.prof .meta{color:var(--dim);margin:0 0 6px}
+.prof td:first-child{max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.prof td.code{max-width:380px;overflow:hidden;text-overflow:ellipsis}

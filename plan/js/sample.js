@@ -3,7 +3,7 @@
   const a = (id, name, level, dur, res = [], extra = {}) => ({ id, name, level, dur, pct: 0, resources: res.map(([r, u]) => ({ res: r, units: u })), notes: '', ...extra });
   function sampleProject(start) {
     start = start || '2026-11-02';
-    return {
+    const p = {
       name: 'Riverside Office Building', start, dataDate: null, mustFinish: null,
       calendar: { workweek: [false, true, true, true, true, true, false], holidays: ['2026-11-26', '2026-12-25', '2027-01-01'] },
       resources: [
@@ -48,8 +48,22 @@
         ['M3000', 'A4000'], ['A4000', 'A4010', 'SS', 8], ['A4010', 'A4020'], ['A4020', 'A4030', 'SS', 3], ['A3010', 'A4040'],
         ['A4030', 'A5000'], ['A4040', 'A5000'], ['A5000', 'A5010'], ['A5010', 'A5020'],
       ].map(([from, to, type = 'FS', lag = 0]) => ({ from, to, type, lag })),
+      codes: [
+        { id: 'RESP', name: 'Responsibility', values: [{ v: 'OWN', d: 'Owner' }, { v: 'GC', d: 'General contractor' }, { v: 'CIV', d: 'Civil subcontractor' }, { v: 'STL', d: 'Steel subcontractor' }, { v: 'MEP', d: 'MEP subcontractor' }, { v: 'FIN', d: 'Finishes subcontractor' }] },
+        { id: 'AREA', name: 'Area', values: [{ v: 'SITE', d: 'Site and below grade' }, { v: 'SHELL', d: 'Structure and envelope' }, { v: 'INT', d: 'Interiors and services' }] },
+      ],
       baselines: [], activeBaseline: null,
     };
+    const codeOf = { A1000: 'OWN SITE', A1010: 'OWN SITE', A1020: 'CIV SITE', A1030: 'GC SITE', A2000: 'CIV SITE', A2010: 'CIV SITE', A2020: 'CIV SITE', A2030: 'MEP SITE',
+      A3000: 'STL SHELL', A3010: 'STL SHELL', A3020: 'GC SHELL', A3030: 'FIN SHELL', M3000: 'GC SHELL', A4000: 'MEP INT', A4010: 'FIN INT', A4020: 'MEP INT', A4030: 'FIN INT', A4040: 'GC INT',
+      A5000: 'MEP INT', A5010: 'GC INT', A5020: 'OWN INT' };
+    p.activities.forEach(a => { if (codeOf[a.id]) { const [r, ar] = codeOf[a.id].split(' '); a.codes = { RESP: r, AREA: ar }; } });
+    const steel = p.activities.find(a => a.id === 'A3000');
+    steel.pctType = 'physical';
+    steel.steps = [{ name: 'Anchor bolts surveyed', weight: 1, pct: 0 }, { name: 'Columns erected', weight: 4, pct: 0 }, { name: 'Beams and bracing', weight: 4, pct: 0 }, { name: 'Bolt-up and plumb', weight: 1, pct: 0 }];
+    const env = p.activities.find(a => a.id === 'A3030');
+    env.steps = [{ name: 'Curtain wall', weight: 3, pct: 0 }, { name: 'Cladding', weight: 2, pct: 0 }, { name: 'Glazing and seals', weight: 1, pct: 0 }]; env.pctType = 'physical';
+    return p;
   }
   if (typeof module !== 'undefined' && module.exports) module.exports = { sampleProject }; else root.PlanSample = { sampleProject };
 })(typeof self !== 'undefined' ? self : this);

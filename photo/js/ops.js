@@ -220,7 +220,7 @@ function mergeDown() {
   rasterize(below); if (below.style) rasterizeStyle(below, true); bakeMask(below);
   if (top.visible && top.style && styleHasEffects(top.style) && top.type !== 'adjust') {
     const b = bakeStyled(top); ensureCover(below, { x: b.x, y: b.y, w: b.canvas.width, h: b.canvas.height });
-    const c = cx(below.canvas); reset(c); c.globalAlpha = top.opacity; c.globalCompositeOperation = top.blend; c.drawImage(b.canvas, b.x - below.x, b.y - below.y); reset(c);
+    const c = cx(below.canvas); reset(c); blendDraw(c, b.canvas, b.x - below.x, b.y - below.y, top.opacity, top.blend);
   } else if (top.visible) {
     if (top.type === 'adjust') {
       const adj = FILTERS[top.adjust.kind].fn(below.canvas, top.adjust.params);
@@ -229,7 +229,7 @@ function mergeDown() {
       ensureCover(below, lrect(top));
       let img = top.canvas;
       if (top.mask && top.mask.enabled) { img = clone(top.canvas); const ic = cx(img); ic.globalCompositeOperation = 'destination-in'; drawLumAlpha(ic, top.mask.canvas, 0, 0); reset(ic); }
-      const c = cx(below.canvas); reset(c); c.globalAlpha = top.opacity; c.globalCompositeOperation = top.blend; c.drawImage(img, top.x - below.x, top.y - below.y); reset(c);
+      const c = cx(below.canvas); reset(c); blendDraw(c, img, top.x - below.x, top.y - below.y, top.opacity, top.blend);
     }
   }
   doc.layers.splice(doc.active, 1); doc.active--; doc.editMask = false; pushHistory('Merge Down');
@@ -397,4 +397,43 @@ function revealAll() { // grow the canvas to show every layer's off-canvas pixel
   let r = docRect(); doc.layers.forEach(L => { if (L.canvas) r = unionRect(r, lrect(L)); });
   if (r.w === doc.w && r.h === doc.h) return toast('Nothing outside the canvas');
   doc.layers.forEach(L => shiftLayer(L, -r.x, -r.y)); setDocSize(r.w, r.h); pushHistory('Reveal All', 'all'); fit();
+}
+
+/* ---------- Frequency Separation ----------
+   Splits a pixel layer into Low Frequency (blurred color & tone) and High Frequency (texture, Linear Light, 128 = neutral)
+   inside a group. low' + 2·(high − 128) reproduces every opaque pixel exactly: the odd remainder of (src − blur) is kept in
+   the low layer, so the split itself changes nothing until you retouch. The original layer is kept below, hidden. */
+function splitFrequencies(src, r) {
+  const w = src.width, h = src.height, low = blur(src, r);
+  const S = cx(src).getImageData(0, 0, w, h), Ld = cx(low).getImageData(0, 0, w, h), s = S.data, l = Ld.data, H = new ImageData(w, h), hd = H.data;
+  for (let i = 0; i < s.length; i += 4) {
+    for (let k = 0; k < 3; k++) { const d = s[i + k] - l[i + k], q = Math.trunc(d / 2); hd[i + k] = 128 + q; l[i + k] = s[i + k] - 2 * q; }
+    hd[i + 3] = l[i + 3] = s[i + 3];
+  }
+  const lo = mk(w, h), hi = mk(w, h); cx(lo).putImageData(Ld, 0, 0); cx(hi).putImageData(H, 0, 0);
+  return { lo, hi };
+}
+function frequencySeparation() {
+  const L = layer();
+  if (L.type !== 'raster' || !L.canvas) return toast('Select a pixel layer to split');
+  let src = L.canvas;
+  if (L.mask && L.mask.enabled) { src = clone(L.canvas); const c = cx(src); c.globalCompositeOperation = 'destination-in'; drawLumAlpha(c, L.mask.canvas, 0, 0); reset(c); }
+  const orig = clone(L.canvas);
+  showDialog({
+    title: 'Frequency Separation', ok: 'Split',
+    fields: [{ key: 'r', label: 'Radius (px)', type: 'range', min: 1, max: 60, step: 0.5, value: Math.max(2, Math.round(Math.min(doc.w, doc.h) / 250)) }],
+    html: '<p class="dnote">Preview shows the Low Frequency layer: raise the radius until skin blemishes and pores disappear but shapes and shading remain. Then retouch tone on Low and texture on High (Spot Healing, Clone).</p>',
+    onChange: v => { const c = cx(L.canvas); reset(c); c.clearRect(0, 0, orig.width, orig.height); c.drawImage(blur(orig, v.r), 0, 0); requestRender(); },
+    onCancel: () => { const c = cx(L.canvas); reset(c); c.clearRect(0, 0, orig.width, orig.height); c.drawImage(orig, 0, 0); requestRender(); },
+    onOK: v => {
+      const c = cx(L.canvas); reset(c); c.clearRect(0, 0, orig.width, orig.height); c.drawImage(orig, 0, 0);
+      const { lo, hi } = splitFrequencies(src, v.r), i = doc.active;
+      const G = newLayer('Frequency Separation', null, 0, 0, 'group'), Lo = newLayer('Low Frequency (tone)', lo, L.x, L.y), Hi = newLayer('High Frequency (texture)', hi, L.x, L.y);
+      G.parent = L.parent; Lo.parent = Hi.parent = G.id; Hi.blend = 'linear-light';
+      doc.layers.splice(i + 1, 0, Lo, Hi, G); L.visible = false;
+      doc.active = i + 2; doc.editMask = false;
+      pushHistory('Frequency Separation', 'all');
+      toast('Split into Low / High frequency — original kept below (hidden)');
+    }
+  });
 }

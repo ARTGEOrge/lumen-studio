@@ -99,6 +99,27 @@
       who: ['who', 'List variables'], whos: ['whos', 'List variables with sizes'], clc: ['clc', 'Clear the Command Window'], ls: ['ls', 'Files in the current folder'], type: ['type name.m', 'Show a file'],
       help: ['help name', 'Help for a function'],
     },
+    'Constrained optimization': {
+      linprog: ['x = linprog(f, A, b)\n[x, fval, exitflag] = linprog(f, A, b, Aeq, beq, lb, ub)', 'Linear programming (two-phase simplex)'],
+      intlinprog: ['x = intlinprog(f, intcon, A, b, Aeq, beq, lb, ub)', 'Mixed-integer linear programming (branch and bound)'],
+      quadprog: ['x = quadprog(H, f, A, b, Aeq, beq, lb, ub)\n[x, fval, exitflag] = quadprog(...)', 'Convex quadratic programming (active set)'],
+      fmincon: ['x = fmincon(fun, x0, A, b)\nx = fmincon(fun, x0, A, b, Aeq, beq, lb, ub, nonlcon, options)\n[x, fval, exitflag, output, lambda] = fmincon(...)\n% nonlcon: @(x) deal(c, ceq) with c(x) <= 0, ceq(x) = 0', 'Constrained nonlinear minimization (SQP)'],
+      optimoptions: ["opts = optimoptions('fmincon', 'MaxIterations', 200, 'ConstraintTolerance', 1e-8)", 'Options for the optimization solvers'],
+    },
+    'Spectral analysis': {
+      periodogram: ['[pxx, f] = periodogram(x, window, nfft, fs)\nperiodogram(x)  % plots the PSD in dB', 'Power spectral density (periodogram)'],
+      pwelch: ['[pxx, f] = pwelch(x, window, noverlap, nfft, fs)\npwelch(x)  % plots', "Welch's averaged PSD (Hamming, 50% overlap by default)"],
+      spectrogram: ["[s, f, t, ps] = spectrogram(x, window, noverlap, nfft, fs)\nspectrogram(x, 256, 128, 256, fs)  % plots time × frequency in dB\nspectrogram(..., 'xaxis')", 'Short-time Fourier transform'],
+      chirp: ["y = chirp(t, f0, t1, f1)\ny = chirp(t, f0, t1, f1, 'quadratic')  % or 'logarithmic'", 'Swept-frequency cosine'],
+    },
+    'Debugging & profiling': {
+      dbstop: ['dbstop in file at 12\ndbstop in file at 12 if k > 5\ndbstop in file\ndbstop if error', 'Set a breakpoint (or click a line number in the editor)'],
+      dbclear: ['dbclear all\ndbclear in file at 12\ndbclear if error', 'Remove breakpoints'], dbstatus: ['dbstatus', 'List breakpoints'],
+      dbcont: ['dbcont', 'Continue running (F5)'], dbstep: ['dbstep\ndbstep in\ndbstep out', 'Step a line, into a function or out of it (F10 / F11 / Shift+F11)'],
+      dbquit: ['dbquit', 'Stop debugging (Shift+F5)'], dbstack: ['dbstack\ns = dbstack', 'Show the function call stack'], dbup: ['dbup\ndbdown', 'Inspect the caller’s / callee’s workspace at K>>'],
+      keyboard: ['keyboard', 'Pause here and give control to the K>> prompt'],
+      profile: ["profile on\n... code ...\nprofile viewer\np = profile('info')\nprofile off / resume / clear", 'Time functions and lines'],
+    },
   };
   const FN = {};
   for (const c in CATS) for (const k in CATS[c]) if (CATS[c][k]) FN[k] = CATS[c][k];

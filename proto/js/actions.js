@@ -285,6 +285,43 @@
     ED.update(); const b = ED.wbox(main); ED.placeCenter(c, par, right + 24 + b.w / 2, b.y + b.h / 2);
     ED.sel = [c.id]; ED.commit('Add variant');
   };
+  // swap an instance to a different component; overrides follow by layer name, and an instance still at its
+  // old main's size takes the new main's size
+  A.swapInstance = (inst, compId) => {
+    const main = ED.get(compId), old = A.mainOf(inst);
+    if (!main || !main.component || main === old) return;
+    const keepSize = !ED.isClone(inst) && old && Math.abs(inst.w - old.w) < .01 && Math.abs(inst.h - old.h) < .01;
+    ED.setProp(inst, 'componentId', compId); if (!ED.isClone(inst)) inst.componentId = compId;
+    if (keepSize) { const c = ED.centerWorld(inst); inst.w = main.w; inst.h = main.h; if (inst.r) { ED.wm = new Map(); ED.placeCenter(inst, ED.parent(inst), c.x, c.y); } }
+    ED.commit('Swap instance');
+  };
+  // select every layer that matches the selection: instances of the same component, text with the same style
+  // (or font / size / weight), or shapes with the same type and fill. Searches the whole document.
+  A.matchKey = n => {
+    const v = ED.scene.view(n), doc = ED.doc;
+    if (n.type === 'instance') return 'inst:' + (v.componentId || n.componentId);
+    if (n.component) return null;
+    const fill = (v.fills || []).filter(f => f.on !== false)[0];
+    const fk = !fill ? 'none' : fill.type !== 'solid' ? fill.type : fill.style ? 'cs:' + fill.style : LP.rgba(LP.fillColor(fill, doc).color, LP.fillColor(fill, doc).a);
+    if (n.type === 'text') { if (v.textStyleId) return 'ts:' + v.textStyleId; const t = LP.textProps(v, doc); return `text:${t.font}:${t.size}:${t.weight}:${!!t.italic}:${fk}`; }
+    if (n.type === 'icon') return 'icon:' + v.icon;
+    if (n.type === 'frame' && ED.isArtboard(n)) return 'artboard:' + Math.round(n.w) + 'x' + Math.round(n.h);
+    if (v.fxStyle) return n.type + ':fx:' + v.fxStyle + ':' + fk;
+    return n.type + ':' + fk;
+  };
+  A.selectMatching = () => {
+    const sel = ED.selNodes(); if (!need(sel.length, 'Select a layer to find matching layers')) return;
+    const keys = new Set(sel.map(A.matchKey).filter(Boolean));
+    if (!keys.size) return Aero.toast('Main components have no matching layers');
+    const out = [];
+    const walk = n => ED.kids(n).forEach(k => {
+      if (k.visible !== false && !k.locked && (!ED.isClone(k) || sel.some(ED.isClone)) && keys.has(A.matchKey(k))) out.push(k.id);
+      if (k.type !== 'instance' || sel.some(ED.isClone)) walk(k);
+    });
+    walk(ED.doc);
+    ED.select(out);
+    Aero.toast(`${out.length} matching layer${out.length === 1 ? '' : 's'} selected`);
+  };
   A.setVariant = (inst, compId) => { ED.setProp(inst, 'componentId', compId); if (!ED.isClone(inst)) inst.componentId = compId; ED.commit('Switch variant'); };
   A.detach = () => {
     const insts = editableRoots().filter(n => n.type === 'instance'); if (!need(insts.length, 'Select an instance to detach')) return;

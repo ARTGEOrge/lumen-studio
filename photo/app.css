@@ -318,3 +318,11 @@ button.b.small{min-width:0;padding:1px 8px}
 #options .gradbtn{width:96px;height:18px;border:1px solid #0b2741;cursor:pointer;border-radius:2px;box-shadow:0 0 0 1px rgba(255,255,255,.35)}
 #options .ftnum{width:62px}
 #options .bpreset{max-width:150px}
+/* v1.2: Levels / Curves graphs, Export Multiple Sizes table */
+.adjgraph{display:block;margin:8px auto 2px;border:1px solid #9fb2c8;border-radius:3px;background:#fbfdff;box-shadow:inset 0 1px 2px rgba(0,0,0,.08)}
+.adjgraph.curves{cursor:ns-resize;touch-action:none}
+.xstable{border-collapse:collapse;margin:8px 0 6px;font-size:12px}
+.xstable th{font-weight:400;color:#4a5a6c;text-align:left;padding:2px 6px 4px 0;border-bottom:1px solid #d5dde6}
+.xstable td{padding:3px 6px 3px 0}
+.xstable select,.xstable input{font:inherit}
+.xsdim{white-space:nowrap;min-width:78px}

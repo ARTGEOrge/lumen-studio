@@ -423,15 +423,18 @@ const UI = (() => {
       { key: 'spB', label: 'Space before (pt)', type: 'number', value: base.spB, step: 1 }, { key: 'spA', label: 'Space after (pt)', type: 'number', value: base.spA, step: 1 },
       { key: 'dropL', label: 'Drop cap lines', type: 'number', value: base.dropL, min: 0, max: 10 }, { key: 'dropC', label: 'Drop cap characters', type: 'number', value: base.dropC, min: 1, max: 10 },
       { key: 'hyph', label: 'Hyphenate', type: 'checkbox', value: base.hyph }, { key: 'grid', label: 'Align to baseline grid', type: 'checkbox', value: base.grid },
+      ...ParaOpts.keepFields(base), ...ParaOpts.ruleFields(base, 'r'),
     ];
     Aero.dialog({ title: isNew ? 'New Paragraph Style' : 'Paragraph Style Options', fields, width: 520,
       onInput: (k, v, set) => { if (k === 'font') { const sel = document.querySelectorAll('.aero-modal select')[3]; } },
       onOK: v => {
         const [w, it] = String(v.fs).split('|');
-        const o = { name: String(v.name || 'Style').slice(0, 60), font: v.font, weight: +w || 400, italic: it === '1', size: Math.max(1, v.size), lead: Math.max(0, v.lead), track: v.track, color: v.color, caps: v.caps, align: v.align, indL: v.indL, indR: v.indR, indF: v.indF, spB: v.spB, spA: v.spA, dropL: v.dropL | 0, dropC: Math.max(1, v.dropC | 0), hyph: !!v.hyph, grid: !!v.grid };
+        const o = { name: String(v.name || 'Style').slice(0, 60), font: v.font, weight: +w || 400, italic: it === '1', size: Math.max(1, v.size), lead: Math.max(0, v.lead), track: v.track, color: v.color, caps: v.caps, align: v.align, indL: v.indL, indR: v.indR, indF: v.indF, spB: v.spB, spA: v.spA, dropL: v.dropL | 0, dropC: Math.max(1, v.dropC | 0), hyph: !!v.hyph, grid: !!v.grid, ...ParaOpts.readKeep(v), ...ParaOpts.readRules(v, base, 'r') };
         // store only what differs from the parent style so "Based on" inheritance keeps working
         const parent = { ...M.DEF, ...(v.basedOn ? M.paraStyleChain(d, v.basedOn) : {}) };
-        for (const k of Object.keys(o)) if (k !== 'name' && o[k] === parent[k]) delete o[k];
+        const same = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b) || (/^rule/.test(k0) && !a && !b);
+        let k0 = '';
+        for (const k of Object.keys(o)) { k0 = k; if (k !== 'name' && same(o[k], parent[k])) delete o[k]; }
         if (v.basedOn) o.basedOn = v.basedOn; if (v.next) o.next = v.next;
         const nid = isNew ? 'ps' + M.uid().slice(0, 6) : id;
         if (id === 'basic') o.name = 'Basic Paragraph';
@@ -531,8 +534,9 @@ const UI = (() => {
         ['Preflight…', 'Ctrl+Alt+Shift+F', () => Preflight.dialog()], ['Print…', 'Ctrl+P', () => IO.print()], '-', ['Document Setup…', 'Ctrl+Alt+P', () => docDialog(false)]],
       Edit: [['Undo', 'Ctrl+Z', cmd.undo], ['Redo', 'Ctrl+Y/Ctrl+Shift+Z', cmd.redo], '-', ['Cut', 'Ctrl+X', cmd.cut], ['Copy', 'Ctrl+C', cmd.copy], ['Paste', 'Ctrl+V', cmd.paste], ['Paste in Place', 'Ctrl+Alt+Shift+V', () => pasteItems(true)],
         { label: 'Paste as Inline Graphic', key: '', fn: () => { if (!Objects.pasteInline()) Aero.toast('Copy an image or shape, then place the text cursor'); }, disabled: () => !clipInline() },
-        ['Duplicate', 'Ctrl+Alt+Shift+D', cmd.duplicate], { label: 'Delete', key: 'Delete/Backspace', fn: deleteSel, disabled: () => !sel() || ed() }, '-',
-        ['Select All', 'Ctrl+A', cmd.selectAll], ['Deselect', 'Escape', cmd.deselect]],
+        ['Duplicate', 'Ctrl+Alt+Shift+D', cmd.duplicate], ['Step and Repeat…', 'Ctrl+Alt+U', () => StepRepeat.dialog()], { label: 'Delete', key: 'Delete/Backspace', fn: deleteSel, disabled: () => !sel() || ed() }, '-',
+        ['Select All', 'Ctrl+A', cmd.selectAll], ['Deselect', 'Escape', cmd.deselect], '-',
+        ['Find/Change…', 'Ctrl+F', () => FindChange.open()], ['Find Next', 'Ctrl+Alt+F', () => { try { FindChange.findNext(); } catch (e) { Aero.toast(e.message); } if (!FindChange.isOpen) Aero.toast(FindChange.message); }]],
       Layout: [['Add Page', 'Ctrl+Shift+P', () => addPage()], ['Insert Pages…', '', insertPagesDialog], ['Duplicate Page', '', () => addPage(S.curPage, true)], ['Delete Page', '', () => deletePage()], '-',
         ['First Page', 'Ctrl+Shift+PageUp', () => View.goPage(0)], ['Previous Page', 'Shift+PageUp', () => View.goPage(S.curPage - 1)], ['Next Page', 'Shift+PageDown', () => View.goPage(S.curPage + 1)], ['Last Page', 'Ctrl+Shift+PageDown', () => View.goPage(S.doc.pages.length - 1)], '-',
         '#Masters', ['New Master', '', newMaster], ['Edit Master of Current Page', '', () => { const m = S.doc.pages[S.curPage]?.master; if (m) editMaster(m); else Aero.toast('The current page has no master'); }], ['Back to Document Pages', '', () => View.goPage(S.curPage)], { label: 'Delete Master Being Edited', fn: () => deleteMaster(S.mode.id), disabled: () => S.mode.kind !== 'master' }, ['Override All Master Page Items', 'Ctrl+Alt+Shift+L', overrideMaster], '-',
@@ -541,7 +545,7 @@ const UI = (() => {
       Type: [['Font Size Up', 'Ctrl+Shift+>', () => cmd.bumpSize(1)], ['Font Size Down', 'Ctrl+Shift+<', () => cmd.bumpSize(-1)], ['Bold', 'Ctrl+Shift+B', () => cmd.toggleChar('bold')], ['Italic', 'Ctrl+Shift+I', () => cmd.toggleChar('italic')], ['Underline', 'Ctrl+Shift+U', () => cmd.toggleChar('under')], ['All Caps', 'Ctrl+Shift+K', () => cmd.toggleChar('allcaps')], ['Small Caps', 'Ctrl+Shift+H', () => cmd.toggleChar('smallcaps')], '-',
         { label: 'Kerning: Metrics', fn: () => applyChar({ kern: cs()?.kern === false }, 'Kerning'), checked: () => cs()?.kern !== false }, { label: 'Ligatures', fn: () => applyChar({ liga: cs()?.liga === false }, 'Ligatures'), checked: () => cs()?.liga !== false },
         { label: 'Paragraph Composer (Knuth–Plass)', fn: () => applyPara({ composer: cs()?.pe.composer === 'paragraph' ? 'single' : 'paragraph' }, 'Composer'), checked: () => cs()?.pe.composer === 'paragraph' }, '-',
-        ['Tabs…', 'Ctrl+Shift+T', () => Typo.open()], ['Bullets and Numbering…', '', () => Typo.bulletsDialog()], { label: 'Bulleted List', fn: () => Typo.toggleList('bullet'), checked: () => cs()?.pe.list === 'bullet' }, { label: 'Numbered List', fn: () => Typo.toggleList('number'), checked: () => cs()?.pe.list === 'number' }, '-',
+        ['Tabs…', 'Ctrl+Shift+T', () => Typo.open()], ['Bullets and Numbering…', '', () => Typo.bulletsDialog()], ['Keep Options…', 'Ctrl+Alt+K', () => ParaOpts.keepDialog()], ['Paragraph Rules…', 'Ctrl+Alt+J', () => ParaOpts.rulesDialog()], { label: 'Bulleted List', fn: () => Typo.toggleList('bullet'), checked: () => cs()?.pe.list === 'bullet' }, { label: 'Numbered List', fn: () => Typo.toggleList('number'), checked: () => cs()?.pe.list === 'number' }, '-',
         ['Insert Page Number', 'Ctrl+Alt+Shift+N', () => insertSpecial('\uE000', 'Insert Page Number')], ['Insert Em Dash', '', () => insertSpecial('—', 'Insert Em Dash')], ['Insert Forced Line Break', '', () => insertSpecial('\u2028', 'Forced Line Break')], ['Insert Footnote…', 'Ctrl+Alt+Shift+O', () => Objects.insertFootnote()], ['Edit Footnote…', '', () => Objects.editFootnote()], ['Document Footnote Options…', '', () => Objects.footnoteOptions()], ['Insert Graphic in Text…', '', () => Objects.insertGraphic()], ['Insert Merge Field…', '', () => Merge.insertField()], ['Fill with Placeholder Text', '', fillPlaceholder], '-',
         ['Text Frame Options…', 'Ctrl+B', textFrameOptions], { label: 'Show Hidden Characters', key: 'Ctrl+Alt+I', fn: () => toggleOpt('hidden'), checked: () => S.opt.hidden }, '-',
         ['New Paragraph Style…', '', () => paraStyleDialog(null, true, styleFromSelection())], ['New Character Style…', '', () => charStyleDialog(null, true)]],
@@ -560,7 +564,7 @@ const UI = (() => {
         { label: 'Rulers', key: 'Ctrl+R', fn: () => toggleOpt('rulers'), checked: () => S.opt.rulers }, { label: 'Guides', key: 'Ctrl+;', fn: () => toggleOpt('guides'), checked: () => S.opt.guides }, { label: 'Lock Guides', key: 'Ctrl+Alt+;', fn: () => toggleOpt('lockGuides'), checked: () => S.opt.lockGuides },
         { label: 'Baseline Grid', key: "Ctrl+Alt+'", fn: () => toggleOpt('baseline'), checked: () => S.opt.baseline }, { label: 'Frame Edges', key: 'Ctrl+H', fn: () => toggleOpt('frames'), checked: () => S.opt.frames }, { label: 'Text Threads', key: 'Ctrl+Alt+Y', fn: () => toggleOpt('threads'), checked: () => S.opt.threads }, '-',
         { label: 'Snap to Guides', key: 'Ctrl+Shift+;', fn: () => toggleOpt('snap'), checked: () => S.opt.snap }, { label: 'Smart Guides', key: 'Ctrl+U', fn: () => toggleOpt('smart'), checked: () => S.opt.smart }],
-      Help: [['Keyboard Shortcuts', 'F1', shortcutsDialog], ['About Lumen Layout', '', () => Aero.alert('About Lumen Layout', 'Lumen Layout 1.1 — page layout and desktop publishing for the Lumen Studio suite. Threaded text, master pages, paragraph & character styles with OpenType kerning, ligatures and features, tab stops, lists and a Knuth–Plass paragraph composer; process CMYK and spot colors with separations; inline tables, anchored graphics, footnotes, sections and tables of contents; print-ready PDF and reflowable EPUB export. Bundled typefaces: Source Serif 4, Playfair Display, Lora, Montserrat and Oswald (SIL Open Font License).')]],
+      Help: [['Keyboard Shortcuts', 'F1', shortcutsDialog], ['About Lumen Layout', '', () => Aero.alert('About Lumen Layout', 'Lumen Layout 1.2 — page layout and desktop publishing for the Lumen Studio suite. Threaded text, master pages, paragraph & character styles with OpenType kerning, ligatures and features, tab stops, lists, keep options, paragraph rules and a Knuth–Plass paragraph composer; Find/Change with GREP; step and repeat; process CMYK and spot colors with separations; inline tables, anchored graphics, footnotes, sections and tables of contents; print-ready PDF with bookmarks and linked contents, and reflowable EPUB export. Bundled typefaces: Source Serif 4, Playfair Display, Lora, Montserrat and Oswald (SIL Open Font License).')]],
     };
   }
   function rotateSel(deg) { const b = Tools.selBox(); if (!b) return; for (const i of S.sel.map(info)) { const pp = placedOf(i.page); Tools.rotateAbout(i.item, structuredClone(i.item), deg, b.x + b.w / 2 - pp.x, b.y + b.h / 2 - pp.y); } commit('Rotate'); }
@@ -577,7 +581,8 @@ const UI = (() => {
       ['Ctrl+0 / Ctrl+1', 'Fit page / Actual size'], ['Ctrl+wheel', 'Zoom at pointer'], ['Drag from ruler', 'Create guide (drag back onto ruler to delete)'],
       ['Ctrl+Shift+T', 'Tabs panel (click the ruler to add a stop, drag off to remove)'], ['Alt+Left / Alt+Right', 'Kern at the cursor or track the selection (Ctrl = ×5)'], ['Ctrl+Alt+Shift+O', 'Insert footnote'],
       ['Ctrl+Alt+Shift+T', 'Insert table (inline when the text cursor is active)'], ['Shift-click a cell', 'Extend the table cell selection (then Table ▸ Merge Cells)'], ['Double-click in text', 'Edit an inline table cell, anchored graphic or footnote'],
-      ['Shift+F6', 'Separations preview'], ['Ctrl+Alt+Shift+Y', 'Overprint preview'], ['Ctrl+Alt+Shift+F', 'Preflight report (or click the status bar)']];
+      ['Shift+F6', 'Separations preview'], ['Ctrl+Alt+Shift+Y', 'Overprint preview'], ['Ctrl+Alt+Shift+F', 'Preflight report (or click the status bar)'],
+      ['Ctrl+F / Ctrl+Alt+F', 'Find/Change panel / find next match (^p ^t ^n, or GREP with $1)'], ['Ctrl+Alt+K', 'Keep options (keep with next, orphans & widows, start in next column)'], ['Ctrl+Alt+J', 'Paragraph rules above / below'], ['Ctrl+Alt+U', 'Step and repeat (offset copies or a grid)']];
     Aero.dialog({ title: 'Keyboard Shortcuts', noCancel: true, width: 560, html: `<table class="kbd">${rows.map(r => `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td></tr>`).join('')}</table>` });
   }
 
@@ -731,6 +736,9 @@ const UI = (() => {
     bindRow(f, 'Composer', `<select><option value="single">Single-line</option><option value="paragraph">Paragraph (Knuth–Plass)</option></select>`, () => P().composer || 'single', v => applyPara({ composer: v }, 'Composer'));
     bindRow(f, 'List', `<select><option value="">None</option><option value="bullet">Bullets</option><option value="number">Numbers</option></select>`, () => P().list || '', v => { if (v) Typo.toggleList(v); else applyPara({ list: '' }, 'Remove List'); });
     { const lab = el('label', null, 'Tab stops'), w = el('div', 'pc', '<button class="aero-btn small">Tabs… (Ctrl+Shift+T)</button>'); w.querySelector('button').onclick = () => Typo.open(); f.append(lab, w); }
+    bindRow(f, 'Keep with next', '<input type="checkbox">', () => (P().keepNext | 0) > 0, v => applyPara({ keepNext: v ? Math.max(1, P().keepNext | 0) : 0 }, 'Keep with Next'));
+    numRow(f, 'Orphans / widows (lines)', () => Math.max(P().keepStart | 0, P().keepEnd | 0), v => { const n = Aero.clamp(v | 0, 0, 9); applyPara({ keepStart: n, keepEnd: n }, 'Keep Lines Together'); });
+    { const lab = el('label', null, 'Breaks & rules'), w = el('div', 'pc', '<button class="aero-btn small" data-k="keep" title="Keep Options (Ctrl+Alt+K)">Keep…</button> <button class="aero-btn small" data-k="rule" title="Paragraph Rules (Ctrl+Alt+J)">Rules…</button>'); w.querySelector('[data-k=keep]').onclick = () => ParaOpts.keepDialog(); w.querySelector('[data-k=rule]').onclick = () => ParaOpts.rulesDialog(); f.append(lab, w); }
     const c = pf('');
     numRow(c, 'Baseline shift (pt)', () => C().shift || 0, v => applyChar({ shift: v }, 'Baseline Shift'), 0.5);
     bindRow(c, 'Case', `<select><option value="none">Normal</option><option value="all">All Caps</option><option value="small">Small Caps</option></select>`, () => C().caps || 'none', v => applyChar({ caps: v }, 'Case'));

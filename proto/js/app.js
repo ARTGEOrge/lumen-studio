@@ -130,7 +130,7 @@
       ['Select', 'Click · Shift+click add · Ctrl+click deep select · double-click enter group / edit text · Enter select children · Esc select parent'],
       ['Edit', 'Ctrl+D duplicate · Alt+drag duplicate · arrows nudge (Shift ×10) · Ctrl+G group · Ctrl+Shift+G ungroup · Ctrl+Alt+G frame selection · Shift+A auto layout'],
       ['Transform', 'Shift constrains proportions / 45° lines / 15° rotation · Alt resizes from centre · Ctrl while moving disables snapping'],
-      ['Components', 'Ctrl+Alt+K create component · Ctrl+Alt+B detach instance'], ['Align', 'Alt+A left · Alt+D right · Alt+W top · Alt+S bottom · Alt+H / Alt+V centres · Ctrl+Alt+T tidy up'],
+      ['Components', 'Ctrl+Alt+K create component · Ctrl+Alt+B detach instance · Object › Swap instance… · Ctrl+Alt+A select matching layers'], ['Guides', 'Shift+R rulers · drag from a ruler to add a guide, drag it back to delete · Ctrl+; show / hide guides'], ['Styles', 'Assets › Effects: + saves the selection’s shadows / blur as an effect style · click applies · double-click edits'], ['Align', 'Alt+A left · Alt+D right · Alt+W top · Alt+S bottom · Alt+H / Alt+V centres · Ctrl+Alt+T tidy up'],
       ['Text', 'Double-click / Enter edits text in place · select characters and use the inspector to style them (with only a caret, the style applies to what you type next) · Ctrl+B / Ctrl+I / Ctrl+U bold, italic, underline · Ctrl+Z inside the editor undoes typing · Esc or Ctrl+Enter finishes'],
       ['Vector', 'Ctrl+Alt+U union · Ctrl+Alt+S subtract · Ctrl+Alt+I intersect · Ctrl+Alt+X exclude · Ctrl+E flatten · Ctrl+Alt+M use as mask · Enter / double-click a path edits points (click a segment adds a point, Delete removes, Alt+click converts corner/smooth, Alt-drag breaks handles, Esc done)'],
       ['Review', 'C comment tool · click a pin to reply / resolve · Shift+C show / hide comments'],
@@ -138,8 +138,18 @@
     Aero.dialog({ title: 'Keyboard shortcuts', noCancel: true, width: 620, html: `<table class="kbd">${rows.map(r => `<tr><th>${r[0]}</th><td>${Aero.esc(r[1])}</td></tr>`).join('')}</table>` });
   }
   function aboutDialog() {
-    Aero.dialog({ title: 'About Lumen Proto', noCancel: true, instruction: 'Lumen Proto 1.1', html: `<p class="dnote">UI/UX design and prototyping: artboards, components with variants, auto layout, color &amp; text styles, interactive prototypes with smart animate, dev handoff and export to PNG, SVG, PDF and standalone HTML.</p><p class="dnote">New in 1.1: mixed-style text, boolean operations, masks, point editing, vector PDF, drag &amp; swipe triggers, overflow scrolling, variables &amp; conditions, dark-mode color styles, review comments, wrap / grid auto layout, design libraries.</p><p class="dnote">Bundled: Lucide icons (ISC), Inter typeface (SIL OFL 1.1), fflate (MIT), paper.js 0.12.18 (MIT, boolean geometry), Inter 4.1 static TTFs (SIL OFL 1.1, embedded as font subsets in PDF exports). Part of the Lumen Studio suite.</p>` });
+    Aero.dialog({ title: 'About Lumen Proto', noCancel: true, instruction: 'Lumen Proto 1.2', html: `<p class="dnote">UI/UX design and prototyping: artboards, components with variants, auto layout, color &amp; text styles, interactive prototypes with smart animate, dev handoff and export to PNG, SVG, PDF and standalone HTML.</p><p class="dnote">New in 1.1: mixed-style text, boolean operations, masks, point editing, vector PDF, drag &amp; swipe triggers, overflow scrolling, variables &amp; conditions, dark-mode color styles, review comments, wrap / grid auto layout, design libraries.</p><p class="dnote">New in 1.2: rulers &amp; guides, effect styles, swap instance, select matching layers, WCAG text contrast checker.</p><p class="dnote">Bundled: Lucide icons (ISC), Inter typeface (SIL OFL 1.1), fflate (MIT), paper.js 0.12.18 (MIT, boolean geometry), Inter 4.1 static TTFs (SIL OFL 1.1, embedded as font subsets in PDF exports). Part of the Lumen Studio suite.</p>` });
   }
+  // Object › Swap instance…: pick any component for the selected instance(s)
+  APP.swapDialog = () => {
+    const insts = ED.selNodes().filter(n => n.type === 'instance');
+    if (!insts.length) return Aero.toast('Select an instance to swap');
+    const comps = A.components().filter(c => insts.every(i => c !== ED.scene.top(i) && !ED.isAncestor(c, i)));
+    if (!comps.length) return Aero.toast('No other components to swap to');
+    const cur = A.mainOf(insts[0]);
+    Aero.dialog({ title: 'Swap instance', instruction: 'Replace the component of the selected instance(s). Text and other overrides carry over to layers with the same name.', fields: [{ key: 'c', label: 'Component', type: 'select', options: comps.map(c => [c.id, (c.component.set ? c.component.set + ' / ' : '') + (c.component.variant || c.name)]), value: cur ? cur.id : comps[0].id }],
+      onOK: v => { const ids = insts.map(i => i.id); insts.forEach(i => { const n = ED.get(i.id); if (n) A.swapInstance(n, v.c); }); ED.select(ids.filter(id => ED.get(id))); } });
+  };
 
   /* ---------- context menu ---------- */
   ED.contextMenu = e => {
@@ -150,7 +160,7 @@
     const items = [
       ['Cut', 'Ctrl+X', () => { const r = A.cut(); }, has], ['Copy', 'Ctrl+C', () => A.copy(), has], ['Paste', 'Ctrl+V', () => A.paste(), !!A.clip], ['Duplicate', 'Ctrl+D', A.duplicate, has], ['Delete', 'Del', A.deleteSel, has], '-',
       ['Group', 'Ctrl+G', A.group, has], ['Ungroup', 'Ctrl+Shift+G', A.ungroup, has], ['Frame selection', 'Ctrl+Alt+G', A.wrapInFrame, has], ['Add auto layout', 'Shift+A', A.addAutoLayout, has], '-',
-      ['Create component', 'Ctrl+Alt+K', A.createComponent, has], ['Detach instance', 'Ctrl+Alt+B', A.detach, one?.type === 'instance'], ['Go to main component', '', A.goToMain, one?.type === 'instance'], '-',
+      ['Create component', 'Ctrl+Alt+K', A.createComponent, has], ['Detach instance', 'Ctrl+Alt+B', A.detach, one?.type === 'instance'], ['Go to main component', '', A.goToMain, one?.type === 'instance'], ['Swap instance…', '', () => APP.swapDialog(), one?.type === 'instance'], ['Select matching layers', 'Ctrl+Alt+A', A.selectMatching, has], '-',
       ['Bring to front', 'Ctrl+Shift+]', () => A.arrange('front'), has], ['Send to back', 'Ctrl+Shift+[', () => A.arrange('back'), has], '-',
       ['Hide / show', 'Ctrl+Shift+H', () => A.toggle('visible'), has], ['Lock / unlock', 'Ctrl+Shift+L', () => A.toggle('locked'), has], ['Rename…', 'F2', () => one && ED.renameNode(one), !!one], ['Export selection…', '', () => IO.exportNodes(ED.selNodes()), has]
     ];
@@ -179,11 +189,11 @@
           ['Selection (export settings)…', '', () => IO.exportNodes(ED.selNodes())], ['Batch export marked layers (ZIP)', 'Ctrl+Alt+E', IO.batchExport], '-', ['Interactive HTML prototype…', 'Ctrl+Alt+H', IO.exportHTML]],
         Edit: [{ label: 'Undo', key: 'Ctrl+Z', fn: ED.undo, disabled: () => ED.hist.index <= 0 }, { label: 'Redo', key: 'Ctrl+Y/Ctrl+Shift+Z', fn: ED.redo, disabled: () => ED.hist.index >= ED.hist.items.length - 1 }, '-',
           { label: 'Cut', key: 'Ctrl+X', noShortcut: true, fn: () => A.cut(), disabled: () => !any() }, { label: 'Copy', key: 'Ctrl+C', noShortcut: true, fn: () => A.copy(), disabled: () => !any() }, { label: 'Paste', key: 'Ctrl+V', noShortcut: true, fn: () => A.paste(), disabled: () => !A.clip },
-          ['Duplicate', 'Ctrl+D', A.duplicate], ['Delete', 'Delete/Backspace', A.deleteSel], '-', ['Select all', 'Ctrl+A', A.selectAll], ['Select children', 'Enter', A.selectChildren], ['Select parent / deselect', 'Escape', () => { if (ED.penPts) { ED.finishPen(false); return; } if (document.querySelector('.lp-ctx')) { document.querySelector('.lp-ctx').remove(); return; } if (!ED.sel.length) return; A.selectParent(); }]],
+          ['Duplicate', 'Ctrl+D', A.duplicate], ['Delete', 'Delete/Backspace', A.deleteSel], '-', ['Select all', 'Ctrl+A', A.selectAll], ['Select matching layers', 'Ctrl+Alt+A', A.selectMatching], ['Select children', 'Enter', A.selectChildren], ['Select parent / deselect', 'Escape', () => { if (ED.penPts) { ED.finishPen(false); return; } if (document.querySelector('.lp-ctx')) { document.querySelector('.lp-ctx').remove(); return; } if (!ED.sel.length) return; A.selectParent(); }]],
         Object: [['Group', 'Ctrl+G', A.group], ['Ungroup', 'Ctrl+Shift+G', A.ungroup], ['Frame selection', 'Ctrl+Alt+G', A.wrapInFrame], '-', ['Add / remove auto layout', 'Shift+A', A.addAutoLayout], '-',
           '#Vector', ['Union selection', 'Ctrl+Alt+U', () => A.boolean('union')], ['Subtract selection', 'Ctrl+Alt+S', () => A.boolean('subtract')], ['Intersect selection', 'Ctrl+Alt+I', () => A.boolean('intersect')], ['Exclude selection', 'Ctrl+Alt+X', () => A.boolean('exclude')],
           ['Flatten', 'Ctrl+E', A.flatten], ['Edit points', '', A.editPoints], ['Use as mask', 'Ctrl+Alt+M', A.useAsMask], '-',
-          ['Create component', 'Ctrl+Alt+K', A.createComponent], ['Add variant…', '', A.addVariant], ['Detach instance', 'Ctrl+Alt+B', A.detach], ['Reset overrides', '', A.resetOverrides], ['Go to main component', '', A.goToMain], '-',
+          ['Create component', 'Ctrl+Alt+K', A.createComponent], ['Add variant…', '', A.addVariant], ['Detach instance', 'Ctrl+Alt+B', A.detach], ['Swap instance…', '', () => APP.swapDialog()], ['Reset overrides', '', A.resetOverrides], ['Go to main component', '', A.goToMain], '-',
           ['Bring to front', 'Ctrl+Shift+]', () => A.arrange('front')], ['Bring forward', 'Ctrl+]', () => A.arrange('forward')], ['Send backward', 'Ctrl+[', () => A.arrange('backward')], ['Send to back', 'Ctrl+Shift+[', () => A.arrange('back')], '-',
           ['Align left', 'Alt+A', () => A.align('left')], ['Align horizontal centers', 'Alt+H', () => A.align('hcenter')], ['Align right', 'Alt+D', () => A.align('right')], ['Align top', 'Alt+W', () => A.align('top')], ['Align vertical centers', 'Alt+V', () => A.align('vcenter')], ['Align bottom', 'Alt+S', () => A.align('bottom')],
           ['Distribute horizontally', 'Shift+Alt+H', () => A.distribute('h')], ['Distribute vertically', 'Shift+Alt+V', () => A.distribute('v')], ['Tidy up', 'Ctrl+Alt+T', A.tidyUp], '-',
@@ -191,6 +201,8 @@
         View: [['Zoom in', 'Ctrl+=', () => ED.zoomBy(1.25)], ['Zoom out', 'Ctrl+-', () => ED.zoomBy(0.8)], ['Zoom to fit', 'Ctrl+1', ED.zoomFit], ['Zoom to selection', 'Ctrl+2', ED.zoomSel], ['Actual size (100%)', 'Ctrl+0', ED.zoom100], '-',
           { label: 'Comments', key: 'Shift+C', fn: () => window.COMMENTS.toggleVisible(), checked: () => ED.showComments }, { label: 'Resolved comments', key: '', fn: () => { ED.showResolved = !ED.showResolved; ED.redraw(); window.COMMENTS.renderList(); }, checked: () => ED.showResolved },
           { label: 'Layout grids', key: "Ctrl+'", fn: () => { ED.showGrids = !ED.showGrids; ED.redraw(); }, checked: () => ED.showGrids }, { label: 'Snapping & smart guides', key: '', fn: () => { ED.snapOn = !ED.snapOn; }, checked: () => ED.snapOn }, '-',
+          { label: 'Rulers', key: 'Shift+R', fn: () => ED.GUIDES.toggleRulers(), checked: () => ED.showRulers }, { label: 'Guides', key: 'Ctrl+;', fn: () => ED.GUIDES.toggleGuides(), checked: () => ED.showGuides }, { label: 'Lock guides', key: '', fn: () => ED.GUIDES.toggleLock(), checked: () => ED.lockGuides },
+          ['Add guide…', '', () => ED.GUIDES.addDialog()], ['Remove guides', '', () => ED.GUIDES.clear()], '-', ['Check text contrast (WCAG)…', '', () => LP.A11Y.dialog()], '-',
           { label: 'Design mode', key: 'Alt+1', fn: () => APP.setMode('design'), checked: () => ED.mode === 'design' }, { label: 'Prototype mode', key: 'Alt+2', fn: () => APP.setMode('proto'), checked: () => ED.mode === 'proto' }, { label: 'Inspect mode (dev handoff)', key: 'Alt+3', fn: () => APP.setMode('inspect'), checked: () => ED.mode === 'inspect' }, '-',
           ['Preview prototype', 'Ctrl+Enter/F5', () => APP.preview()]],
         Help: [['Keyboard shortcuts', 'F1', shortcutsDialog], ['About Lumen Proto', '', aboutDialog]]

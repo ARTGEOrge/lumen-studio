@@ -19,6 +19,8 @@
         <span class="sep"></span>
         <label>Zoom <select id="zoom"><option value="40">Days</option><option value="14" selected>Weeks</option><option value="4">Months</option><option value="1.2">Quarters</option></select></label>
         <label>Baseline <select id="blSel"></select></label>
+        <label>Group by <select id="groupSel" title="Group activities by WBS or an activity code"></select></label>
+        <button class="aero-btn" id="bTrace" title="Trace the driving path to the selected activity (F8)">← Trace</button>
         <label><input type="checkbox" id="critOnly"> Critical only</label>
         <input type="search" id="filter" placeholder="Filter activities…" style="width:150px">
         <span class="hint" id="hint"></span>
@@ -32,8 +34,8 @@
         <div class="hsplit" id="hsplit"></div>
         <div class="plan-bottom" id="bottom">
           <div class="aero-tabs" id="tabs">
-            <span class="aero-tab on" data-t="general">General</span><span class="aero-tab" data-t="rel">Relationships</span><span class="aero-tab" data-t="asg">Resources</span>
-            <span class="aero-tab" data-t="usage">Resource usage</span><span class="aero-tab" data-t="reslist">Resource list</span><span class="aero-tab" data-t="ev">Earned value</span><span class="aero-tab" data-t="bl">Baselines</span><span class="aero-tab" data-t="log">Schedule log</span>
+            <span class="aero-tab on" data-t="general">General</span><span class="aero-tab" data-t="rel">Relationships</span><span class="aero-tab" data-t="steps">Steps</span><span class="aero-tab" data-t="asg">Resources</span>
+            <span class="aero-tab" data-t="usage">Resource usage</span><span class="aero-tab" data-t="reslist">Resource list</span><span class="aero-tab" data-t="ev">Earned value</span><span class="aero-tab" data-t="bl">Baselines</span><span class="aero-tab" data-t="codes">Activity codes</span><span class="aero-tab" data-t="check">Schedule check</span><span class="aero-tab" data-t="log">Schedule log</span>
           </div>
           <div class="tabbody" id="tabbody"></div>
         </div>
@@ -45,5 +47,5 @@
 <div class="gtip" id="tip"></div>
 <script src="../kit/aero.js"></script>
 <script src="js/cpm.js"></script><script src="js/io.js"></script><script src="js/sample.js"></script>
-<script src="js/gantt.js"></script><script src="js/panels.js"></script><script src="js/app.js"></script>
+<script src="js/svgctx.js"></script><script src="js/gantt.js"></script><script src="js/panels.js"></script><script src="js/app.js"></script>
 </body></html>

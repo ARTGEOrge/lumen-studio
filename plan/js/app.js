@@ -13,11 +13,14 @@
     { k: 'tf', t: 'Total float', w: 50, num: 1 },
     { k: 'pct', t: '% done', w: 50, num: 1, edit: 'num' },
     { k: 'bvar', t: 'BL finish var', w: 58, num: 1, bl: 1 },
+    { k: 'path', t: 'Float path', w: 44, num: 1, tr: 1 },
+    { k: 'rf', t: 'Rel. float', w: 46, num: 1, tr: 1 },
   ];
 
   const A = window.PlanApp = {
     P: null, S: null, rows: [], sel: new Set(), cur: null, ppd: 14, viewStart: null, viewEnd: null, collapsed: new Set(),
-    view: { links: true, baseline: true, float: true, labels: 'name', critOnly: false, filter: '', lookahead: 0 },
+    view: { links: true, baseline: true, float: true, labels: 'name', critOnly: false, filter: '', lookahead: 0, groupBy: '' },
+    trace: null, fp: null,   // driving-path trace target and its float paths
     filePath: null, docName: 'Untitled',
   };
   const hist = new Aero.History({ max: 120 });
@@ -30,10 +33,28 @@
     P.activities.forEach(a => { a.level = a.level || 0; a.dur = Math.max(0, Math.round(+a.dur || 0)); a.pct = +a.pct || 0; a.resources = a.resources || []; });
     // a level may only step in by one
     P.activities.forEach((a, i) => { const prev = i ? P.activities[i - 1].level : -1; if (a.level > prev + 1) a.level = prev + 1; });
+    // activity codes (validated: opened files are untrusted)
+    const seen = new Set();
+    P.codes = (Array.isArray(P.codes) ? P.codes : []).filter(c => c && typeof c === 'object' && c.id != null && String(c.id).trim() && !seen.has(String(c.id).trim()) && seen.add(String(c.id).trim())).map(c => {
+      const vs = new Set();
+      return { id: String(c.id).trim().slice(0, 20), name: String(c.name || c.id).slice(0, 60), values: (Array.isArray(c.values) ? c.values : []).filter(v => v && v.v != null && String(v.v).trim() && !vs.has(String(v.v).trim()) && vs.add(String(v.v).trim())).map(v => ({ v: String(v.v).trim().slice(0, 40), d: String(v.d || '').slice(0, 120) })) };
+    });
+    const codeVals = new Map(P.codes.map(c => [c.id, new Set(c.values.map(v => v.v))]));
+    P.activities.forEach(a => {
+      if (a.codes && typeof a.codes === 'object' && !Array.isArray(a.codes)) { const o = {}; Object.keys(a.codes).forEach(k => { if (codeVals.has(k) && codeVals.get(k).has(String(a.codes[k]))) o[k] = String(a.codes[k]); }); if (Object.keys(o).length) a.codes = o; else delete a.codes; } else delete a.codes;
+      // % complete type and steps
+      if (Array.isArray(a.steps)) { a.steps = a.steps.filter(st => st && typeof st === 'object').map(st => ({ name: String(st.name ?? 'Step').slice(0, 200), weight: Math.max(0, isFinite(+st.weight) ? +st.weight : 1), pct: Math.max(0, Math.min(100, +st.pct || 0)) })); if (!a.steps.length) delete a.steps; } else delete a.steps;
+      if (a.pctType !== 'physical') { delete a.pctType; delete a.remaining; }
+      else { if (a.remaining != null) { a.remaining = Math.max(0, Math.round(+a.remaining || 0)); } if (a.steps) a.pct = C.stepsPct(a.steps); }
+      a.pct = Math.max(0, Math.min(100, a.pct));
+    });
     return P;
   }
   function reschedule() {
     A.S = C.schedule(A.P);
+    if (A.trace && (A.S.error || !A.S.results.get(A.trace) || A.S.results.get(A.trace).summary)) A.trace = null;
+    A.fp = A.trace ? C.floatPaths(A.P, A.S, A.trace) : null;
+    if (A.view.groupBy && !(A.P.codes || []).some(c => c.id === A.view.groupBy)) A.view.groupBy = '';
     if (A.S.error) { A.S.results = A.S.results || new Map(); A.S.summary = A.P.activities.map((a, i) => C.isSummary(A.P.activities, i)); }
     const starts = [A.P.start]; let end = A.P.start;
     if (!A.S.error) A.S.results.forEach(x => { if (x.start < starts[0]) starts[0] = x.start; if (x.finish > end) end = x.finish; });
@@ -42,7 +63,37 @@
     A.viewEnd = C.addDays(end, 45);
     buildRows();
   }
+  // activity passes the view filters (critical only, text filter, look-ahead window)
+  function passes(a) {
+    const x = A.S.results.get(a.id), f = A.view.filter.trim().toLowerCase();
+    if (A.view.critOnly && !(x && x.critical)) return false;
+    if (A.view.lookahead && x) { const d0 = A.P.dataDate || A.P.start, d1 = C.addDays(d0, 7 * A.view.lookahead); if (x.status === 'done' || x.finish < d0 || x.start > d1) return false; }
+    if (f && !(a.id.toLowerCase().includes(f) || a.name.toLowerCase().includes(f))) return false;
+    return true;
+  }
+  // grouped views (float paths of a trace, or an activity code) show synthetic band rows "§…" followed by copies of the activities
+  function buildGroupedRows() {
+    A.S.results.forEach((v, k) => { if (k[0] === '§') A.S.results.delete(k); });
+    let groups;
+    if (A.fp) {
+      const by = new Map(); A.fp.ids.forEach(id => { const v = A.fp.info.get(id); const k = v.path == null ? 'more' : v.path; if (!by.has(k)) by.set(k, { key: 'p' + k, rf: v.rf, path: v.path, ids: [] }); by.get(k).ids.push(id); });
+      groups = [...by.values()].map(g => ({ ...g, label: g.path == null ? 'Other paths' : g.path === 1 ? `Path 1 — driving ${A.trace}` + (g.rf ? ` (relative float ${g.rf} d)` : '') : `Path ${g.path} — relative float ${g.rf} d` }));
+    } else groups = C.groupByCode(A.P, A.S, A.view.groupBy) || [];
+    const byId = new Map(A.P.activities.map(a => [a.id, a])), out = [];
+    groups.forEach(g => {
+      const members = g.ids.map(id => byId.get(id)).filter(a => a && passes(a)); if (!members.length) return;
+      const gid = '§' + g.key;
+      let es = Infinity, ef = -Infinity, tf = Infinity, w = 0, wp = 0;
+      g.ids.forEach(id => { const x = A.S.results.get(id); es = Math.min(es, x.es); ef = Math.max(ef, x.ef); tf = Math.min(tf, x.tf); const wt = Math.max(1, x.dur); w += wt; wp += wt * (byId.get(id).pct || 0); });
+      A.S.results.set(gid, { id: gid, summary: true, es, ef, dur: ef - es, tf, pct: w ? wp / w : 0, start: A.S.cal.date(es), finish: ef > es ? A.S.cal.date(ef - 1) : A.S.cal.date(es) });
+      out.push({ id: gid, name: g.label, level: 0, _grp: true });
+      if (!A.collapsed.has(gid)) members.forEach(a => out.push({ ...a, level: 1, _view: true }));
+    });
+    return out;
+  }
   function buildRows() {
+    if (A.fp || A.view.groupBy) { A.rows = buildGroupedRows(); return; }
+    A.S.results.forEach((v, k) => { if (k[0] === '§') A.S.results.delete(k); });
     const acts = A.P.activities, out = []; let hideBelow = Infinity;
     const f = A.view.filter.trim().toLowerCase();
     acts.forEach((a, i) => {
@@ -69,9 +120,9 @@
   function snapshot() { return JSON.stringify(A.P); }
   function load(P, name, path) {
     A.P = normalize(P); A.docName = name || A.P.name || 'Untitled'; A.filePath = path || null;
-    A.sel.clear(); A.cur = null; A.collapsed.clear();
+    A.sel.clear(); A.cur = null; A.collapsed.clear(); A.trace = null;
     reschedule(); hist.reset('Open', snapshot());
-    const first = A.rows.find((a, i) => !A.S.summary[A.P.activities.indexOf(a)]); if (first) { A.cur = first.id; A.sel.add(first.id); }
+    const first = A.rows.find(a => !a._grp && !A.S.summary[A.P.activities.findIndex(b => b.id === a.id)]); if (first) { A.cur = first.id; A.sel.add(first.id); }
     Aero.setDoc(A.docName, false); render(true); Gantt.scrollToDate(A.viewStart);
   }
   A.commit = (label, fn) => {
@@ -89,11 +140,11 @@
   let saveT; function autosave() { clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem(AUTOSAVE, JSON.stringify({ name: A.docName, project: A.P })); } catch (e) { } }, 400); }
 
   // ---------- table ----------
-  const cols = () => COLS.filter(c => !c.bl || A.baseline());
+  const cols = () => COLS.filter(c => (!c.bl || A.baseline()) && (!c.tr || A.fp));
   function cellVal(c, a, x, sum) {
     if (!x) return '';
     switch (c.k) {
-      case 'id': return esc(a.id);
+      case 'id': return a._grp ? '' : esc(a.id);
       case 'name': return `<span style="padding-left:${(a.level || 0) * 14}px"></span>${sum ? `<span class="twisty" data-tw="${esc(a.id)}">${A.collapsed.has(a.id) ? '▶' : '▼'}</span>` : '<span class="twisty"></span>'}${(!sum && a.dur === 0) ? '◆ ' : ''}${esc(a.name)}`;
       case 'dur': return sum ? x.dur : a.dur;
       case 'rem': return sum ? '' : x.status === 'done' ? 0 : x.status === 'active' ? x.ef - Math.max(x.es, A.S.dataIdx) : a.dur;
@@ -101,7 +152,9 @@
       case 'finish': return x.finish + (a.actualFinish ? ' A' : '');
       case 'tf': return `<span class="${x.tf < 0 ? 'neg' : ''}">${x.tf}</span>`;
       case 'pct': return Math.round(sum ? x.pct : a.pct || 0) + '%';
-      case 'bvar': { const v = C.variance(A.S, A.baseline(), a.id); return v ? `<span class="${v.finish < 0 ? 'neg' : v.finish > 0 ? 'pos' : ''}">${v.finish}</span>` : ''; }
+      case 'bvar': { const v = !a._grp && C.variance(A.S, A.baseline(), a.id); return v ? `<span class="${v.finish < 0 ? 'neg' : v.finish > 0 ? 'pos' : ''}">${v.finish}</span>` : ''; }
+      case 'path': { const v = A.fp && A.fp.info.get(a.id); return v && !a._grp ? (v.path ?? '') : ''; }
+      case 'rf': { const v = A.fp && A.fp.info.get(a.id); return v && !a._grp ? `<span class="${v.driving ? 'drvtxt' : ''}">${v.rf}</span>` : ''; }
     }
   }
   function renderTable() {
@@ -109,16 +162,19 @@
     let h = `<div class="prow phead">${cs.map(c => `<div class="${c.num ? 'num' : ''}">${c.t}</div>`).join('')}<div></div></div>`;
     const idx = new Map(A.P.activities.map((a, i) => [a.id, i]));
     A.rows.forEach(a => {
-      const i = idx.get(a.id), sum = A.S.summary[i], x = A.S.results.get(a.id);
-      const cls = ['prow', sum && 'sum', A.sel.has(a.id) && 'sel', x && x.critical && !sum && 'crit', x && x.status === 'done' && 'done'].filter(Boolean).join(' ');
+      const i = idx.get(a.id), sum = a._grp || A.S.summary[i], x = A.S.results.get(a.id);
+      const drv = A.fp && !sum && A.fp.info.get(a.id) && A.fp.info.get(a.id).driving;
+      const cls = ['prow', sum && 'sum', a._grp && 'band', A.sel.has(a.id) && 'sel', x && x.critical && !sum && 'crit', drv && 'drvrow', x && x.status === 'done' && 'done'].filter(Boolean).join(' ');
       h += `<div class="${cls}" data-id="${esc(a.id)}">${cs.map(c => `<div class="c-${c.k} ${c.num ? 'num' : ''}" data-c="${c.k}">${cellVal(c, a, x, sum)}</div>`).join('')}<div></div></div>`;
     });
     $('table').innerHTML = h;
   }
   function startEdit(row, cell) {
     const id = row.dataset.id, k = cell.dataset.c, col = COLS.find(c => c.k === k); if (!col || !col.edit) return;
-    const a = A.P.activities.find(x => x.id === id), sum = A.S.summary[A.P.activities.indexOf(a)];
+    const a = A.P.activities.find(x => x.id === id); if (!a) return;
+    const sum = A.S.summary[A.P.activities.indexOf(a)];
     if (sum && (k === 'dur' || k === 'pct')) return;
+    if (k === 'pct' && a.pctType === 'physical' && a.steps) { Aero.toast('% complete comes from this activity’s steps — edit them on the Steps tab.'); Panels.setTab('steps'); return; }
     const inp = document.createElement('input'); inp.className = 'cell'; inp.value = k === 'pct' ? (a.pct || 0) : a[k];
     if (col.edit === 'num') { inp.type = 'number'; inp.min = 0; if (k === 'pct') inp.max = 100; }
     cell.innerHTML = ''; cell.appendChild(inp); inp.focus(); inp.select();
@@ -211,7 +267,7 @@
     A.commit('Link ' + from + ' → ' + to, P => P.links.push({ from, to, type, lag }));
   };
   function linkSelected() {
-    const ids = A.rows.filter(a => A.sel.has(a.id) && !A.S.summary[A.P.activities.indexOf(a)]).map(a => a.id);
+    const ids = A.rows.filter(a => A.sel.has(a.id) && !a._grp && !A.S.summary[A.P.activities.findIndex(b => b.id === a.id)]).map(a => a.id);
     if (ids.length < 2) { Aero.toast('Select two or more activities (Ctrl+click), then Link — or drag from the ○ handle at a bar’s end.'); return; }
     A.commit('Link activities', P => { for (let i = 1; i < ids.length; i++) if (!P.links.some(l => l.from === ids[i - 1] && l.to === ids[i])) P.links.push({ from: ids[i - 1], to: ids[i], type: 'FS', lag: 0 }); });
   }
@@ -225,6 +281,24 @@
     const left = C.overallocations(A.P, A.S);
     Aero.toast(`Leveled: ${r.leveled.size} activit${r.leveled.size === 1 ? 'y' : 'ies'} delayed · finish ${before} → ${A.S.finishDate}${left.length ? ' · still over: ' + left.map(o => o.res).join(', ') : ''}`);
   };
+  // ---------- driving path trace & grouping ----------
+  A.traceTo = id => {
+    id = id || A.cur;
+    const a = A.P.activities.find(x => x.id === id), i = A.P.activities.indexOf(a);
+    if (!a || A.S.summary[i]) { Aero.toast('Select an activity (not a WBS row) to trace the logic that drives it.'); return; }
+    A.trace = id; A.collapsed.forEach(k => k[0] === '§' && A.collapsed.delete(k)); reschedule(); render();
+    const n = A.fp ? A.fp.ids.length - 1 : 0, drv = A.fp ? A.fp.ids.filter(k => A.fp.info.get(k).driving).length - 1 : 0;
+    Aero.toast(`${id}: ${drv} driving predecessor${drv === 1 ? '' : 's'}, ${n} in all on ${A.fp ? A.fp.paths : 0} float path${A.fp && A.fp.paths === 1 ? '' : 's'}. Shift+F8 clears the trace.`);
+  };
+  A.clearTrace = () => { if (!A.trace) return; A.trace = null; reschedule(); render(); };
+  A.setGroupBy = code => { A.view.groupBy = code || ''; A.collapsed.forEach(k => k[0] === '§' && A.collapsed.delete(k)); if (A.trace) A.trace = null; reschedule(); render(); };
+  function groupDialog() {
+    const codes = A.P.codes || [];
+    if (!codes.length) { Aero.toast('No activity codes yet — define some on the Activity codes tab.'); Panels.setTab('codes'); return; }
+    Aero.dialog({ title: 'Group activities', instruction: 'Show activities in bands by an activity code (like P6 Group and Sort), or by the WBS outline.', fields: [
+      { key: 'g', label: 'Group by', type: 'select', value: A.view.groupBy, options: [['', 'WBS outline'], ...codes.map(c => [c.id, c.name])] }],
+      onOK: v => A.setGroupBy(v.g) });
+  }
   function clearLeveling() { A.commit('Clear leveling', P => P.activities.forEach(a => delete a.leveledStart)); }
   A.saveBaseline = async () => {
     const name = await Aero.prompt('Save baseline', 'Baseline name', 'Baseline ' + ((A.P.baselines || []).length + 1) + ' — ' + new Date().toISOString().slice(0, 10)); if (!name) return;
@@ -287,7 +361,7 @@
   }
   async function openDialog() { openFiles(await Aero.openFile({ accept: '.lplan,.xer,.xml,.csv,.json', filters: [{ name: 'Schedules', extensions: ['lplan', 'xer', 'xml', 'csv'] }] })); }
   async function save(as) {
-    const data = JSON.stringify({ format: 'lumen-plan', version: 1, project: A.P }, null, 1);
+    const data = JSON.stringify({ format: 'lumen-plan', version: 2, project: A.P }, null, 1);
     const p = await Aero.saveFile({ name: A.docName + '.lplan', data, filters: PLAN_FILTERS, path: as ? null : A.filePath });
     if (p) { A.filePath = typeof p === 'string' && /[\\/]/.test(p) ? p : A.filePath; A.docName = Aero.baseName ? Aero.baseName(String(p)).replace(/\.lplan$/i, '') : A.docName; Aero.setDoc(A.docName, false); return true; }
     return false;
@@ -297,6 +371,7 @@
     if (kind === 'xer') return Aero.saveFile({ name: base + '.xer', data: IO.exportXER(A.P, A.S), filters: [{ name: 'Primavera P6 XER', extensions: ['xer'] }] });
     if (kind === 'xml') return Aero.saveFile({ name: base + '.xml', data: IO.exportMSPXML(A.P, A.S), filters: [{ name: 'Microsoft Project XML', extensions: ['xml'] }] });
     if (kind === 'csv') return Aero.saveFile({ name: base + '.csv', data: IO.exportCSV(A.P, A.S, A.baseline()), filters: [{ name: 'CSV', extensions: ['csv'] }] });
+    if (kind === 'svg') return Aero.saveFile({ name: base + ' - Gantt.svg', data: Gantt.exportSVG(), filters: [{ name: 'SVG vector image', extensions: ['svg'] }] });
     if (kind === 'png') { const c = Gantt.exportCanvas(); const blob = await new Promise(r => c.toBlob(r, 'image/png')); return Aero.saveFile({ name: base + ' - Gantt.png', data: blob, filters: [{ name: 'PNG image', extensions: ['png'] }] }); }
   }
   async function newProject(sample) {
@@ -325,9 +400,12 @@
   function render() {
     renderTable(); Gantt.draw(); Panels.soft(); status();
     const bs = $('blSel'); bs.innerHTML = '<option value="">(none)</option>' + (A.P.baselines || []).map((b, i) => `<option value="${i}">${esc(b.name)}</option>`).join(''); bs.value = A.P.activeBaseline == null ? '' : A.P.activeBaseline;
-    $('hint').textContent = A.sel.size > 1 ? `${A.sel.size} selected` : '';
+    $('hint').textContent = A.fp ? `Tracing ${A.trace} — ${A.fp.ids.length - 1} predecessors on ${A.fp.paths} path${A.fp.paths === 1 ? '' : 's'}` : A.sel.size > 1 ? `${A.sel.size} selected` : '';
+    const gs = $('groupSel'); if (gs) { gs.innerHTML = '<option value="">WBS</option>' + (A.P.codes || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join(''); gs.value = A.view.groupBy; gs.disabled = !!A.fp; }
+    const tb = $('bTrace'); if (tb) { tb.textContent = A.fp ? '✕ Clear trace' : '← Trace'; }
   }
   A.render = render;
+  A.rebuild = () => { buildRows(); render(); };
 
   // ---------- wiring ----------
   function wire() {
@@ -339,6 +417,8 @@
     $('filter').oninput = () => { A.view.filter = $('filter').value; buildRows(); render(); };
     const auto = document.createElement('label'); auto.innerHTML = '<input type="checkbox" id="autoLink" checked> Auto-link new'; auto.title = 'Link each new activity finish-to-start after the selected one';
     $('critOnly').parentElement.before(auto);
+    $('groupSel').onchange = () => A.setGroupBy($('groupSel').value);
+    $('bTrace').onclick = () => A.fp ? A.clearTrace() : A.traceTo();
     const tw = $('tableWrap');
     tw.addEventListener('scroll', () => { const g = $('ganttWrap'); if (Math.abs(g.scrollTop - tw.scrollTop) > 1) g.scrollTop = tw.scrollTop; });
     tw.addEventListener('click', e => {
@@ -367,14 +447,17 @@
     menus: {
       File: [['New project', 'Ctrl+N', () => newProject(false)], ['New from sample', '', () => newProject(true)], ['Open…', 'Ctrl+O', openDialog], '-',
         ['Save', 'Ctrl+S', () => save(false)], ['Save as…', 'Ctrl+Shift+S', () => save(true)], '-', '#Export',
-        ['Primavera P6 (.xer)…', '', () => exportAs('xer')], ['Microsoft Project XML…', '', () => exportAs('xml')], ['Spreadsheet (.csv)…', '', () => exportAs('csv')], ['Gantt chart image (.png)…', '', () => exportAs('png')], '-', ['Print…', 'Ctrl+P', () => print()]],
+        ['Primavera P6 (.xer)…', '', () => exportAs('xer')], ['Microsoft Project XML…', '', () => exportAs('xml')], ['Spreadsheet (.csv)…', '', () => exportAs('csv')], ['Gantt chart image (.png)…', '', () => exportAs('png')], ['Gantt chart vector (.svg)…', '', () => exportAs('svg')], '-', ['Print…', 'Ctrl+P', () => print()]],
       Edit: [['Undo', 'Ctrl+Z', () => restore(hist.undo())], ['Redo', 'Ctrl+Y', () => restore(hist.redo())], '-',
         ['Add activity', 'Insert', () => addActivity('act')], ['Add milestone', 'Ctrl+M', () => addActivity('mile')], ['Add WBS group', 'Ctrl+G', () => addActivity('wbs')], '-',
         ['Indent', 'Alt+Right', () => indent(1)], ['Outdent', 'Alt+Left', () => indent(-1)], ['Move up', 'Ctrl+Up', () => moveRow(-1)], ['Move down', 'Ctrl+Down', () => moveRow(1)], '-',
-        ['Link selected (finish-to-start)', 'Ctrl+L', linkSelected], ['Unlink selected', 'Ctrl+Shift+L', unlinkSelected], '-', ['Delete', 'Delete', del], ['Select all', 'Ctrl+A', () => { A.rows.forEach(a => A.sel.add(a.id)); render(); }]],
+        ['Link selected (finish-to-start)', 'Ctrl+L', linkSelected], ['Unlink selected', 'Ctrl+Shift+L', unlinkSelected], '-', ['Delete', 'Delete', del], ['Select all', 'Ctrl+A', () => { A.rows.forEach(a => !a._grp && A.sel.add(a.id)); render(); }], '-',
+        ['Activity steps…', '', () => Panels.setTab('steps')], ['Activity codes…', '', () => Panels.setTab('codes')]],
       Schedule: [['Schedule now', 'F9', () => { reschedule(); render(); Aero.toast(A.S.error || `Scheduled — finish ${A.S.finishDate}`); }], ['Update progress…', '', updateProgress], '-',
         ['Project settings…', '', projectSettings], ['Calendar…', '', calendarDialog], '-',
-        ['Level resources', 'Shift+F9', () => A.levelResources()], ['Clear leveling', '', clearLeveling], '-', ['Schedule log', '', () => Panels.setTab('log')]],
+        ['Level resources', 'Shift+F9', () => A.levelResources()], ['Clear leveling', '', clearLeveling], '-',
+        ['Trace driving path to selected', 'F8', () => A.traceTo()], { label: 'Clear trace', key: 'Shift+F8', fn: () => A.clearTrace(), disabled: () => !A.trace }, '-',
+        ['Check schedule quality (DCMA 14-point)', '', () => Panels.setTab('check')], ['Schedule log', '', () => Panels.setTab('log')]],
       Baseline: [['Save baseline…', '', () => A.saveBaseline()], ['Manage baselines', '', () => Panels.setTab('bl')], ['Earned value', '', () => Panels.setTab('ev')]],
       View: [['Zoom in', 'Ctrl+=', () => A.zoomBy(1.4, $('ganttWrap').clientWidth / 2)], ['Zoom out', 'Ctrl+-', () => A.zoomBy(1 / 1.4, $('ganttWrap').clientWidth / 2)], '-',
         { label: 'Days', fn: () => zoomTo(40) }, { label: 'Weeks', fn: () => zoomTo(14) }, { label: 'Months', fn: () => zoomTo(4) }, { label: 'Quarters', fn: () => zoomTo(1.2) }, '-',
@@ -383,12 +466,13 @@
         { label: 'Float bars', checked: () => A.view.float, fn: () => { A.view.float = !A.view.float; Gantt.draw(); } },
         { label: 'Resource labels on bars', checked: () => A.view.labels === 'res', fn: () => { A.view.labels = A.view.labels === 'res' ? 'name' : 'res'; Gantt.draw(); } }, '-',
         ...[2, 3, 6].map(w => ({ label: `${w}-week look-ahead`, checked: () => A.view.lookahead === w, fn: () => { A.view.lookahead = A.view.lookahead === w ? 0 : w; buildRows(); render(); Aero.toast(A.view.lookahead ? `Showing unfinished work from the data date to ${C.addDays(A.P.dataDate || A.P.start, 7 * w)}` : 'Showing all activities'); } })),
+        ['Group by activity code…', '', groupDialog], { label: 'Group by WBS', checked: () => !A.view.groupBy, fn: () => A.setGroupBy('') },
         { label: 'Critical activities only', checked: () => A.view.critOnly, fn: () => { A.view.critOnly = !A.view.critOnly; $('critOnly').checked = A.view.critOnly; buildRows(); render(); } },
-        ['Expand all', '', () => { A.collapsed.clear(); buildRows(); render(); }], ['Collapse all', '', () => { A.P.activities.forEach((a, i) => A.S.summary[i] && A.collapsed.add(a.id)); buildRows(); render(); }], '-',
+        ['Expand all', '', () => { A.collapsed.clear(); buildRows(); render(); }], ['Collapse all', '', () => { A.P.activities.forEach((a, i) => A.S.summary[i] && A.collapsed.add(a.id)); A.rows.forEach(a => a._grp && A.collapsed.add(a.id)); buildRows(); render(); }], '-',
         ['Go to project start', 'Home', () => Gantt.scrollToDate(A.P.start)], ['Go to data date', '', () => Gantt.scrollToDate(A.P.dataDate || A.P.start)]],
       Help: [['How Lumen Plan schedules', '', () => Aero.alert('How Lumen Plan schedules',
-        'Lumen Plan uses the Critical Path Method, like Primavera P6.\n\n• Durations, lags and float are in working days on the project calendar.\n• Relationships: FS, SS, FF, SF with lags (negative = lead).\n• Forward pass gives early dates, backward pass gives late dates; total float = late finish − early finish.\n• Critical = total float ≤ the threshold in Project settings (0 by default). Negative float means a constraint or “must finish by” date can’t be met.\n• Progress: activities with an actual start are scheduled from the data date with their remaining duration.\n• WBS rows roll up the activities indented under them.\n• Leveling delays lower-priority work (most float first) until no resource exceeds its max units per day.\n\nDrag a bar to set a Start-No-Earlier-Than constraint, drag its right end to change duration, or drag from the ○ handle onto another bar to link them.')],
-        ['Keyboard shortcuts', '', () => Aero.alert('Shortcuts', 'Insert — add activity\nCtrl+M — milestone · Ctrl+G — WBS group\nEnter / F2 — rename · double-click a cell to edit · Tab moves to the next cell\nAlt+←/→ — outdent / indent\nCtrl+↑/↓ — move row\nCtrl+L — link selected (in order) · Ctrl+Shift+L — unlink\nF9 — schedule · Shift+F9 — level resources\nCtrl+wheel on the Gantt — zoom')]],
+        'Lumen Plan uses the Critical Path Method, like Primavera P6.\n\n• Durations, lags and float are in working days on the project calendar.\n• Relationships: FS, SS, FF, SF with lags (negative = lead).\n• Forward pass gives early dates, backward pass gives late dates; total float = late finish − early finish.\n• Critical = total float ≤ the threshold in Project settings (0 by default). Negative float means a constraint or “must finish by” date can’t be met.\n• Progress: activities with an actual start are scheduled from the data date with their remaining duration.\n• WBS rows roll up the activities indented under them; View → Group by activity code shows the same roll-ups for any code.\n• Trace driving path (F8) ranks every predecessor of one activity by its float relative to that activity: path 1 drives it, path 2 has the next-least float, and so on.\n• Activities with the Physical % complete type take their % from weighted steps and keep their own remaining duration.\n• Schedule → Check schedule quality runs the DCMA 14-point assessment.\n• Leveling delays lower-priority work (most float first) until no resource exceeds its max units per day.\n\nDrag a bar to set a Start-No-Earlier-Than constraint, drag its right end to change duration, or drag from the ○ handle onto another bar to link them.')],
+        ['Keyboard shortcuts', '', () => Aero.alert('Shortcuts', 'Insert — add activity\nCtrl+M — milestone · Ctrl+G — WBS group\nEnter / F2 — rename · double-click a cell to edit · Tab moves to the next cell\nAlt+←/→ — outdent / indent\nCtrl+↑/↓ — move row\nCtrl+L — link selected (in order) · Ctrl+Shift+L — unlink\nF9 — schedule · Shift+F9 — level resources\nF8 — trace the driving path to the selected activity · Shift+F8 — clear trace\nCtrl+wheel on the Gantt — zoom')]],
     } });
 
   Gantt.attach(A); Panels.attach(A); wire();

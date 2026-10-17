@@ -92,3 +92,101 @@ console.log(`\n${n} tests passed`);
   const d = K.drawingSVG(s, { name: 'Test block' });
   if (!/FRONT VIEW/.test(d.svg) || !/>40</.test(d.svg) || !/>10</.test(d.svg) || !/>20</.test(d.svg) || !/stroke-dasharray/.test(d.svg)) throw new Error('drawing content');
   console.log('ok three-view drawing with hidden lines and overall dimensions (scale ' + d.scale + ')'); }
+
+// ---------- v1.2: constrained sketches, edge fillets/chamfers, hole wizard, watertight 3MF / STEP ----------
+const ok12 = name => console.log('ok', name);
+const sector = (r, ang, k) => { let a = 0; for (let j = 0; j < k; j++) a += 0.5 * r * r * Math.sin(ang / k); return a; };   // polygonal arc area
+{ // a rough quadrilateral snaps to an exact, fully constrained 40 × 20 rectangle; the width follows a parameter
+  const pts = [[0, 0], [38, 1], [41, 19], [1, 22]], cons = [{ t: 'h', s: [0] }, { t: 'h', s: [2] }, { t: 'v', s: [1] }, { t: 'v', s: [3] }, { t: 'len', s: [0], v: 'w' }, { t: 'len', s: [1], v: 20 }, { t: 'x', p: [0], v: 0 }, { t: 'y', p: [0], v: 0 }];
+  const r = K.solveSketch(pts, cons, { w: 40 }); assert.ok(r.ok); assert.strictEqual(r.dof, 0);
+  [[0, 0], [40, 0], [40, 20], [0, 20]].forEach((q, i) => { near(r.pts[i][0], q[0], 1e-7); near(r.pts[i][1], q[1], 1e-7); });
+  const u = K.solveSketch(pts, cons.slice(0, 4), {}); assert.ok(u.ok); assert.strictEqual(u.dof, 4, 'H/V rectangle keeps 4 DOF');
+  const c = K.solveSketch([[0, 0], [10, 0], [5, 8]], [{ t: 'len', s: [0], v: 10 }, { t: 'len', s: [1], v: 10 }, { t: 'len', s: [2], v: 30 }], {}); assert.ok(!c.ok, 'triangle inequality violated → conflict');
+  // parallelogram: parallel sides + length + angle, fully constrained
+  const q = K.solveSketch([[0, 0], [28, 2], [33, 11], [3, 12]], [{ t: 'x', p: [0], v: 0 }, { t: 'y', p: [0], v: 0 }, { t: 'h', s: [0] }, { t: 'par', s: [0, 2] }, { t: 'par', s: [1, 3] }, { t: 'len', s: [0], v: 30 }, { t: 'len', s: [1], v: 12 }, { t: 'ang', s: [0, 1], v: 60, sg: 1 }], {});
+  assert.ok(q.ok, 'parallelogram solve'); assert.strictEqual(q.dof, 0); near(q.pts[2][0], 36, 1e-7); near(q.pts[2][1], 12 * Math.sin(Math.PI / 3), 1e-7);
+  // perpendicular + equal + point distances make a square
+  const sq = K.solveSketch([[0, 0], [9, 1], [10, 9], [1, 11]], [{ t: 'x', p: [0], v: 0 }, { t: 'y', p: [0], v: 0 }, { t: 'dy', p: [0, 1], v: 0, sg: 1 }, { t: 'dx', p: [0, 1], v: 10, sg: 1 }, { t: 'perp', s: [0, 1] }, { t: 'perp', s: [1, 2] }, { t: 'eq', s: [0, 1] }, { t: 'eq', s: [1, 2] }, { t: 'dist', p: [0, 2], v: Math.SQRT2 * 10 }], {});
+  assert.ok(sq.ok, 'square solve'); near(sq.pts[2][0], 10, 1e-7); near(sq.pts[2][1], 10, 1e-7); near(sq.pts[3][0], 0, 1e-7);
+  assert.throws(() => K.solveSketch(pts, [{ t: 'h', s: [9] }], {}), /missing point or line/); assert.throws(() => K.solveSketch(pts, [{ t: 'evil' }], {}), /Unknown sketch constraint/);
+  ok12('constraint solver: rectangle, parallelogram, square, DOF count, conflicts');
+}
+{ // sketch feature: parametric constrained profile with a rounded corner, extruded
+  const sk = { type: 'sketch', pts: [[0, 0], [38, 1], [41, 19], [1, 22]], cons: [{ t: 'h', s: [0] }, { t: 'h', s: [2] }, { t: 'v', s: [1] }, { t: 'v', s: [3] }, { t: 'len', s: [0], v: 'w' }, { t: 'len', s: [1], v: 20 }, { t: 'x', p: [0], v: 0 }, { t: 'y', p: [0], v: 0 }], fil: [null, null, 'rr', 0] };
+  const model = { params: [{ name: 'w', expr: '40' }, { name: 'rr', expr: '5' }], features: [{ type: 'extrude', p: { plane: 'XY', dist: 10, shapes: [sk] } }] };
+  const r = K.build(model); assert.ok(r.log[0].ok, JSON.stringify(r.log)); const k = Math.ceil((Math.PI / 2) / (Math.PI / 18));
+  near(K.volumeOf(r.solid), (800 - (25 - sector(5, Math.PI / 2, k))) * 10, 1e-9, 'rounded rectangle');
+  model.params[0].expr = '60'; near(K.volumeOf(K.build(model).solid), (1200 - (25 - sector(5, Math.PI / 2, k))) * 10, 1e-9, 'width follows parameter');
+  model.params[1].expr = '25'; const bad = K.build(model); assert.ok(!bad.log[0].ok && /radius too large/.test(bad.log[0].msg));
+  ok12('sketch feature: parametric constraints + corner fillet → extrude');
+}
+{ // edge fillet & chamfer: convex box edge (material removed) and concave L inside edge (material added)
+  const k = Math.ceil((Math.PI / 2) / (Math.PI / 24)), b = K.box(40, 30, 20), top = { a: [-20, 15, 20], b: [20, 15, 20] };
+  near(K.volumeOf(K.blendEdges(b, [top], 5, 'fillet')), 24000 - (25 - sector(5, Math.PI / 2, k)) * 40, 1e-9, 'convex fillet');
+  near(K.volumeOf(K.blendEdges(b, [top], 5, 'chamfer')), 24000 - 12.5 * 40, 1e-9, 'chamfer');
+  const L = K.box(40, 30, 10).union(K.place(K.box(40, 10, 30), { y: 10 }));
+  near(K.volumeOf(K.blendEdges(L, [{ a: [-20, 5, 10], b: [20, 5, 10] }], 4)) - K.volumeOf(L), (16 - sector(4, Math.PI / 2, k)) * 40, 1e-9, 'concave fillet');
+  // two edges, feature tree, slightly moved reference still matches the nearest parallel edge
+  const r = K.build({ params: [{ name: 'w', expr: '40' }], features: [{ type: 'box', p: { w: 'w', d: 30, h: 20 } }, { type: 'fillet', p: { kind: 'fillet', r: 3, edges: [top, { a: [-20, -15, 20], b: [20, -15, 20] }] } }] });
+  assert.ok(r.log.every(l => l.ok), JSON.stringify(r.log)); near(K.volumeOf(r.solid), 24000 - 2 * (9 - sector(3, Math.PI / 2, k)) * 40, 1e-9, 'two edges');
+  const r2 = K.build({ params: [{ name: 'w', expr: '50' }], features: [{ type: 'box', p: { w: 'w', d: 30, h: 20 } }, { type: 'fillet', p: { kind: 'chamfer', r: 2, edges: [top] } }] });
+  near(K.volumeOf(r2.solid), 30000 - 2 * 50, 1e-9, 'edge found after a parameter change');
+  const e1 = K.build({ features: [{ type: 'box', p: { w: 40, d: 30, h: 20 } }, { type: 'fillet', p: { r: 3, edges: [{ a: [0, 0, 500], b: [1, 1, 501] }] } }] });
+  assert.ok(!e1.log[1].ok && /no longer exists/.test(e1.log[1].msg), e1.log[1].msg);
+  const e2 = K.build({ features: [{ type: 'box', p: { w: 40, d: 30, h: 20 } }, { type: 'fillet', p: { r: 0, edges: [top] } }] }); assert.ok(!e2.log[1].ok);
+  const cyl = K.cylinder(10, 10, 32); assert.throws(() => K.blendEdges(cyl, [{ a: [10, 0, 0], b: [10, 0, 10] }], 1), /flat faces|no longer/);
+  ok12('edge fillet / chamfer: convex, concave, multiple edges, parametric re-match, errors');
+}
+{ // hole wizard: counterbored, countersunk, blind with drill point; on each sketch plane
+  const ng = (r, k) => k / 2 * r * r * Math.sin(2 * Math.PI / k), s = K.holeSpec('M6', 'cbore');
+  assert.deepStrictEqual([s.d, s.cd, s.cdep], [6.6, 11, 6.4]); assert.strictEqual(K.holeSpec('M6', 'tapped').d, 5);
+  const box = { type: 'box', p: { w: 40, d: 40, h: 10 } };
+  const cb = K.build({ features: [box, { type: 'hole', op: 'cut', p: { kind: 'cbore', d: s.d, cd: s.cd, cdep: s.cdep, plane: 'XY', offset: 10, pts: '0,0; 10,10' } }] });
+  assert.ok(cb.log.every(l => l.ok)); near(K.volumeOf(cb.solid), 16000 - 2 * (ng(3.3, 48) * 3.6 + ng(5.5, 48) * 6.4), 1e-9, 'counterbore');
+  const cs = K.build({ features: [box, { type: 'hole', op: 'cut', p: { kind: 'csink', d: 6.6, sd: 13.7, ang: 90, plane: 'XY', offset: 10, pts: '0,0' } }] });
+  const hs = (13.7 / 2 - 3.3), frust = 48 / 2 * Math.sin(2 * Math.PI / 48) * hs / 3 * (6.85 ** 2 + 6.85 * 3.3 + 3.3 ** 2);
+  near(K.volumeOf(cs.solid), 16000 - ng(3.3, 48) * (10 - hs) - frust, 1e-9, 'countersink');
+  const bl = K.build({ features: [box, { type: 'hole', op: 'cut', p: { kind: 'simple', d: 5, depth: 6, plane: 'XY', offset: 10, pts: '0,0' } }] });
+  near(K.volumeOf(bl.solid), 16000 - ng(2.5, 48) * 6 - ng(2.5, 48) * (2.5 / Math.tan(59 * Math.PI / 180)) / 3, 1e-9, 'blind hole with 118° drill point');
+  // side face: XZ plane through the front face y = -20 drilling 8 deep toward +Y (flip, because +w is −Y on XZ)
+  const side = K.build({ features: [box, { type: 'hole', op: 'cut', p: { kind: 'simple', d: 4, depth: 8, plane: 'XZ', offset: 20, flip: false, pts: '0,5' } }] });
+  near(K.volumeOf(side.solid), 16000 - ng(2, 48) * 8 - ng(2, 48) * (2 / Math.tan(59 * Math.PI / 180)) / 3, 1e-9, 'side hole');
+  const nf = K.build({ features: [box, { type: 'hole', op: 'cut', p: { d: 4, pts: '' } }] }); assert.ok(!nf.log[1].ok && /No hole positions/.test(nf.log[1].msg));
+  ok12('hole wizard: counterbore, countersink, blind drill point, side face, validation');
+}
+{ // watertight export: welding removes every T-junction; 3MF zip and STEP faceted B-rep
+  const s = K.build({ features: [{ type: 'box', p: { w: 40, d: 40, h: 10 } }, { type: 'hole', op: 'cut', p: { kind: 'cbore', d: 6.6, cd: 11, cdep: 6.4, offset: 10, pts: '0,0; 10,10' } }, { type: 'fillet', p: { r: 2, edges: [{ a: [-20, 20, 10], b: [20, 20, 10] }] } }] }).solid;
+  const open = sol => { const c = new Map(), key = v => v.join(','); sol.polys.forEach(p => p.v.forEach((v, i) => { const k = key(v) + '>' + key(p.v[(i + 1) % p.v.length]); c.set(k, (c.get(k) || 0) + 1); })); let bad = 0; c.forEach((n, k) => { const [a, b] = k.split('>'); if ((c.get(b + '>' + a) || 0) !== n) bad++; }); return bad; };
+  assert.ok(open(s) > 0, 'raw BSP output has T-junctions'); assert.strictEqual(open(K.weld(s)), 0, 'welded mesh is closed');
+  const m = K.indexedMesh(s); let vol = 0; m.tris.forEach(([a, b, c]) => vol += K.V.dot(m.verts[a], K.V.cross(m.verts[b], m.verts[c])) / 6); near(vol, K.volumeOf(s), 1e-9, 'indexed mesh volume');
+  const em = new Map(); m.tris.forEach(t => t.forEach((a, i) => { const k = a + '>' + t[(i + 1) % 3]; em.set(k, (em.get(k) || 0) + 1); })); let unp = 0; em.forEach((n, k) => { const [a, b] = k.split('>'); if (em.get(b + '>' + a) !== n) unp++; }); assert.strictEqual(unp, 0, 'every triangle edge has a twin');
+  const z = K.to3MF(s, { name: 'A & B' }), dv = new DataView(z.buffer);
+  assert.strictEqual(dv.getUint32(0, true), 0x04034b50); const eocd = z.length - 22; assert.strictEqual(dv.getUint32(eocd, true), 0x06054b50); assert.strictEqual(dv.getUint16(eocd + 10, true), 3);
+  const txt = new TextDecoder().decode(z); assert.ok(/<model unit="millimeter"/.test(txt) && /A &amp; B/.test(txt)); assert.strictEqual((txt.match(/<triangle /g) || []).length, m.tris.length);
+  let p = 0, files = 0; while (dv.getUint32(p, true) === 0x04034b50) { const crc = dv.getUint32(p + 14, true), size = dv.getUint32(p + 18, true), nl = dv.getUint16(p + 26, true); assert.strictEqual(K.crc32(z.subarray(p + 30 + nl, p + 30 + nl + size)), crc); p += 30 + nl + size; files++; } assert.strictEqual(files, 3);
+  assert.strictEqual(K.crc32(new TextEncoder().encode('123456789')), 0xCBF43926);
+  const st = K.toSTEP(s, { name: "Bob's part" }), ids = new Set(), refs = [];
+  assert.ok(st.startsWith('ISO-10303-21;') && /END-ISO-10303-21;\s*$/.test(st) && /'Bob''s part'/.test(st));
+  st.split('\n').forEach(l => { const mm = /^#(\d+)=/.exec(l); if (mm) { ids.add(+mm[1]); (l.slice(mm[0].length).match(/#\d+/g) || []).forEach(r => refs.push(+r.slice(1))); } });
+  assert.ok(refs.every(r => ids.has(r)), 'every STEP reference resolves');
+  const faces = (st.match(/FACE_SURFACE\(/g) || []).length; assert.strictEqual(faces, K.weld(s).polys.length); assert.ok(/CLOSED_SHELL/.test(st) && /SI_UNIT\(\.MILLI\.,\.METRE\.\)/.test(st));
+  assert.ok(!/\d\.\d*e/i.test(st.replace(/1\.E-05/, '')), 'no exponent-format reals');
+  ok12('watertight 3MF (zip CRCs, triangle twins) and STEP faceted B-rep (refs resolve, ' + faces + ' faces)');
+}
+console.log('v1.2 checks passed');
+{ // boolean fast paths, the v1.2 sample, and interior angles
+  const a = K.box(10, 10, 10), b = K.place(K.box(10, 10, 10), { x: 30 }), c = K.place(K.box(10, 10, 10), { x: 10 });
+  near(K.volumeOf(a.union(b)), 2000); near(K.volumeOf(a.subtract(b)), 1000); near(K.volumeOf(a.intersect(b)), 0);
+  near(K.volumeOf(a.union(c)), 2000, 1e-9, 'touching boxes still fuse'); assert.strictEqual(K.featureEdges(a.union(c)).length, 12, 'fused seam disappears');
+  const S = require('../js/sample.js').sampleCad(), r = K.build(S); assert.ok(r.log.every(l => l.ok), JSON.stringify(r.log));
+  const m = K.massProps(r.solid); near(m.size[0], 80); near(m.size[2], 55);
+  // triangle with a 60° interior angle at P2 between L1 (P1→P2) and L2 (P2→P3)
+  const t = K.solveSketch([[0, 0], [20, 1], [12, 15]], [{ t: 'x', p: [0], v: 0 }, { t: 'y', p: [0], v: 0 }, { t: 'h', s: [0] }, { t: 'len', s: [0], v: 20 }, { t: 'len', s: [1], v: 20 }, { t: 'ang', s: [0, 1], v: 60, sg: -1, ra: true }], {});
+  assert.ok(t.ok); assert.strictEqual(t.dof, 0); near(t.pts[2][0], 10, 1e-7); near(t.pts[2][1], 20 * Math.sin(Math.PI / 3), 1e-7);
+  console.log('ok bbox fast paths, sample v1.2 builds, interior angle constraint');
+}
+{ // a v1 part file (no sketches, fillets or holes) still builds identically
+  const v1 = { params: [{ name: 'w', expr: '80' }], features: [{ name: 'Base', type: 'box', op: 'add', p: { w: 'w', d: 50, h: 8 } }, { name: 'Holes', type: 'cylinder', op: 'cut', mirror: 'X', p: { r: 3, h: 24, px: 31, pz: -8 } }] };
+  near(K.volumeOf(K.build(v1).solid), 80 * 50 * 8 - 2 * 32 * 9 * Math.sin(2 * Math.PI / 64) * 8);
+  console.log('ok v1 files still build');
+}

@@ -14,6 +14,7 @@ async function buildLpaint() {
   const enc = new TextEncoder();
   const ser = list => list.map(L => {
     const o = { id: L.id, type: L.type, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, lockAlpha: L.lockAlpha, clip: L.clip };
+    if (L.ref) o.ref = true;
     if (L.type === 'fill') o.color = L.color.slice();
     if (L.type === 'group') { o.open = L.open; o.children = ser(L.children); }
     if (L.type === 'pixel') o.file = 'layers/' + L.id + '.png';
@@ -58,7 +59,7 @@ async function loadLpaint(buf, name, path) {
       const L = new Layer(type, String(o.name ?? 'Layer').slice(0, 120), w, h);
       if (typeof o.id === 'string' && /^[\w-]{1,40}$/.test(o.id)) L.id = o.id;
       L.visible = o.visible !== false; L.opacity = clamp(+o.opacity, 0, 1); if (!Number.isFinite(L.opacity)) L.opacity = 1;
-      L.blend = BLEND_IDX[o.blend] != null || (type === 'group' && o.blend === 'pass-through') ? o.blend : 'normal'; L.lockAlpha = !!o.lockAlpha; L.clip = !!o.clip;
+      L.blend = BLEND_IDX[o.blend] != null || (type === 'group' && o.blend === 'pass-through') ? o.blend : 'normal'; L.lockAlpha = !!o.lockAlpha; L.clip = !!o.clip; L.ref = o.ref === true && type !== 'fill';
       if (type === 'fill' && Array.isArray(o.color)) L.color = [0, 1, 2].map(i => clamp(+o.color[i] || 0, 0, 1));
       if (type === 'group') { L.open = o.open !== false; L.children = build(o.children, depth + 1); }
       if (type === 'pixel') {

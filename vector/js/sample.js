@@ -100,6 +100,10 @@
     const ticket = LV.live.rect(new P.Rectangle(250, 712, 300, 44), 22); ticket.name = 'Ticket (live shape)';
     paint(ticket, null, '#ffd36e', 1.5); ticket.data.fx = { extra: [{ kind: 'stroke', paint: 'rgba(255,211,110,0.25)', width: 9, opacity: 1, above: false, on: true }] };
     add(Ltype, ticket);
+    /* ---------- v1.2 showcase: a radial Repeat of rays around the emblem, an Arc-warped wordmark ---------- */
+    const ray = paint(new P.Path.Rectangle({ rectangle: [398, 86, 4, 20], radius: 2, insert: false, name: 'Ray' }), 'rgba(255,211,110,0.75)');
+    add(Lart, ray); LV.repeat.make('radial', [ray]); const rays = LV.sel[0]; LV.repeat.setOptions(rays, { count: 40, radius: 234 }, null); rays.name = 'Rays (radial repeat)'; LV.repeat.last = null;
+    const wm = Ltype.children.find(c => c.name === 'Wordmark'); LV.warp.make({ style: 'arc', bend: 9, dh: 0, dv: 0 }, [wm]).name = 'Wordmark (arc warp)';
     add(Ltype, text(new P.Point(400, 740), 'EST. 2026', { family: 'Inter', weight: 700, size: 16, tracking: 400 }, '#ffd36e', 'Ticket text'));
 
     Ltype.activate();

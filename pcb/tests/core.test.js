@@ -126,3 +126,137 @@ t('copper pour joins its net, keeps clearance, and is exported as Gerber regions
   assert.ok(!Core.drc(b, nl.pinNet).some(e => e.type === 'Short' || e.type === 'Clearance'));
 });
 console.log('(copper pour test appended)');
+
+// ---------- v1.2: autorouter, net classes, length report, pick-and-place, IPC-D-356 ----------
+const Route = require('../js/autoroute.js');
+const hardErrors = errs => errs.filter(e => e.type !== 'Unrouted');
+t('autorouter routes every net of the sample board with a clean DRC', () => {
+  const p = samplePcb(), nl = Core.netlist(p.sch), b = p.board;
+  const r = Route.autoroute(b, nl.pinNet, { width: 0.3 });
+  assert.strictEqual(r.failed.length, 0); assert.strictEqual(r.routed.length, r.connections);
+  assert.ok(r.tracks.length > 5 && r.tracks.every(t => t.auto && t.w === 0.3 && t.pts.length >= 2 && (t.layer === 'top' || t.layer === 'bottom')));
+  // every via sits where tracks of the same net on both layers meet
+  r.vias.forEach(v => ['top', 'bottom'].forEach(l => assert.ok(r.tracks.some(t => t.net === v.net && t.layer === l && t.pts.slice(1).some((q, i) => Core.gap({ core: [t.pts[i], q], r: 0 }, { core: [[v.x, v.y]], r: 0 }) < 1e-6)), 'via joins ' + l)));
+  // all moves are horizontal, vertical or 45° (apart from tiny jogs onto pad centres)
+  r.tracks.forEach(t => t.pts.slice(1).forEach((q, i) => { const dx = Math.abs(q[0] - t.pts[i][0]), dy = Math.abs(q[1] - t.pts[i][1]); assert.ok(dx < 1e-6 || dy < 1e-6 || Math.abs(dx - dy) < 1e-6 || Math.hypot(dx, dy) < 0.2, `segment angle ${dx},${dy}`); }));
+  b.tracks.push(...r.tracks); b.vias.push(...r.vias);
+  assert.strictEqual(Core.ratsnest(b, nl.pinNet).unroutedNets, 0);
+  assert.deepStrictEqual(hardErrors(Core.drc(b, nl.pinNet)), []);
+  assert.strictEqual(Route.unroute(b, { nets: ['GND'], autoOnly: true }) > 0, true);
+  assert.ok(!b.tracks.some(t => t.net === 'GND') && Core.ratsnest(b, nl.pinNet).unroutedNets === 1);
+});
+
+t('autorouter on one layer without vias goes around obstacles, and reports what it cannot route', () => {
+  const b = { w: 30, h: 20, rules: { clearance: 0.2, track: 0.2, drill: 0.3, edge: 0.3, viaDia: 0.8, viaDrill: 0.4 }, tracks: [], vias: [], parts: [
+    { ref: 'J1', fp: 'Header_1x2', x: 5, y: 10, rot: 0, side: 'top' }, { ref: 'J2', fp: 'Header_1x2', x: 25, y: 10, rot: 0, side: 'top' }] };
+  const pinNet = new Map([['J1.1', 'A'], ['J2.1', 'A'], ['J1.2', 'B'], ['J2.2', 'B']]);
+  // a wall of foreign copper across the board on top, with a gap at the bottom edge
+  b.tracks.push({ layer: 'top', w: 1, net: 'WALL', pts: [[15, 1], [15, 16]] });
+  const r = Route.autoroute(b, pinNet, { layers: ['top'], width: 0.25 });
+  assert.strictEqual(r.failed.length, 0); assert.strictEqual(r.vias.length, 0);
+  assert.ok(r.tracks.every(t => t.layer === 'top'));
+  b.tracks.push(...r.tracks);
+  assert.deepStrictEqual(hardErrors(Core.drc(b, pinNet)), []);
+  assert.ok(r.tracks.some(t => t.pts.some(q => q[1] > 16)), 'detours below the wall');
+  // close the gap completely: now nothing can get through on one layer
+  const b2 = JSON.parse(JSON.stringify(b)); b2.tracks = [{ layer: 'top', w: 1, net: 'WALL', pts: [[15, 1], [15, 19]] }];
+  const r2 = Route.autoroute(b2, pinNet, { layers: ['top'], passes: 1 });
+  assert.strictEqual(r2.failed.length, 2); assert.strictEqual(r2.tracks.length, 0);
+  // with both layers it gets past the wall on the bottom
+  const r3 = Route.autoroute(b2, pinNet, {}); assert.strictEqual(r3.failed.length, 0);
+  b2.tracks.push(...r3.tracks); b2.vias.push(...r3.vias); assert.deepStrictEqual(hardErrors(Core.drc(b2, pinNet)), []);
+  // SMD pads (top only) behind a full-height wall on both layers' top: needs vias
+  const b3 = { w: 30, h: 20, rules: b.rules, tracks: [{ layer: 'top', w: 1, net: 'WALL', pts: [[15, 1], [15, 19]] }], vias: [], parts: [
+    { ref: 'R1', fp: 'R_0805', x: 5, y: 10, rot: 0, side: 'top' }, { ref: 'R2', fp: 'R_0805', x: 25, y: 10, rot: 0, side: 'top' }] };
+  const pn3 = new Map([['R1.2', 'S'], ['R2.1', 'S']]);
+  const r4 = Route.autoroute(b3, pn3, {}); assert.strictEqual(r4.failed.length, 0); assert.ok(r4.vias.length >= 2, 'down and back up');
+  b3.tracks.push(...r4.tracks); b3.vias.push(...r4.vias); assert.deepStrictEqual(hardErrors(Core.drc(b3, pn3)), []);
+  assert.strictEqual(Route.autoroute(b3, pn3, { vias: false }).failed.length, 0, 'nothing left to route');
+  b3.tracks = b3.tracks.slice(0, 1); b3.vias = [];
+  assert.strictEqual(Route.autoroute(b3, pn3, { vias: false, passes: 1 }).failed.length, 1, 'no vias allowed → blocked');
+});
+
+t('autorouter: larger board with 30 DIP-14s and multi-pin nets routes completely and DRC-clean', () => {
+  const b = { w: 100, h: 125, rules: { clearance: 0.2, track: 0.2, drill: 0.3, edge: 0.3, viaDia: 0.8, viaDrill: 0.4 }, tracks: [], vias: [], parts: [] }, pn = new Map();
+  let k = 0; for (let i = 0; i < 5; i++) for (let j = 0; j < 6; j++) b.parts.push({ ref: 'U' + ++k, fp: 'DIP_14', x: 10 + i * 19, y: 12 + j * 20, rot: 0, side: 'top' });
+  let s = 7; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  for (let n = 0; n < 10; n++) for (let q = 0; q < 3; q++) { const key = 'U' + (1 + Math.floor(rnd() * 30)) + '.' + (1 + Math.floor(rnd() * 14)); if (!pn.has(key)) pn.set(key, 'N' + n); }
+  const r = Route.autoroute(b, pn, {});
+  assert.strictEqual(r.failed.length, 0, r.failed.length + ' failed'); assert.ok(r.connections >= 15, r.connections + " connections");
+  b.tracks.push(...r.tracks); b.vias.push(...r.vias);
+  assert.strictEqual(Core.ratsnest(b, pn).unroutedNets, 0); assert.deepStrictEqual(hardErrors(Core.drc(b, pn)), []);
+});
+
+t('net classes: per-class width and clearance in DRC, pours and the autorouter', () => {
+  const p = samplePcb(), nl = Core.netlist(p.sch), b = p.board;
+  b.netClasses = Core.sanitizeClasses([{ name: 'Power', nets: ['+5V', 'GND', 'GND'], width: 0.6, clearance: 0.35 }, { name: 'Default', nets: ['OUT'] }, { name: '', nets: [] }, { name: 'Bad', width: 'x', clearance: -1, nets: [5, 'GND'] }]);
+  assert.deepStrictEqual(b.netClasses.map(c => c.name), ['Power', 'Bad']);
+  assert.deepStrictEqual(b.netClasses[1].nets, []); assert.strictEqual(b.netClasses[1].width, undefined);
+  assert.strictEqual(Core.classOf(b, 'GND').width, 0.6); assert.strictEqual(Core.classOf(b, 'OUT').clearance, 0.2); assert.strictEqual(Core.classOf(b, null).name, 'Default');
+  // a 0.3 mm GND track breaks the class width rule; a THR track 0.3 mm from a GND pad breaks the class clearance (0.35)
+  const g1 = pad(b, 'U1', '1');
+  b.tracks.push({ layer: 'top', w: 0.3, net: 'GND', pts: [[g1.x, g1.y], [g1.x - 3, g1.y]] });
+  assert.ok(Core.drc(b, nl.pinNet).some(e => e.type === 'Track width' && /class Power/.test(e.msg)));
+  b.tracks[0].w = 0.6;
+  const off = 0.8 + 0.3 + 0.125; b.tracks.push({ layer: 'bottom', w: 0.25, net: 'THR', pts: [[g1.x - 2, g1.y + off], [g1.x + 2, g1.y + off]] });
+  const cl = Core.drc(b, nl.pinNet).filter(e => e.type === 'Clearance');
+  assert.ok(cl.length && /min 0\.35/.test(cl[0].msg), JSON.stringify(cl));
+  b.netClasses = []; assert.ok(!Core.drc(b, nl.pinNet).some(e => e.type === 'Clearance'), 'fine under the default 0.2 mm');
+  // autorouter uses the class width for power nets and still produces a clean board
+  const q = samplePcb(), qb = q.board; qb.netClasses = [{ name: 'Power', nets: ['+5V', 'GND'], width: 0.5, clearance: 0.3 }];
+  const r = Route.autoroute(qb, nl.pinNet, { width: 0.25 }); assert.strictEqual(r.failed.length, 0);
+  assert.ok(r.tracks.filter(t => t.net === 'GND' || t.net === '+5V').every(t => t.w === 0.5) && r.tracks.filter(t => t.net === 'OUT').every(t => t.w === 0.25));
+  qb.tracks.push(...r.tracks); qb.vias.push(...r.vias); assert.deepStrictEqual(hardErrors(Core.drc(qb, nl.pinNet)), []);
+  // a pour keeps the larger class clearance from Power-class copper of other nets
+  qb.zones = [{ net: 'THR', layer: 'bottom', clearance: 0.2 }];
+  const f = Core.fillZone(qb, qb.zones[0], nl.pinNet), others = Core.copper(qb, nl.pinNet).filter(it => it.layers.includes('bottom') && (it.net === 'GND' || it.net === '+5V'));
+  let worst = Infinity; for (let j = 0; j < f.ny; j += 2) for (let i = 0; i < f.nx; i += 2) { if (f.grid[j * f.nx + i] <= 0) continue; const c = { core: [[(i + 0.5) * f.res, (j + 0.5) * f.res]], r: 0 }; others.forEach(o => { worst = Math.min(worst, Core.gap(o, c)); }); }
+  assert.ok(worst >= 0.3 - 1e-9, 'pour keeps 0.3 from Power copper: ' + worst);
+});
+
+t('net length report and length matching per class', () => {
+  const p = samplePcb(), nl = Core.netlist(p.sch), b = p.board;
+  const a = pad(b, 'R3', '2'), d = pad(b, 'D1', '2');
+  b.tracks.push({ layer: 'top', w: 0.4, net: 'LED_A', pts: [[a.x, a.y], [a.x + 3, a.y]] }, { layer: 'bottom', w: 0.4, net: null, pts: [[a.x + 3, a.y], [a.x + 3, d.y], [d.x, d.y]] });
+  b.vias.push({ x: a.x + 3, y: a.y, dia: 0.8, drill: 0.4, net: 'LED_A' });
+  const rows = Core.netLengths(b, nl.pinNet), led = rows.find(r => r.net === 'LED_A');
+  assert.strictEqual(+led.top.toFixed(4), 3); assert.strictEqual(+led.bottom.toFixed(4), +(Math.abs(d.x - a.x - 3) + Math.abs(d.y - a.y)).toFixed(4));
+  assert.strictEqual(led.vias, 1); assert.strictEqual(led.open, 0); assert.strictEqual(led.pads, 2);
+  const gnd = rows.find(r => r.net === 'GND'); assert.strictEqual(gnd.length, 0); assert.strictEqual(gnd.open, 4);
+  assert.strictEqual(+gnd.delta.toFixed(4), +led.length.toFixed(4));     // all Default class: delta to the longest
+  assert.strictEqual(led.delta, 0);
+});
+
+t('pick-and-place centroid file', () => {
+  const p = samplePcb(), b = p.board;
+  b.parts.push({ ref: 'R10', fp: 'R_0805', x: 20, y: 5, rot: 90, side: 'bottom' });
+  const csv = Core.placement(p.sch, b).trim().split('\r\n');
+  assert.strictEqual(csv[0], 'Designator,Value,Package,Mid X,Mid Y,Rotation,Layer');
+  assert.strictEqual(csv.length, b.parts.length + 1);
+  assert.ok(csv.findIndex(l => l.startsWith('R10,')) > csv.findIndex(l => l.startsWith('R3,')), 'natural sort');
+  const u1 = csv.find(l => l.startsWith('U1,')).split(','); assert.deepStrictEqual(u1, ['U1', 'NE555', 'DIP_8', '30.0000', '20.0000', '0.0', 'Top']);
+  const r10 = csv.find(l => l.startsWith('R10,')).split(','); assert.deepStrictEqual(r10.slice(3), ['20.0000', '35.0000', '270.0', 'Bottom']);
+  const d1 = csv.find(l => l.startsWith('D1,')).split(','); assert.strictEqual(d1[5], '270.0');   // 90° clockwise on screen = 270° CCW
+});
+
+t('IPC-D-356A netlist has fixed-column records for every pad and via', () => {
+  const p = samplePcb(), nl = Core.netlist(p.sch), b = p.board;
+  b.parts.push({ ref: 'R10', fp: 'R_0805', x: 20, y: 5, rot: 0, side: 'top' });
+  b.vias.push({ x: 10, y: 10, dia: 0.8, drill: 0.4, net: 'A_VERY_LONG_NET_NAME_X' });
+  const txt = Core.ipc356(b, nl.pinNet, 'blink'), L = txt.trim().split('\n');
+  assert.ok(L.includes('P  UNITS CUST 0') && L[L.length - 1] === '999');
+  const recs = L.filter(l => /^3[12]7/.test(l));
+  const padCount = b.parts.reduce((s, fp) => s + Core.padsOf(fp).length, 0); assert.strictEqual(recs.length, padCount + 1);
+  recs.forEach(l => assert.ok(l.length <= 80, l));
+  const u1 = recs.find(l => l.slice(20, 26).trim() === 'U1' && l.slice(27, 31).trim() === '8');
+  assert.strictEqual(u1.slice(0, 3), '317'); assert.strictEqual(u1.slice(3, 17).trim(), '+5V');
+  assert.strictEqual(u1[26], '-'); assert.strictEqual(u1.slice(32, 38), 'D0315P');   // 0.8 mm = 0.0315 in, plated
+  assert.strictEqual(u1.slice(38, 41), 'A00');
+  const pu = pad(b, 'U1', '8'); assert.strictEqual(u1.slice(41, 57), 'X+' + String(Math.round(pu.x / 0.00254)).padStart(6, '0') + 'Y+' + String(Math.round((b.h - pu.y) / 0.00254)).padStart(6, '0'));
+  const smd = recs.find(l => l.slice(20, 26).trim() === 'R10'); assert.ok(smd.startsWith('327N/C') && smd.slice(38, 41) === 'A01');
+  const via = recs.find(l => l.slice(20, 26).trim() === 'VIA'); assert.ok(/^317NNAME1/.test(via) && L.includes('P  NNAME1 A_VERY_LONG_NET_NAME_X'));
+  // the fab zip now carries both files
+  const files = Core.fabFiles(b, 'blink', nl.pinNet, p.sch).map(f => f.name);
+  assert.ok(files.includes('blink-netlist.ipc') && files.includes('blink-pos.csv') && files.length === 9);
+});
+console.log(`\nall ${n} tests passed`);

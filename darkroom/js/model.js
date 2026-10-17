@@ -7,10 +7,10 @@ const Model = (() => {
 
   function defaults() {
     return {
-      v: 2,
+      v: 3,
       wb: { temp: 0, tint: 0 }, exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0,
       texture: 0, clarity: 0, dehaze: 0, vibrance: 0, saturation: 0, bw: false,
-      curve: { rgb: [[0, 0], [1, 1]], r: [[0, 0], [1, 1]], g: [[0, 0], [1, 1]], b: [[0, 0], [1, 1]] },
+      curve: { rgb: [[0, 0], [1, 1]], r: [[0, 0], [1, 1]], g: [[0, 0], [1, 1]], b: [[0, 0], [1, 1]] }, pcurve: { ...Tonal.PC_DEFAULT },
       hsl: { hue: [0, 0, 0, 0, 0, 0, 0, 0], sat: [0, 0, 0, 0, 0, 0, 0, 0], lum: [0, 0, 0, 0, 0, 0, 0, 0] },
       grade: { sh: { h: 220, s: 0, l: 0 }, mid: { h: 40, s: 0, l: 0 }, hi: { h: 45, s: 0, l: 0 }, blend: 50, bal: 0 },
       sharpen: { amount: 25, radius: 1, detail: 25, mask: 0 }, nr: { lum: 0, color: 20 },
@@ -18,6 +18,7 @@ const Model = (() => {
       crop: { x: 0, y: 0, w: 1, h: 1, angle: 0, rot: 0, flipH: false, flipV: false, aspect: 'original' },
       lens: { dist: 0, vig: 0, vigMid: 50, caR: 0, caB: 0, fringeP: 0, fringeG: 0 },
       upright: { vert: 0, horiz: 0, rotate: 0, aspect: 0, scale: 100, x: 0, y: 0, f: 1, constrain: true },
+      calib: { ...Tonal.CAL_DEFAULT },
       spots: [], masks: []
     };
   }
@@ -45,7 +46,7 @@ const Model = (() => {
     tone: { label: 'Exposure & tone', keys: ['exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks'] },
     presence: { label: 'Presence', keys: ['texture', 'clarity', 'dehaze', 'vibrance', 'saturation'] },
     treatment: { label: 'Treatment (B&W)', keys: ['bw'] },
-    curve: { label: 'Tone curve', keys: ['curve'] },
+    curve: { label: 'Tone curve', keys: ['curve', 'pcurve'] },
     hsl: { label: 'HSL / Color', keys: ['hsl'] },
     grade: { label: 'Color grading', keys: ['grade'] },
     detail: { label: 'Detail (sharpen, noise)', keys: ['sharpen', 'nr'] },
@@ -54,7 +55,8 @@ const Model = (() => {
     lens: { label: 'Lens corrections', keys: ['lens'] },
     transform: { label: 'Transform (upright)', keys: ['upright'] },
     spots: { label: 'Spot removal', keys: ['spots'] },
-    masks: { label: 'Masks (local adjustments)', keys: ['masks'] }
+    masks: { label: 'Masks (local adjustments)', keys: ['masks'] },
+    calib: { label: 'Calibration', keys: ['calib'] }
   };
   function pick(s, groups) { const o = {}; groups.forEach(g => GROUPS[g].keys.forEach(k => o[k] = clone(s[k]))); return o; }
   function applyPartial(s, part) { const o = clone(s); Object.keys(part).forEach(k => { if (k in o) o[k] = clone(part[k]); }); return sanitizeSettings(o); }
@@ -101,6 +103,7 @@ const Model = (() => {
     ['contrast', 'highlights', 'shadows', 'whites', 'blacks', 'texture', 'clarity', 'dehaze', 'vibrance', 'saturation'].forEach(k => r[k] = num(s[k], -100, 100, 0));
     r.bw = !!s.bw;
     ['rgb', 'r', 'g', 'b'].forEach(k => r.curve[k] = pts(s.curve?.[k], d.curve[k]));
+    r.pcurve = Tonal.sanitizePCurve(s.pcurve); r.calib = Tonal.sanitizeCalib(s.calib);
     r.hsl = { hue: arr8(s.hsl?.hue), sat: arr8(s.hsl?.sat), lum: arr8(s.hsl?.lum) };
     ['sh', 'mid', 'hi'].forEach(k => r.grade[k] = { h: num(s.grade?.[k]?.h, 0, 360, d.grade[k].h), s: num(s.grade?.[k]?.s, 0, 100, 0), l: num(s.grade?.[k]?.l, -100, 100, 0) });
     r.grade.blend = num(s.grade?.blend, 0, 100, 50); r.grade.bal = num(s.grade?.bal, -100, 100, 0);
@@ -159,12 +162,18 @@ const Model = (() => {
       importId: str(p.importId, 40), rating: Math.round(num(p.rating, 0, 5, 0)), flag: Math.round(flag), label: typeof p.label === 'string' && Object.hasOwn(LABELS, p.label) ? p.label : '',
       keywords: Array.isArray(p.keywords) ? [...new Set(p.keywords.map(k => str(k, 60).trim()).filter(Boolean))].slice(0, 100) : [],
       exif: sanitizeExif(p.exif), copyName: str(p.copyName, 60), settings: sanitizeSettings(p.settings), edited: num(p.edited, 0, 1e14, 0),
-      history: [], hi: 0
+      history: [], hi: 0, snapshots: []
     };
     if (Array.isArray(p.history)) o.history = p.history.slice(-100).map(h => ({ label: str(h?.label, 80) || 'Edit', s: sanitizeSettings(h?.s), t: num(h?.t, 0, 1e14, 0) }));
     if (!o.history.length) o.history = [{ label: 'Import', s: clone(o.settings), t: o.added }];
     o.hi = Math.round(num(p.hi, 0, o.history.length - 1, o.history.length - 1));
+    if (Array.isArray(p.snapshots)) o.snapshots = p.snapshots.slice(0, 500).map(sanitizeSnapshot).filter(Boolean).slice(0, MAX_SNAPS);
     return o;
+  }
+  const MAX_SNAPS = 50;
+  function sanitizeSnapshot(n) {
+    if (!n || typeof n !== 'object') return null;
+    return { id: sid(n.id), name: str(n.name, 80).trim() || 'Snapshot', s: sanitizeSettings(n.s), t: num(n.t, 0, 1e14, 0) };
   }
   function sanitizePreset(p) {
     if (!p || typeof p !== 'object') return null;
@@ -209,7 +218,7 @@ const Model = (() => {
   }
 
   // a human label for what changed between two settings objects (history entries)
-  const NAMES = { exposure: 'Exposure', contrast: 'Contrast', highlights: 'Highlights', shadows: 'Shadows', whites: 'Whites', blacks: 'Blacks', texture: 'Texture', clarity: 'Clarity', dehaze: 'Dehaze', vibrance: 'Vibrance', saturation: 'Saturation', bw: 'Treatment', wb: 'White balance', curve: 'Tone curve', hsl: 'Color mixer', grade: 'Color grading', sharpen: 'Sharpening', nr: 'Noise reduction', vignette: 'Vignette', grain: 'Grain', crop: 'Crop', lens: 'Lens corrections', upright: 'Transform', spots: 'Spot removal', masks: 'Masks' };
+  const NAMES = { exposure: 'Exposure', contrast: 'Contrast', highlights: 'Highlights', shadows: 'Shadows', whites: 'Whites', blacks: 'Blacks', texture: 'Texture', clarity: 'Clarity', dehaze: 'Dehaze', vibrance: 'Vibrance', saturation: 'Saturation', bw: 'Treatment', wb: 'White balance', curve: 'Tone curve', pcurve: 'Parametric curve', calib: 'Calibration', hsl: 'Color mixer', grade: 'Color grading', sharpen: 'Sharpening', nr: 'Noise reduction', vignette: 'Vignette', grain: 'Grain', crop: 'Crop', lens: 'Lens corrections', upright: 'Transform', spots: 'Spot removal', masks: 'Masks' };
   function diffLabel(a, b) {
     const ch = Object.keys(NAMES).filter(k => JSON.stringify(a[k]) !== JSON.stringify(b[k]));
     if (!ch.length) return null;
@@ -217,5 +226,5 @@ const Model = (() => {
     return ch.map(k => { const v = b[k]; return typeof v === 'number' ? `${NAMES[k]} ${v > 0 ? '+' : ''}${k === 'exposure' ? v.toFixed(2) : Math.round(v)}` : NAMES[k]; }).join(', ');
   }
 
-  return { SMART, LOCAL, MAX_MASKS, MAX_SPOTS, newMask, sanitizeMask, sanitizeSpot, BANDS, BAND_COLORS, LABELS, GROUPS, BUILTIN, defaults, clone, isDefault, isCropDefault, pick, applyPartial, presetApply, sanitizeSettings, sanitizePhoto, sanitizePreset, sanitizeCollection, sanitizeExif, diffLabel };
+  return { SMART, LOCAL, MAX_MASKS, MAX_SPOTS, newMask, sanitizeMask, sanitizeSpot, BANDS, BAND_COLORS, LABELS, GROUPS, BUILTIN, defaults, clone, isDefault, isCropDefault, pick, applyPartial, presetApply, sanitizeSettings, sanitizePhoto, sanitizeSnapshot, MAX_SNAPS, sanitizePreset, sanitizeCollection, sanitizeExif, diffLabel };
 })();

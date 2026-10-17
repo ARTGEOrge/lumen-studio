@@ -448,8 +448,28 @@ async function handleFiles(files) {
 }
 
 /* ---------- edit commands ---------- */
-async function doUndo() { if (S.module === 'develop' && Dev.undo()) return; if (!await Cat.undo()) Aero.toast('Nothing to undo'); }
-async function doRedo() { if (S.module === 'develop' && Dev.redo()) return; if (!await Cat.redo()) Aero.toast('Nothing to redo'); }
+// in Develop, snapshot create/rename/delete steps of the active photo interleave with its edit history by time
+// (redo follows the order of the undos, remembered per photo)
+const undoOrder = new Map();
+function snapFirst(redo) {
+  const p = activePhoto(), a = redo ? Cat.topRedo() : Cat.topUndo(); if (!p || !a || a.snap !== p.id || Dev.cropMode) return false;
+  if (!redo) return a.t >= (p.history[p.hi]?.t || 0) || p.hi <= 0;
+  const o = undoOrder.get(p.id) || []; return p.hi >= p.history.length - 1 || o[o.length - 1] === 'snap';
+}
+async function doUndo() {
+  const dev = S.module === 'develop', p = activePhoto(), o = p ? (undoOrder.get(p.id) || undoOrder.set(p.id, []).get(p.id)) : null;
+  if (dev && !snapFirst(false) && Dev.undo()) { o?.push('hist'); return; }
+  const snap = dev && Cat.topUndo()?.snap === p?.id;
+  if (!await Cat.undo()) return Aero.toast('Nothing to undo');
+  if (snap) o?.push('snap');
+}
+async function doRedo() {
+  const dev = S.module === 'develop', p = activePhoto(), o = p ? undoOrder.get(p.id) : null;
+  if (dev && !snapFirst(true) && Dev.redo()) { if (o?.[o.length - 1] === 'hist') o.pop(); return; }
+  const snap = dev && Cat.topRedo()?.snap === p?.id;
+  if (!await Cat.redo()) return Aero.toast('Nothing to redo');
+  if (snap && o?.[o.length - 1] === 'snap') o.pop();
+}
 async function removeSelected() {
   if (S.module === 'develop' && Local.deleteSelected()) return;
   const ids = selectedIds(); if (!ids.length) return;
@@ -471,7 +491,8 @@ function shortcutsDialog() {
     ['6 7 8 9', 'Red · Yellow · Green · Blue label'], ['Ctrl+K', 'Add keywords'], ['Ctrl+H / Ctrl+M', 'Photo Merge: HDR / Panorama (select 2+ photos)'], ["Ctrl+'", 'Create virtual copy'], ['Ctrl+[ / Ctrl+]', 'Rotate left / right'], ['Delete', 'Remove from catalog (or from the open collection)'],
     ['Ctrl+A / Ctrl+D', 'Select all / none'], ['Develop', ''], ['R', 'Crop & straighten (Ctrl-drag a line to level)'], ['W', 'White balance selector'], ['V', 'Convert to black & white'], ['\\', 'Before / after split'], ['Y', 'Before / after side by side'],
     ['Q', 'Spot removal (click a spot or paint a stroke over a scratch; drag the shapes; Delete removes)'], ['Ctrl+Shift+U', 'Upright: Auto'], ['M', 'Masking tool'], ['Shift+M / Shift+R / K', 'New linear / radial / brush mask'], ['O', 'Show mask overlay'],
-    ['[ / ]', 'Brush or spot size'], ['Alt + paint', 'Erase from a brush mask'], ['Ctrl+G', 'Transform grid overlay'], ['Ctrl+U', 'Auto tone'], ['Ctrl+Shift+C / V', 'Copy / paste settings'], ['Ctrl+Alt+S', 'Sync settings to selected'], ['Ctrl+Shift+R', 'Reset all settings'], ['Ctrl+Z / Ctrl+Y', 'Undo / redo (photo edit history in Develop)'],
+    ['[ / ]', 'Brush or spot size'], ['Alt + paint', 'Erase from a brush mask'], ['Ctrl+G', 'Transform grid overlay'], ['J', 'Show clipping (highlights red, shadows blue; or click a histogram triangle)'], ['Ctrl+U', 'Auto tone'],
+    ['Ctrl+Shift+Alt+N', 'New snapshot of the current settings'], ['Ctrl+Shift+Alt+M', 'Match total exposures of the selection to the active photo'], ['Ctrl+Shift+C / V', 'Copy / paste settings'], ['Ctrl+Alt+S', 'Sync settings to selected'], ['Ctrl+Shift+R', 'Reset all settings'], ['Ctrl+Z / Ctrl+Y', 'Undo / redo (photo edit history in Develop)'],
     ['Ctrl+0 / Ctrl+1', 'Fit / 100%'], ['Ctrl+= / Ctrl+-', 'Zoom in / out'], ['Double-click a slider label', 'Reset that slider'], ['File', ''], ['Ctrl+Shift+I', 'Import photos'], ['Ctrl+Shift+E', 'Export'], ['Ctrl+S / Ctrl+O', 'Save / open catalog backup (.ldarkroom)']];
   Aero.dialog({ title: 'Keyboard Shortcuts', noCancel: true, width: 520, html: `<table style="width:100%;border-collapse:collapse">${rows.map(([k, v]) => v ? `<tr><td style="padding:2px 12px 2px 0;white-space:nowrap" class="mono">${esc(k)}</td><td>${esc(v)}</td></tr>` : `<tr><td colspan="2" style="padding:8px 0 2px;color:var(--navy);font-weight:600">${esc(k)}</td></tr>`).join('')}</table>` });
 }
@@ -520,7 +541,8 @@ function buildMenus() {
       { label: 'Show Mask Overlay', key: 'O', fn: () => Local.toggleOverlay(), checked: () => Local.overlay }, '-',
       '#Upright (Transform)', ['Upright: Level', '', () => Dev.autoLevel()], ['Upright: Vertical', '', () => Dev.autoUpright('vertical')], ['Upright: Auto', 'Ctrl+Shift+U', () => Dev.autoUpright('auto')], ['Upright: Full', '', () => Dev.autoUpright('full')], '-',
       ['Copy Settings…', 'Ctrl+Shift+C', () => Dev.copySettings()], ['Paste Settings', 'Ctrl+Shift+V', () => Dev.pasteSettings()], ['Sync Settings to Selected…', 'Ctrl+Alt+S', () => Dev.syncSettings()],
-      ['Reset All Settings', 'Ctrl+Shift+R', () => Dev.resetAll()], '-', ['New Preset from Settings…', 'Ctrl+Shift+N', () => Dev.newPreset()], '-',
+      ['Reset All Settings', 'Ctrl+Shift+R', () => Dev.resetAll()], { label: 'Match Total Exposures', key: 'Ctrl+Shift+Alt+M', fn: () => Dev.matchExposures(), disabled: () => selectedIds().length < 2 }, '-',
+      ['New Preset from Settings…', 'Ctrl+Shift+N', () => Dev.newPreset()], { label: 'New Snapshot…', key: 'Ctrl+Shift+Alt+N', fn: () => Dev.newSnapshot(), disabled: () => !has() }, '-',
       { label: 'Before / After: Off', fn: () => Dev.setBA('off'), checked: () => Dev.ba === 'off' },
       { label: 'Before / After: Split', key: '\\', fn: () => Dev.setBA(Dev.ba === 'split' ? 'off' : 'split'), checked: () => Dev.ba === 'split' },
       { label: 'Before / After: Side by Side', key: 'Y', fn: () => Dev.setBA(Dev.ba === 'side' ? 'off' : 'side'), checked: () => Dev.ba === 'side' }
@@ -534,6 +556,7 @@ function buildMenus() {
       ['Larger Thumbnails', '=', () => { const t = $('#tsize'); t.value = +t.value + 30; t.oninput({ target: t }); }], ['Smaller Thumbnails', '-', () => { const t = $('#tsize'); t.value = +t.value - 30; t.oninput({ target: t }); }],
       { label: 'Show Filmstrip', key: 'F6', fn: () => { S.filmstrip = !S.filmstrip; applyView(); }, checked: () => S.filmstrip },
       { label: 'Show Info Overlay', key: 'I', fn: () => { Dev.showInfo = !Dev.showInfo; Dev.requestRender(); }, checked: () => Dev.showInfo },
+      { label: 'Show Clipping', key: 'J', fn: () => Dev.toggleClip(), checked: () => Dev.clip },
       { label: 'Show Transform Grid', key: 'Ctrl+G', fn: () => { if (S.module !== 'develop') setModule('develop'); Dev.gridOn = !Dev.gridOn; }, checked: () => Dev.gridOn }
     ],
     Help: [['Keyboard Shortcuts', 'F1', shortcutsDialog], ['About Lumen Darkroom', '', aboutDialog]]
@@ -564,6 +587,7 @@ async function boot() {
     else if (what === 'import' || what === 'remove' || what === 'load') { refreshList(); renderLeft(); if (S.view === 'dates') Dates.render(); }
     else if (what === 'collections') { renderLeft(); if (S.source.type === 'coll') { if (!Cat.collections.some(c => c.id === S.source.id)) S.source = { type: 'all' }; refreshList(); } }
     else if (what === 'presets') Dev.renderPresets();
+    else if (what === 'snapshots') { if (data === S.active) Dev.renderSnapshots(); }
   });
   try { navigator.storage?.persist?.(); } catch (e) { }
   Aero.busy('Opening catalog…');

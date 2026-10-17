@@ -54,6 +54,15 @@ window.Batch = (() => {
     rack: { name: 'Effects rack preset', fields: () => [{ key: 'preset', label: 'Preset', type: 'select', value: 'Podcast Voice', options: Object.keys(Rack.allPresets()).map(n => [n, n]) }],
       describe: p => `Effects rack: ${p.preset}${p.slots ? ' (snapshot)' : ''}`,
       async run(chs, sr, p) { const r = p.slots ? Rack.sanitize({ on: true, slots: p.slots }) : Rack.presetRack(p.preset); if (!r) throw new Error('Unknown rack preset “' + p.preset + '”'); if (chs.length > 2) throw new Error('rack needs mono/stereo'); return { chs: await Rack.render(r, chs, sr), sr }; } },
+    dehum: { name: 'DeHummer (mains hum)', fields: () => [{ key: 'base', label: 'Base frequency', type: 'select', value: 'auto', options: [['auto', 'Detect automatically'], ['50', '50 Hz'], ['60', '60 Hz']] }, { key: 'harmonics', label: 'Harmonics', type: 'range', min: 1, max: 30, step: 1, value: 10 }, { key: 'depth', label: 'Reduction (dB)', type: 'range', min: 6, max: 60, step: 1, value: 40 }],
+      describe: p => `DeHummer ${p.base === '50' || p.base === '60' ? p.base + ' Hz' : 'auto-detect'}, ${p.harmonics} harmonics`,
+      run(chs, sr, p) { let f = p.base === '50' ? 50 : p.base === '60' ? 60 : 0; if (!f) { const d = DSP.detectHum(chs, sr); if (!(d.freq > 0 && d.harmonics >= 2)) return { chs, sr }; f = d.freq; } return { chs: DSP.dehum(chs, sr, { freq: f, harmonics: p.harmonics, width: 1, depth: p.depth }), sr }; } },
+    declip: { name: 'DeClipper', fields: () => [{ key: 'tolerance', label: 'Clip level tolerance (%)', type: 'range', min: 0, max: 10, step: 0.1, value: 1 }, { key: 'minRun', label: 'Minimum clip length (samples)', type: 'range', min: 1, max: 20, step: 1, value: 3 }],
+      describe: p => `DeClipper (tolerance ${p.tolerance} %)`,
+      run(chs, sr, p) { return { chs: DSP.declip(chs, sr, { tolerance: p.tolerance, minRun: p.minRun, autoGain: true }), sr }; } },
+    deess: { name: 'De-esser', fields: () => [{ key: 'threshold', label: 'Threshold (dB)', type: 'range', min: -60, max: 0, step: 0.5, value: -30 }, { key: 'freq', label: 'Sibilance above (Hz)', type: 'range', min: 2000, max: 12000, step: 50, value: 5500 }, { key: 'reduction', label: 'Maximum reduction (dB)', type: 'range', min: 1, max: 30, step: 0.5, value: 8 }],
+      describe: p => `De-esser ${p.threshold} dB above ${p.freq} Hz`,
+      run(chs, sr, p) { return { chs: DSP.deess(chs, sr, { ...p, mode: 'split', release: 40 }), sr }; } },
     normalize: { name: 'Normalize (peak)', fields: () => [{ key: 'peak', label: 'Peak level (dBFS)', type: 'range', min: -30, max: 0, step: 0.1, value: -1 }],
       describe: p => `Normalize peak to ${p.peak} dBFS`,
       run(chs, sr, p) { const pk = DSP.peak(chs), g = pk > 0 ? DSP.dbToLin(p.peak) / pk : 1; return { chs: chs.map(c => c.map(v => v * g)), sr }; } },
@@ -93,7 +102,7 @@ window.Batch = (() => {
       describe: p => `Fade in ${p.fin} ms / out ${p.fout} ms`,
       run(chs, sr, p) { const n = chs[0].length, a = Math.min(n, Math.round(p.fin / 1000 * sr)), b = Math.min(n, Math.round(p.fout / 1000 * sr)); return { chs: chs.map(c => { const o = c.slice(); for (let i = 0; i < a; i++) o[i] *= DSP.fadeCurve('scurve', i / a); for (let i = 0; i < b; i++) o[n - 1 - i] *= DSP.fadeCurve('scurve', i / b); return o; }), sr }; } }
   };
-  const ORDER = ['rack', 'denoise', 'normalize', 'loudness', 'trim', 'deadair', 'fade', 'channels', 'resample'];
+  const ORDER = ['rack', 'denoise', 'dehum', 'declip', 'deess', 'normalize', 'loudness', 'trim', 'deadair', 'fade', 'channels', 'resample'];
   function sanitizeStep(s) {
     if (!s || !STEPS[s.type]) return null; const p = {}, src = s.p && typeof s.p === 'object' ? s.p : {};
     for (const f of STEPS[s.type].fields()) {

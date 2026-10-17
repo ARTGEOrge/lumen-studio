@@ -133,3 +133,11 @@ table.kbd td:first-child{font-family:var(--mono);color:var(--navy);white-space:n
 .pf-row:hover{background:linear-gradient(var(--hov-top),var(--hov-bot))}
 .pf-e{color:#c01818}.pf-w{color:#d08010}.pf-i{color:#2a6fd0;font-style:italic;font-family:Georgia,serif}
 .pf-ok{padding:14px;color:#2a7f14}
+/* Find/Change panel (v1.2) */
+.fcpanel{right:10px;top:10px;min-width:0;width:340px;padding:6px 8px}
+.fcpanel .fc-head{display:flex;align-items:center;margin-bottom:4px}
+.fcpanel .fc-grid{display:grid;grid-template-columns:auto 1fr;gap:4px 6px;align-items:center;margin-bottom:4px}
+.fcpanel .fc-grid input,.fcpanel .fc-grid select{width:100%;box-sizing:border-box;min-width:0}
+.fcpanel .fc-row{display:flex;gap:10px;align-items:center;margin:3px 0;flex-wrap:wrap}
+.fcpanel .fc-btns{gap:4px}
+.fcpanel .fc-msg{min-height:15px;font-size:11px;margin-top:2px}

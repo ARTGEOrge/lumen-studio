@@ -333,6 +333,96 @@ window.Effects = (() => {
     process: (segs, sr, v) => DSP.declick(segs, sr, v),
     apply: v => App.applyProc('De-click', (segs, sr) => { const r = DSP.declick(segs, sr, v); setTimeout(() => Aero.toast(`De-click repaired ${r.count} click${r.count === 1 ? '' : 's'}`), 2300); return r; }) });
 
+  /* ---------- v1.2: DeHummer, DeClipper, De-esser, Center Channel Extractor ---------- */
+  const rangeSegs = () => { const [a, b] = App.procRange(), d = App.doc; return App.onIdx().map(i => d.chs[i].subarray(a, b)); };
+  defs.dehum = () => {
+    const d = App.doc, sr = d.sr, segs = rangeSegs(), det = DSP.detectHum(segs, sr), found = det.freq > 0 && det.harmonics >= 2;
+    const base = found ? det.freq : 50;
+    // steady-state spectrum from the detector (25th percentile over time, so hum lines stand out from music/speech), normalised to 0 dB peak
+    const spec = det.spec && det.spec.length > 8 ? det.spec : null, sbin = det.bin, smax = spec ? Math.max(...spec.slice(Math.ceil(20 / sbin))) : 0;
+    return fxDialog({ title: 'DeHummer', width: 600, instruction: found ? `Detected mains hum at ${det.freq.toFixed(2)} Hz (${det.harmonics} harmonics, up to ${det.strength.toFixed(0)} dB above the noise floor).` : 'No clear mains hum detected — pick the base frequency for your region (50 Hz in Europe/Asia/Africa, 60 Hz in the Americas).',
+      fields: [
+        { key: 'preset', label: 'Base frequency', type: 'select', value: found ? 'det' : '50', options: [...(found ? [['det', `Detected (${det.freq.toFixed(2)} Hz)`]] : []), ['50', '50 Hz'], ['60', '60 Hz'], ['custom', 'Custom']] },
+        { key: 'freq', label: 'Frequency', type: 'number', min: 20, max: 500, step: 0.01, value: +base.toFixed(2) },
+        { key: 'harmonics', label: 'Harmonics', type: 'range', min: 1, max: 30, step: 1, value: 10, fmt: v => String(Math.round(v)) },
+        { key: 'width', label: 'Notch width', type: 'range', min: 0.3, max: 6, step: 0.1, value: 1, fmt: v => (+v).toFixed(1) + ' Hz' },
+        { key: 'depth', label: 'Reduction', type: 'range', min: 6, max: 60, step: 1, value: 40, fmt: v => '−' + Math.round(v) + ' dB' },
+        { key: 'residual', label: 'Output hum only (listen to what is removed)', type: 'checkbox', value: false }],
+      html: '<canvas class="fx-curve tall" data-c></canvas>',
+      onOpen: (dlg, v, ch) => { const s = dlg.el.querySelector('select'); s.addEventListener('change', () => { if (s.value === 'det') dlg.set('freq', +det.freq.toFixed(2)); else if (s.value !== 'custom') dlg.set('freq', +s.value); }); ch(); },
+      onChange: (v, dlg) => {
+        if (!dlg) return; const { g, w, h } = canvasIn(dlg, '[data-c]'); graphBg(g, w, h);
+        const f0 = clamp(+v.freq || 50, 20, 500), fmax = Math.min(sr / 2, Math.max(400, f0 * (v.harmonics + 1.5))), X = f => 6 + (w - 12) * f / fmax, Y = db => 8 + (h - 22) * (-db / 100);
+        g.font = '9.5px Segoe UI, sans-serif'; g.strokeStyle = 'rgba(140,190,240,.15)'; g.fillStyle = '#7f9fc0'; g.beginPath();
+        const st = fmax > 1500 ? 250 : fmax > 700 ? 100 : 50; for (let f = st; f < fmax; f += st) { const x = Math.round(X(f)) + .5; g.moveTo(x, 0); g.lineTo(x, h); g.fillText(f + ' Hz', x + 2, h - 3); }
+        for (const db of [-20, -40, -60, -80]) { const y = Math.round(Y(db)) + .5; g.moveTo(0, y); g.lineTo(w, y); g.fillText(db + ' dB', 3, y - 2); } g.stroke();
+        if (spec) { g.beginPath(); let moved = false; for (let x = 6; x < w - 6; x++) { const fa = (x - 6) / (w - 12) * fmax, fb = (x - 5) / (w - 12) * fmax; if (fa < 20 || fb / sbin >= spec.length - 1) continue; let m = -200; for (let k = Math.floor(fa / sbin); k <= Math.ceil(fb / sbin) && k < spec.length; k++) m = Math.max(m, spec[k]); const y = Y(clamp(m - smax - 10, -100, 0)); moved ? g.lineTo(x, y) : g.moveTo(x, y); moved = true; } g.strokeStyle = '#7ff0c4'; g.lineWidth = 1.1; g.stroke(); }
+        // filter response (zero-phase: both passes), drawn in the upper half; notch centres marked so narrow notches stay visible
+        const co = DSP.dehumCoefs(sr, { ...v, freq: f0 }), RY = db => 26 + (h - 40) * 0.4 * (-clamp(db, -60, 0) / 60); g.beginPath();
+        for (let x = 6; x < w - 6; x++) { const f = Math.max(1, (x - 6) / (w - 12) * fmax); let m = DSP.eqResponseDb(co, f, sr) * 2; for (let k = 1; k <= v.harmonics; k++) if (Math.abs(f - f0 * k) < fmax / (w - 12)) m = Math.min(m, -v.depth); const y = RY(m); x === 6 ? g.moveTo(x, y) : g.lineTo(x, y); }
+        g.strokeStyle = '#ffd34a'; g.lineWidth = 1.6; g.stroke();
+        g.fillStyle = '#7ff0c4'; g.font = '10px Segoe UI'; g.fillText('steady background spectrum', w - 222, 16); g.fillStyle = '#ffd34a'; g.fillText('hum filter', w - 70, 16);
+      },
+      process: (segs2, sr2, v) => DSP.dehum(segs2, sr2, { ...v, freq: clamp(+v.freq || 50, 20, 500) }), label: 'DeHummer' });
+  };
+  defs.declip = () => fxDialog({ title: 'DeClipper', width: 580, instruction: 'Finds flat-topped runs where the waveform hit its peak level and redraws them with a smooth polynomial fit to the surrounding samples.',
+    fields: [
+      { key: 'tolerance', label: 'Tolerance below peak', type: 'range', min: 0, max: 10, step: 0.1, value: 1, fmt: v => (+v).toFixed(1) + ' %' },
+      { key: 'minRun', label: 'Min. clip length (samples)', type: 'range', min: 1, max: 20, step: 1, value: 3, fmt: v => String(Math.round(v)) },
+      { key: 'gain', label: 'Output gain', type: 'range', min: -18, max: 0, step: 0.1, value: 0, fmt: dbf },
+      { key: 'autoGain', label: 'Auto gain (restored peaks stay below 0 dBFS)', type: 'checkbox', value: true }],
+    html: '<div class="dnote" data-info></div>',
+    onOpen: (dlg, v, ch) => ch(),
+    onChange: (v, dlg) => { if (!dlg) return; const segs = rangeSegs(), s = DSP.clipStats(segs, v), n = segs[0].length * segs.length; dlg.el.querySelector('[data-info]').textContent = s.count ? `Found ${s.count} clipped region${s.count === 1 ? '' : 's'} (${s.samples} samples, ${(100 * s.samples / n).toFixed(2)} % of the ${App.hasSel() ? 'selection' : 'file'}).` : 'No clipped regions found with these settings.'; },
+    process: (segs, sr, v) => DSP.declip(segs, sr, v),
+    apply: v => App.applyProc('DeClipper', (segs, sr) => { const r = DSP.declip(segs, sr, v); setTimeout(() => Aero.toast(`DeClipper rebuilt ${r.count} clipped region${r.count === 1 ? '' : 's'}${r.gainDb < -0.05 ? `, gain ${r.gainDb.toFixed(1)} dB` : ''}`), 300); return r; }) });
+  defs.deess = () => {
+    let env = null, envKey = '';
+    return fxDialog({ title: 'De-esser', width: 600, instruction: 'Tames harsh “s”, “sh” and “t” sounds: when the high band crosses the threshold it is turned down, up to the maximum reduction.',
+      fields: [
+        { key: 'mode', label: 'Mode', type: 'select', value: 'split', options: [['split', 'Split band (only the highs are reduced)'], ['wide', 'Wideband (whole signal is reduced)']] },
+        { key: 'freq', label: 'Sibilance above', type: 'range', min: 2000, max: 12000, step: 50, value: 5500, fmt: hz },
+        { key: 'threshold', label: 'Threshold', type: 'range', min: -60, max: 0, step: 0.5, value: -30, fmt: v => (+v).toFixed(1) + ' dB' },
+        { key: 'reduction', label: 'Maximum reduction', type: 'range', min: 1, max: 30, step: 0.5, value: 10, fmt: v => '−' + (+v).toFixed(1) + ' dB' },
+        { key: 'release', label: 'Release', type: 'range', min: 5, max: 200, step: 1, value: 40, fmt: msf },
+        { key: 'listen', label: 'Output sibilance only (listen to what is removed)', type: 'checkbox', value: false }],
+      html: '<canvas class="fx-curve tall" data-c></canvas><div class="dnote" data-info></div>',
+      onOpen: (dlg, v, ch) => ch(),
+      onChange: (v, dlg) => {
+        if (!dlg) return; const src = previewSource(), d = App.doc, segs = App.onIdx().map(i => d.chs[i].subarray(src.a, src.b)), key = `${src.a}:${src.b}:${v.freq}:${v.release}`;
+        if (key !== envKey) { env = DSP.deessDetector(segs, d.sr, v); envKey = key; }
+        const { g, w, h } = canvasIn(dlg, '[data-c]'); graphBg(g, w, h);
+        const Y = db => 6 + (h - 20) * (-clamp(db, -72, 0) / 72), n = env.length; let act = 0, mx = -200;
+        g.strokeStyle = 'rgba(140,190,240,.15)'; g.fillStyle = '#7f9fc0'; g.font = '9.5px Segoe UI'; g.beginPath(); for (const db of [-12, -24, -36, -48, -60]) { const y = Math.round(Y(db)) + .5; g.moveTo(0, y); g.lineTo(w, y); g.fillText(db + ' dB', 3, y - 2); } g.stroke();
+        const ty = Y(v.threshold), red = []; g.beginPath();
+        for (let x = 0; x < w; x++) { const a = Math.floor(x / w * n), b = Math.max(a + 1, Math.floor((x + 1) / w * n)); let m = 0; for (let i = a; i < b && i < n; i++) if (env[i] > m) m = env[i]; const db = DSP.linToDb(m); if (db > mx) mx = db; if (db > v.threshold) { act++; red.push([x, Y(Math.min(db, v.threshold + v.reduction))]); } x ? g.lineTo(x, Y(db)) : g.moveTo(x, Y(db)); }
+        g.fillStyle = 'rgba(255,110,80,.55)'; for (const [x, y] of red) g.fillRect(x, y, 1, Math.max(1, ty - y));
+        g.strokeStyle = '#7ff0c4'; g.lineWidth = 1.1; g.stroke(); g.strokeStyle = '#ffd34a'; g.lineWidth = 1.5; g.setLineDash([5, 3]); g.beginPath(); g.moveTo(0, ty + .5); g.lineTo(w, ty + .5); g.stroke(); g.setLineDash([]);
+        g.font = '10px Segoe UI'; g.fillStyle = '#7ff0c4'; g.fillText('sibilance level', w - 190, 14); g.fillStyle = '#ffd34a'; g.fillText('threshold', w - 112, 14); g.fillStyle = '#ff7a5a'; g.fillText('reduction', w - 58, 14);
+        dlg.el.querySelector('[data-info]').textContent = `Preview range (${App.fmtT((src.b - src.a) / d.sr)}): sibilance peaks at ${mx > -199 ? mx.toFixed(1) : '−∞'} dB; reducing during ${(100 * act / w).toFixed(0)} % of the time.`;
+      },
+      process: (segs, sr, v) => DSP.deess(segs, sr, v), label: 'De-esser' });
+  };
+  defs.center = () => {
+    const d = App.doc;
+    if (d.chs.length !== 2) return Aero.alert('Center Channel Extractor', 'This effect works on stereo files: it separates what is panned to the center (usually the lead vocal, bass and kick) from what is spread to the sides.');
+    if (App.onIdx().length !== 2) return Aero.alert('Center Channel Extractor', 'Enable both channels (L and R) first — the effect compares them.');
+    const [a, b] = App.procRange(), ss = DSP.stereoStats(d.chs[0].subarray(a, b), d.chs[1].subarray(a, b));
+    const P = { karaoke: { center: -48, sides: 0, fLo: 120, fHi: 12000, width: 60 }, isolate: { center: 0, sides: -48, fLo: 20, fHi: 16000, width: 60 }, wider: { center: -4, sides: 3, fLo: 150, fHi: 20000, width: 50 }, narrow: { center: 0, sides: -9, fLo: 20, fHi: 20000, width: 50 } };
+    const inf = v => v <= -48 ? '−∞ dB' : dbf(v);
+    return fxDialog({ title: 'Center Channel Extractor', width: 560, instruction: `Stereo correlation ${(Math.abs(ss.correlation) < 0.005 ? 0 : ss.correlation).toFixed(2)} (1 = mono, 0 = wide, below 0 = out of phase); the sides are ${(Math.abs(ss.sideDb) < 0.05 ? 0 : ss.sideDb).toFixed(1)} dB relative to the center.`,
+      fields: [
+        { key: 'preset', label: 'Preset', type: 'select', value: 'karaoke', options: [['karaoke', 'Remove center vocal (karaoke)'], ['isolate', 'Isolate center (extract vocal)'], ['wider', 'Widen stereo image'], ['narrow', 'Narrow stereo image'], ['custom', '(custom)']] },
+        { key: 'center', label: 'Center level', type: 'range', min: -48, max: 12, step: 0.5, value: -48, fmt: inf },
+        { key: 'sides', label: 'Sides level', type: 'range', min: -48, max: 12, step: 0.5, value: 0, fmt: inf },
+        { key: 'width', label: 'Detection strictness', type: 'range', min: 10, max: 95, step: 1, value: 60, fmt: v => Math.round(v) + ' %' },
+        { key: 'fLo', label: 'From frequency', type: 'range', min: 20, max: 2000, step: 5, value: 120, fmt: hz },
+        { key: 'fHi', label: 'To frequency', type: 'range', min: 1000, max: 22000, step: 50, value: 12000, fmt: hz }],
+      html: '<div class="dnote">Only the chosen frequency range is processed: starting at ~120 Hz leaves bass and kick drum in place when removing a vocal.</div>',
+      onOpen: dlg => { const s = dlg.el.querySelector('select'); s.addEventListener('change', () => { const p = P[s.value]; if (p) Object.entries(p).forEach(([k, v]) => dlg.set(k, v)); }); },
+      process: (segs, sr, v) => DSP.centerExtract(segs, sr, { ...v, center: v.center <= -48 ? -120 : v.center, sides: v.sides <= -48 ? -120 : v.sides }), label: 'Center Channel Extractor' });
+  };
+
   // conversions (whole file)
   defs.channels = () => {
     const d = App.doc, n = d.chs.length;

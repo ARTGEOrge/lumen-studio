@@ -1,6 +1,6 @@
 // Lumen Lab — engine worker. Runs code off the UI thread so long computations never freeze the window.
 // A SharedArrayBuffer carries the Stop flag, pause() sleeps and input() replies.
-importScripts('mat.js', 'linalg.js', 'lang.js', 'interp.js', 'lib.js', 'numerics.js', 'toolbox.js', 'graphics.js', 'help.js', 'engine.js');
+importScripts('mat.js', 'linalg.js', 'lang.js', 'interp.js', 'lib.js', 'numerics.js', 'toolbox.js', 'debug.js', 'optim.js', 'spectral.js', 'graphics.js', 'help.js', 'engine.js');
 
 let In = null, ctrl = null, inbuf = null, outBuf = '', outKind = 'out', flushT = 0, lastFig = -1, filesDirty = false;
 const send = m => postMessage(m);
@@ -25,6 +25,20 @@ const host = {
   },
   saveFigure(id, name) { flushOut(); figs(true); send({ type: 'saveFigure', id, name }); },
   filesChanged() { filesDirty = true; },
+  // debugger: the worker blocks here while the desktop shows the K>> prompt
+  debugPause(info) {
+    flushOut(); figs();
+    if (info.reason) Atomics.store(ctrl, 1, 0);
+    send({ type: 'paused', reason: info.reason, file: info.file, name: info.name, line: info.line, view: info.view, stack: info.stack, workspace: workspace(info.scope), dbg: info.dbg, format: LabMat.fmt.long ? 'long' : 'short' });
+  },
+  debugRead() {
+    while (Atomics.load(ctrl, 1) === 0) { Atomics.wait(ctrl, 1, 0, 200); if (Atomics.load(ctrl, 0)) return null; }
+    const len = Atomics.load(ctrl, 2); if (len < 0) { Atomics.store(ctrl, 1, 0); return null; }
+    let s = ''; for (let i = 0; i < len; i++) s += String.fromCharCode(inbuf[i]);
+    Atomics.store(ctrl, 1, 0); return s;
+  },
+  debugResume() { flushOut(); figs(); send({ type: 'resumed' }); },
+  profileReport(report) { flushOut(); send({ type: 'profile', report }); },
 };
 function make() {
   In = LabEngine.create({ out, host, interrupt: () => ctrl && Atomics.load(ctrl, 0) === 1 });
@@ -61,11 +75,15 @@ function stats(v) {
   let mn = Infinity, mx = -Infinity, s = 0, c = 0; for (let k = 0; k < v.n; k++) { const x = v.re[k]; if (Number.isFinite(x)) { mn = Math.min(mn, x); mx = Math.max(mx, x); s += x; c++; } }
   return c ? { min: mn, max: mx, mean: s / c } : null;
 }
-function workspace() {
-  return [...In.base.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' })).map(([name, v]) => ({ name, size: `${v.r}×${v.c}`, cls: LabInterp.clsOf(v) + (v.im ? ' (complex)' : ''), value: preview(v), stats: stats(v), bytes: LabLib.L.__bytes([v]).re[0] }));
+function workspace(scope) {
+  return [...(scope || In.base).entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: 'base' })).map(([name, v]) => ({ name, size: `${v.r}×${v.c}`, cls: LabInterp.clsOf(v) + (v.im ? ' (complex)' : ''), value: preview(v), stats: stats(v), bytes: LabLib.L.__bytes([v]).re[0] }));
 }
 function filesObj() { const o = {}; In.files.forEach((v, k) => { o[k] = v; }); return o; }
-function done(id, extra) { flushOut(); figs(); send(Object.assign({ type: 'done', id, workspace: workspace(), format: LabMat.fmt.long ? 'long' : 'short' }, filesDirty ? { files: filesObj() } : {}, extra)); filesDirty = false; }
+function done(id, extra) {
+  flushOut(); figs();
+  const dbg = In.dbg && In.dbg.changed ? In.dbg.toJSON() : null; if (In.dbg) { In.dbg.changed = false; In.dbg.reset(); }
+  send(Object.assign({ type: 'done', id, workspace: workspace(), format: LabMat.fmt.long ? 'long' : 'short' }, filesDirty ? { files: filesObj() } : {}, dbg ? { dbg } : {}, extra)); filesDirty = false;
+}
 
 onmessage = e => {
   const m = e.data;
@@ -73,12 +91,15 @@ onmessage = e => {
     switch (m.type) {
       case 'init':
         if (m.sab) { ctrl = new Int32Array(m.sab, 0, 8); inbuf = new Uint16Array(m.sab, 32); }
-        make(); send({ type: 'ready', names: Object.keys(In.lib).filter(k => !k.startsWith('__')).sort(), keywords: [...LabLang.KW] });
+        make(); if (!ctrl) delete host.debugRead;
+        send({ type: 'ready', names: Object.keys(In.lib).filter(k => !k.startsWith('__')).sort(), keywords: [...LabLang.KW] });
         break;
+      case 'dbsync': LabDebug.D(In).load(m.dbg); In.dbg.changed = false; break;
       case 'files': In.files = new Map(Object.entries(m.files)); In.parseCache.clear(); break;
       case 'run': {
         if (m.files) { In.files = new Map(Object.entries(m.files)); }
         if (ctrl) Atomics.store(ctrl, 0, 0);
+        if (m.dbg) { const d = LabDebug.D(In); d.load(m.dbg); d.reset(); d.changed = false; }
         In.width = m.width || 100;
         const t0 = performance.now();
         try {
@@ -87,12 +108,12 @@ onmessage = e => {
           done(m.id, { ok: true, ms: performance.now() - t0 });
         } catch (err) {
           flushOut();
-          const text = err.interrupt ? 'Operation terminated by user.' : LabInterp.errorText(err);
+          const text = err.dbquit ? 'Debugging stopped (dbquit).' : err.interrupt ? 'Operation terminated by user.' : LabInterp.errorText(err);
           let line = null; if (err.where && err.where.length) { const w = err.where.find(x => x.name === (m.name || 'base')) || err.where[err.where.length - 1]; line = w.line; } else if (err.line) line = err.line;
           const file = err.where && err.where.length ? err.where[0].name : m.name;
-          out(text + '\n', 'err');
-          done(m.id, { ok: false, error: text, line, file, interrupted: !!err.interrupt });
-          In.frames.length = 1; In.depth = 0;
+          out(text + '\n', err.dbquit ? 'info' : 'err');
+          done(m.id, { ok: false, error: text, line: err.dbquit ? null : line, file, interrupted: !!err.interrupt });
+          In.frames.length = 1; In.depth = 0; In.tryDepth = 0;
         }
         break;
       }

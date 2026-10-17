@@ -22,15 +22,16 @@ const LongDoc = (() => {
   /* ---------- table of contents ---------- */
   const clean = t => t.replace(/[￼]/g, '').replace(//g, '#').replace(/[\u2028\t]/g, ' ').replace(/­/g, '').replace(/\s+/g, ' ').trim();
   // paragraphs in the given styles, in reading order, with the page they start on
-  function collect(styles, skipSid) {
+  function collect(styles, skipSid) { return collectIn(S.doc, S.eng, styles, skipSid); }
+  function collectIn(doc, eng, styles, skipSid) {
     const lv = new Map(styles.map(s => [s.ps, s.level]));
-    S.eng.ensure();
+    eng.ensure();
     const out = [];
-    const pageIdx = new Map(S.doc.pages.map((p, i) => [p.id, i]));
-    for (const s of Object.values(S.doc.stories)) {
+    const pageIdx = new Map(doc.pages.map((p, i) => [p.id, i]));
+    for (const s of Object.values(doc.stories)) {
       if (s.id === skipSid) continue;
-      const fr = S.eng.storyFrames(s); if (!fr.length || fr[0].kind !== 'doc') continue;
-      const res = S.eng.storyRes.get(s.id); if (!res) continue;
+      const fr = eng.storyFrames(s); if (!fr.length || fr[0].kind !== 'doc') continue;
+      const res = eng.storyRes.get(s.id); if (!res) continue;
       const P = res.P, seen = new Set();
       fr.forEach((f, k) => {
         const L = res.frames[k]; if (!L) return;
@@ -41,11 +42,23 @@ const LongDoc = (() => {
           const a = P.pstart[pi], b = pi + 1 < P.pstart.length ? P.pstart[pi + 1] - 1 : s.text.length;
           const text = clean(s.text.slice(a, b)); if (!text) continue;
           const page = pageIdx.get(f.page.id);
-          out.push({ text, level: lv.get(ps), page, label: S.eng.label(page), sid: s.id, ci: a, y: f.item.y + ln.y + (ln.col || 0) * 10000 });
+          out.push({ text, level: lv.get(ps), page, label: eng.label(page), sid: s.id, ci: a, y: f.item.y + ln.y + (ln.col || 0) * 10000, top: f.item.y + ln.y - ln.asc, left: f.item.x + ln.L });
         }
       });
     }
     out.sort((p, q) => p.page - q.page || (p.sid === q.sid ? p.ci - q.ci : p.y - q.y));
+    return out;
+  }
+  // heading styles for PDF bookmarks: the table-of-contents styles, or styles that look like headings
+  function headingStyles(doc) {
+    if (doc.toc && doc.toc.styles && doc.toc.styles.length) return doc.toc.styles;
+    const out = [];
+    for (const [k, v] of Object.entries(doc.paraStyles)) {
+      if (/^toc/.test(k)) continue;
+      const n = (v.name + ' ' + k).toLowerCase();
+      if (/subhead|\bsub\b/.test(n)) out.push({ ps: k, level: 2 });
+      else if (/head|title|chapter/.test(n) && !/small|running|caption/.test(n)) out.push({ ps: k, level: 1 });
+    }
     return out;
   }
   function ensureTocStyles(width) {
@@ -248,5 +261,5 @@ const LongDoc = (() => {
     const container = `<?xml version="1.0" encoding="UTF-8"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>\n`;
     return IO.zip([{ name: 'mimetype', data: enc.encode('application/epub+zip') }, { name: 'META-INF/container.xml', data: enc.encode(container) }, { name: 'OEBPS/content.opf', data: enc.encode(opf) }, ...files]);
   }
-  return { sectionDialog, tocDialog, updateToc, generate, collect, epubDialog, buildEpub };
+  return { sectionDialog, tocDialog, updateToc, generate, collect, collectIn, headingStyles, epubDialog, buildEpub };
 })();

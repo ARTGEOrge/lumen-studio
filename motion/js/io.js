@@ -54,7 +54,7 @@
   LM.importAudioDialog = async () => { const files = await Aero.openFile({ accept: 'audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac', multiple: true, filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'opus'] }] }); if (files.length) LM.importFiles(files); };
 
   /* ---------- project save / load ---------- */
-  LM.serialize = () => JSON.stringify({ format: 'lumen-motion', version: 2, app: 'Lumen Motion', name: LM.doc.name, active: LM.doc.active, comps: LM.doc.comps, assets: [...LM.assets.values()].filter(a => LM.doc.comps.some(c => c.layers.some(l => l.asset === a.id))).map(a => ({ id: a.id, name: a.name, type: a.type, mime: a.mime, w: a.w, h: a.h, duration: a.duration, data: a.data })) });
+  LM.serialize = () => JSON.stringify({ format: 'lumen-motion', version: 3, app: 'Lumen Motion', name: LM.doc.name, active: LM.doc.active, comps: LM.doc.comps, assets: [...LM.assets.values()].filter(a => LM.doc.comps.some(c => c.layers.some(l => l.asset === a.id))).map(a => ({ id: a.id, name: a.name, type: a.type, mime: a.mime, w: a.w, h: a.h, duration: a.duration, data: a.data })) });
   LM.saveProject = async (as) => {
     const name = (LM.doc.name || 'Untitled').replace(/\.lmot$/i, '') + '.lmot';
     const p = await Aero.saveFile({ name, data: LM.serialize(), filters: FILTER, path: as ? undefined : LM.doc.path || undefined });
@@ -75,6 +75,9 @@
     const str = (v, d = '') => typeof v === 'string' ? v.slice(0, 20000) : d;
     const col = v => typeof v === 'string' && HEX.test(v) ? v : '#808080';
     const isObj = x => !!x && typeof x === 'object' && !Array.isArray(x);
+    // markers (v3): [{id, t, name, dur, label}]
+    const cleanMarkers = (a, lo, hi) => (Array.isArray(a) ? a : []).filter(m => isObj(m) && typeof m.t === 'number' && isFinite(m.t)).slice(0, 1000)
+      .map(m => ({ id: str(m.id).slice(0, 40) || LM.uid(), t: num(m.t, 0, lo, hi), name: str(m.name).slice(0, 500), dur: num(m.dur, 0, 0, 3600), label: Math.round(num(m.label, 1, 0, 10)) })).sort((x, y) => x.t - y.t);
     const TYPES = ['solid', 'shape', 'text', 'image', 'video', 'null', 'adjust', 'precomp', 'draw', 'audio', 'camera'];
     o.comps = o.comps.filter(isObj);
     if (!o.comps.length) throw new Error('Not a Lumen Motion project');
@@ -83,6 +86,7 @@
       c.id = str(c.id) || LM.uid(); c.name = str(c.name, 'Comp'); c.w = Math.round(num(c.w, 1920, 16, 8192)); c.h = Math.round(num(c.h, 1080, 16, 8192)); c.fps = num(c.fps, 30, 1, 120); c.duration = num(c.duration, 10, .05, 3600); c.bg = col(c.bg);
       c.workIn = num(c.workIn, 0, 0, c.duration); c.workOut = num(c.workOut, c.duration, 0, c.duration); c.mb = c.mb && typeof c.mb === 'object' ? { angle: num(c.mb.angle, 180, 0, 720), phase: num(c.mb.phase, -90, -360, 360), samples: Math.round(num(c.mb.samples, 8, 2, 64)) } : { angle: 180, phase: -90, samples: 8 }; c.mbOn = !!c.mbOn;
       c.layers = Array.isArray(c.layers) ? c.layers.filter(L => isObj(L) && TYPES.includes(L.type)) : [];
+      c.markers = cleanMarkers(c.markers, 0, c.duration);
       c.layers.forEach(L => {
         L.id = str(L.id) || LM.uid(); L.name = str(L.name, 'Layer').slice(0, 200); L.label = Math.round(num(L.label, 2, 0, 10)); L.blend = LM.BLENDS.some(b => b[0] === L.blend) ? L.blend : 'normal';
         L.matte = ['alpha', 'alphaInv', 'luma', 'lumaInv'].includes(L.matte) ? L.matte : null; L.parent = typeof L.parent === 'string' ? L.parent : null;
@@ -90,6 +94,8 @@
         if (L.type === 'precomp' && !ids.has(L.comp)) L.type = 'null';
         if (typeof L.asset !== 'string') delete L.asset;
         // ensure every effect has all params (as objects)
+        L.markers = cleanMarkers(L.markers, -1e6, 1e6);
+        L.effects.forEach(fx => { if (typeof fx.name === 'string' && fx.name.trim()) fx.name = fx.name.trim().slice(0, 100); else delete fx.name; });
         L.effects.forEach(fx => { fx.id = str(fx.id) || LM.uid(); LM.FX[fx.type].params.forEach(q => { if (!isObj(fx.p[q.k])) fx.p[q.k] = q.static ? { v: LM.clone(q.v), s: 1 } : { v: LM.clone(q.v) }; }); });
       });
     });

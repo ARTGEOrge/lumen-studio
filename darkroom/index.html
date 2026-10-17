@@ -67,6 +67,8 @@
             <div id="nav"><canvas id="navc"></canvas></div>
             <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffd1a0,#e3731a)"></span>Presets<span class="right"><button class="aero-btn small" id="p-new" title="Save current settings as a preset">+ New</button></span></div>
             <div class="aero-list fill" id="presetlist"></div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#8fd0ff,#1c5fb4)"></span>Snapshots<span class="right"><span id="snapinfo" class="dim"></span> <button class="aero-btn small" id="sn-new" title="New snapshot of the current settings (Ctrl+Shift+Alt+N)">+</button></span></div>
+            <div class="aero-list" id="snaplist"></div>
             <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#e3a21a)"></span>History<span class="right" id="histinfo"></span></div>
             <div class="aero-list" id="histlist"></div>
           </div>
@@ -146,6 +148,7 @@
 <script src="../kit/aero.js"></script>
 <script src="vendor/exifr.lite.umd.js"></script>
 <script src="vendor/fflate.umd.js"></script>
+<script src="js/tonal.js"></script>
 <script src="js/model.js"></script>
 <script src="js/db.js"></script>
 <script src="js/decode.js"></script>

@@ -7,5 +7,5 @@ LM.select([c.layers.find(l => l.type === 'audio').id]); LM.setTime(3.6); void b;
 await new Promise(r => setTimeout(r, 200));
 document.querySelector('.tl-scroll').scrollTop = 0;
 const toast = document.querySelector('.aero-toast'); if (toast) toast.style.display = 'none';
-await new Promise(r => setTimeout(r, 800));
+await new Promise(r => setTimeout(r, 2500));   // offscreen paints lag under load
 return JSON.stringify({ sel: LM.selLayer()?.name, t: LM.st.time });

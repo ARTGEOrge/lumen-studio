@@ -78,10 +78,12 @@
     }
     const pages = opt.pages || doc.pages.map((_, i) => i);
     const bl = opt.bleed ? doc.bleed : 0, mk = opt.marks ? Math.max(bl, 0) + 30 : bl;
+    const pageRefs = new Map();
     for (const pi of pages) {
       const page = doc.pages[pi];
       const W = doc.w + mk * 2, H = doc.h + mk * 2;
       const pg = pdf.addPage([W, H]);
+      pageRefs.set(pi, pg);
       pg.setTrimBox(mk, mk, doc.w, doc.h);
       pg.setBleedBox(mk - bl, mk - bl, doc.w + bl * 2, doc.h + bl * 2);
       pg.setCropBox(0, 0, W, H);
@@ -160,6 +162,7 @@
             else { ops.push(q(), cm(1, 0, 0, 1, b.x, b.y)); await tableRows(b.obj, b.rows, b.rh); ops.push(Q()); }
             continue;
           }
+          if (ln.rules) for (const ru of ln.rules) ops.push(...fillC(ru.color), L.rectangle(ru.x0, ln.y + ru.dy - ru.w / 2, ru.x1 - ru.x0, ru.w), fill());
           if (ln.drop) await text(ln.drop.st.fk, ln.drop.st.size, ln.drop.st.color, 0, ln.drop.x, ln.drop.y, ln.drop.text);
           for (const r of ln.runs) {
             const st = r.st, y = ln.y - st.shift;
@@ -242,7 +245,61 @@
       }
       pg.pushOperators(...ops);
     }
+    if (opt.bookmarks !== false || opt.links !== false) navigation(pdf, L, doc, engine, pageRefs, mk, opt);
     return await pdf.save();
+  }
+
+  /* ---------- interactive PDF: bookmarks (document outline) from heading / TOC styles, and clickable
+     table-of-contents entries that jump to their pages ---------- */
+  function navigation(pdf, L, doc, engine, pageRefs, mk, opt) {
+    if (typeof LongDoc === 'undefined') return null;
+    const ctx = pdf.context, PN = n => L.PDFName.of(n), H = doc.h + mk * 2;
+    const dest = (pi, x, y) => ctx.obj([pageRefs.get(pi).ref, PN('XYZ'), +(mk + x).toFixed(2), +(H - mk - y).toFixed(2), null]);
+    const tocSid = doc.toc && doc.stories[doc.toc.sid] ? doc.toc.sid : null;
+    const out = { bookmarks: 0, links: 0 };
+    if (opt.bookmarks !== false) {
+      const ents = LongDoc.collectIn(doc, engine, LongDoc.headingStyles(doc), tocSid).filter(e => pageRefs.has(e.page));
+      if (ents.length) {
+        const root = { kids: [], level: 0 }, stack = [root];
+        for (const e of ents) {
+          while (stack.length > 1 && stack[stack.length - 1].level >= e.level) stack.pop();
+          const n = { e, level: e.level, kids: [], ref: ctx.nextRef() };
+          stack[stack.length - 1].kids.push(n); stack.push(n);
+        }
+        const count = n => n.kids.reduce((a, k) => a + 1 + count(k), 0);
+        const rootRef = ctx.nextRef();
+        const assign = (list, parentRef) => list.forEach((n, k) => {
+          const d = { Title: L.PDFHexString.fromText(n.e.text.slice(0, 250)), Parent: parentRef, Dest: dest(n.e.page, Math.max(0, n.e.left - 6), Math.max(0, n.e.top - 6)) };
+          if (k > 0) d.Prev = list[k - 1].ref; if (k < list.length - 1) d.Next = list[k + 1].ref;
+          if (n.kids.length) { d.First = n.kids[0].ref; d.Last = n.kids[n.kids.length - 1].ref; d.Count = count(n); }
+          ctx.assign(n.ref, ctx.obj(d)); assign(n.kids, n.ref);
+        });
+        assign(root.kids, rootRef);
+        ctx.assign(rootRef, ctx.obj({ Type: 'Outlines', First: root.kids[0].ref, Last: root.kids[root.kids.length - 1].ref, Count: count(root) }));
+        pdf.catalog.set(PN('Outlines'), rootRef); pdf.catalog.set(PN('PageMode'), PN('UseOutlines'));
+        out.bookmarks = ents.length;
+      }
+    }
+    if (opt.links !== false && tocSid) {
+      const s = doc.stories[tocSid], clean = t => t.replace(/[\uFFFC\uE001]/g, '').replace(/\uE000/g, '#').replace(/[\u2028\t]/g, ' ').replace(/\u00AD/g, '').replace(/\s+/g, ' ').trim();
+      const queue = new Map();
+      for (const e of LongDoc.collectIn(doc, engine, doc.toc.styles || [], tocSid)) { const q = queue.get(e.text) || []; q.push(e); queue.set(e.text, q); }
+      const pstart = [0]; for (let k = 0; k < s.text.length; k++) if (s.text[k] === '\n') pstart.push(k + 1);
+      for (const fid of s.frames) {
+        const inf = engine.idx.get(fid); if (!inf || inf.kind !== 'doc' || !pageRefs.has(inf.index) || (inf.item.rot % 360)) continue;
+        const it = inf.item, lay = engine.frameLayout(it, engine.label(inf.index)); if (!lay) continue;
+        const byPara = new Map();
+        for (const ln of lay.lines) { if (ln.block) continue; const r = byPara.get(ln.pi) || { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity }; r.x0 = Math.min(r.x0, ln.xs[0]); r.x1 = Math.max(r.x1, ln.xs[ln.xs.length - 1]); r.y0 = Math.min(r.y0, ln.y - ln.asc); r.y1 = Math.max(r.y1, ln.y + ln.desc); byPara.set(ln.pi, r); }
+        for (const [pi, r] of byPara) {
+          const a = pstart[pi], b = pi + 1 < pstart.length ? pstart[pi + 1] - 1 : s.text.length, raw = s.text.slice(a, b), tab = raw.lastIndexOf('\t');
+          if (tab < 0) continue;
+          const e = queue.get(clean(raw.slice(0, tab)))?.shift(); if (!e || !pageRefs.has(e.page)) continue;
+          const annot = ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Link', Rect: [mk + it.x + r.x0, H - mk - it.y - r.y1, mk + it.x + r.x1, H - mk - it.y - r.y0].map(v => +v.toFixed(2)), Border: [0, 0, 0], Dest: dest(e.page, Math.max(0, e.left - 6), Math.max(0, e.top - 6)) }));
+          pageRefs.get(inf.index).node.addAnnot(annot); out.links++;
+        }
+      }
+    }
+    return out;
   }
 
   window.PdfOut = { exportPDF, hexRgb };

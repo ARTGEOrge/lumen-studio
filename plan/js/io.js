@@ -63,6 +63,7 @@
       if (a.actualFinish && !a.actualStart) a.actualStart = a.actualFinish;
       if (a.actualFinish) a.pct = 100;
       if (t.cstr_type && XER_CSTR[t.cstr_type] && t.cstr_date) a.constraint = { type: XER_CSTR[t.cstr_type], date: d10(t.cstr_date) };
+      if (t.complete_pct_type === 'CP_Phys') { a.pctType = 'physical'; if (a.actualStart && !a.actualFinish && t.remain_drtn_hr_cnt !== '' && t.remain_drtn_hr_cnt != null && isFinite(+t.remain_drtn_hr_cnt)) a.remaining = Math.max(0, Math.round(+t.remain_drtn_hr_cnt / hrsDay)); }
       acts.push(a);
     };
     const walk = (w, level) => {
@@ -83,11 +84,30 @@
       const u = tr.target_qty_per_hr ? +tr.target_qty_per_hr : (+tr.target_qty || 0) / Math.max(1, a.dur * hrsDay);
       a.resources.push({ res: resOf.get(tr.rsrc_id), units: Math.round(u * 100) / 100 || 1 });
     });
+    // activity steps (TASKPROC)
+    const actOf = xid => acts.find(x => x.id === idOf.get(xid));
+    (T.TASKPROC ? T.TASKPROC.rows : []).slice().sort((a, b) => (+a.seq_num || 0) - (+b.seq_num || 0)).forEach(r => {
+      const a = actOf(r.task_id); if (!a) return;
+      (a.steps = a.steps || []).push({ name: String(r.proc_name || 'Step').slice(0, 200), weight: Math.max(0, +r.proc_wt || 0), pct: r.complete_flag === 'Y' ? 100 : Math.max(0, Math.min(100, +r.complete_pct || 0)) });
+    });
+    // activity codes (ACTVTYPE / ACTVCODE / TASKACTV)
+    const codes = [], typeOf = new Map(), valOf = new Map(), cids = new Set();
+    (T.ACTVTYPE ? T.ACTVTYPE.rows : []).slice().sort((a, b) => (+a.seq_num || 0) - (+b.seq_num || 0)).forEach(r => {
+      const name = String(r.actv_code_type || 'Code ' + r.actv_code_type_id).slice(0, 60);
+      let id = name.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 12) || 'CODE', k = 2; const b = id; while (cids.has(id)) id = b + k++; cids.add(id);
+      const c = { id, name, values: [] }; codes.push(c); typeOf.set(r.actv_code_type_id, c);
+    });
+    (T.ACTVCODE ? T.ACTVCODE.rows : []).slice().sort((a, b) => (+a.seq_num || 0) - (+b.seq_num || 0)).forEach(r => {
+      const c = typeOf.get(r.actv_code_type_id); if (!c) return;
+      const v = String(r.short_name || r.actv_code_name || r.actv_code_id).slice(0, 40); if (c.values.some(x => x.v === v)) { valOf.set(r.actv_code_id, [c, v]); return; }
+      c.values.push({ v, d: String(r.actv_code_name || '').slice(0, 120) }); valOf.set(r.actv_code_id, [c, v]);
+    });
+    (T.TASKACTV ? T.TASKACTV.rows : []).forEach(r => { const a = actOf(r.task_id), cv = valOf.get(r.actv_code_id); if (!a || !cv) return; (a.codes = a.codes || {})[cv[0].id] = cv[1]; });
     const firstStart = T.TASK.rows.map(t => d10(t.act_start_date || t.target_start_date || t.early_start_date)).filter(Boolean).sort()[0];
     const calRow = T.CALENDAR && (T.CALENDAR.rows.find(r => r.clndr_id === proj.clndr_id) || T.CALENDAR.rows.find(r => r.default_flag === 'Y') || T.CALENDAR.rows[0]);
     const calendar = calRow ? parseClndrData(calRow.clndr_data) : null;
     return { name: proj.proj_short_name || 'Imported P6 project', start: d10(proj.plan_start_date) || firstStart || new Date().toISOString().slice(0, 10),
-      dataDate: d10(proj.last_recalc_date) || null, activities: acts, links, resources, ...(calendar ? { calendar } : {}) };
+      dataDate: d10(proj.last_recalc_date) || null, activities: acts, links, resources, ...(calendar ? { calendar } : {}), ...(codes.length ? { codes } : {}) };
   }
 
   function exportXER(p, sched) {
@@ -110,19 +130,31 @@
     });
     tbl('RSRC', ['rsrc_id', 'rsrc_name', 'rsrc_short_name', 'rsrc_type', 'clndr_id']);
     const rid = new Map(); (p.resources || []).forEach((r, i) => { rid.set(r.id, i + 1); row([i + 1, r.name, r.id, 'RT_Labor', 1]); });
-    tbl('TASK', ['task_id', 'proj_id', 'wbs_id', 'clndr_id', 'phys_complete_pct', 'task_type', 'status_code', 'task_code', 'task_name', 'remain_drtn_hr_cnt', 'target_drtn_hr_cnt', 'cstr_date', 'act_start_date', 'act_end_date', 'early_start_date', 'early_end_date', 'late_start_date', 'late_end_date', 'target_start_date', 'target_end_date', 'cstr_type', 'total_float_hr_cnt', 'free_float_hr_cnt', 'driving_path_flag']);
+    tbl('TASK', ['task_id', 'proj_id', 'wbs_id', 'clndr_id', 'phys_complete_pct', 'task_type', 'status_code', 'task_code', 'task_name', 'remain_drtn_hr_cnt', 'target_drtn_hr_cnt', 'cstr_date', 'act_start_date', 'act_end_date', 'early_start_date', 'early_end_date', 'late_start_date', 'late_end_date', 'target_start_date', 'target_end_date', 'cstr_type', 'total_float_hr_cnt', 'free_float_hr_cnt', 'driving_path_flag', 'complete_pct_type']);
     const tid = new Map(); let k = 1;
     acts.forEach((a, i) => {
       if (sched.summary[i]) return; const x = sched.results.get(a.id); const id = k++; tid.set(a.id, id);
       const st = a.pct >= 100 ? 'TK_Complete' : a.actualStart ? 'TK_Active' : 'TK_NotStart';
       row([id, 1, taskWbs.get(a.id), 1, a.pct || 0, a.dur ? 'TT_Task' : 'TT_Mile', st, a.id, a.name, (x.ef - Math.max(x.es, sched.dataIdx)) * HRS, a.dur * HRS,
         a.constraint ? dt(a.constraint.date) : '', dt(a.actualStart), dt(a.actualFinish), dt(x.start), dt(x.finish), dt(x.lateStart), dt(x.lateFinish), dt(x.start), dt(x.finish),
-        a.constraint ? XER_CSTR_OUT[a.constraint.type] || '' : '', x.tf * HRS, x.ff * HRS, x.longest ? 'Y' : 'N']);
+        a.constraint ? XER_CSTR_OUT[a.constraint.type] || '' : '', x.tf * HRS, x.ff * HRS, x.longest ? 'Y' : 'N', a.pctType === 'physical' ? 'CP_Phys' : 'CP_Drtn']);
     });
     tbl('TASKPRED', ['task_pred_id', 'task_id', 'pred_task_id', 'proj_id', 'pred_proj_id', 'pred_type', 'lag_hr_cnt']);
     (p.links || []).forEach((l, i) => tid.has(l.from) && tid.has(l.to) && row([i + 1, tid.get(l.to), tid.get(l.from), 1, 1, 'PR_' + (l.type || 'FS'), (l.lag || 0) * HRS]));
     tbl('TASKRSRC', ['taskrsrc_id', 'task_id', 'proj_id', 'rsrc_id', 'target_qty_per_hr', 'target_qty']);
     let q = 1; acts.forEach(a => tid.has(a.id) && (a.resources || []).forEach(as => rid.has(as.res) && row([q++, tid.get(a.id), 1, rid.get(as.res), as.units, as.units * a.dur * HRS])));
+    tbl('TASKPROC', ['proc_id', 'task_id', 'proj_id', 'seq_num', 'proc_name', 'complete_flag', 'proc_wt', 'complete_pct']);
+    let pid = 1; acts.forEach(a => tid.has(a.id) && (a.steps || []).forEach((st, i) => row([pid++, tid.get(a.id), 1, (i + 1) * 10, st.name, (+st.pct || 0) >= 100 ? 'Y' : 'N', +st.weight || 0, +st.pct || 0])));
+    const codes = p.codes || [];
+    if (codes.length) {
+      tbl('ACTVTYPE', ['actv_code_type_id', 'actv_short_len', 'seq_num', 'actv_code_type', 'proj_id', 'actv_code_type_scope']);
+      codes.forEach((c, i) => row([i + 1, 20, (i + 1) * 10, c.name || c.id, 1, 'AS_Project']));
+      tbl('ACTVCODE', ['actv_code_id', 'parent_actv_code_id', 'actv_code_type_id', 'actv_code_name', 'short_name', 'seq_num']);
+      const vid = new Map(); let v = 1;
+      codes.forEach((c, i) => (c.values || []).forEach((x, j) => { vid.set(c.id + '\u0000' + x.v, v); row([v++, '', i + 1, x.d || x.v, x.v, (j + 1) * 10]); }));
+      tbl('TASKACTV', ['task_id', 'actv_code_type_id', 'actv_code_id', 'proj_id']);
+      acts.forEach(a => tid.has(a.id) && a.codes && codes.forEach((c, i) => { const id = vid.get(c.id + '\u0000' + a.codes[c.id]); if (id) row([tid.get(a.id), i + 1, id, 1]); }));
+    }
     L.push('%E');
     return L.join('\r\n') + '\r\n';
   }
@@ -193,13 +225,14 @@
   // ---------------- CSV ----------------
   const csvCell = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   function exportCSV(p, sched, baseline) {
-    const head = ['ID', 'Name', 'Level', 'Duration', 'Start', 'Finish', 'Late Start', 'Late Finish', 'Total Float', 'Free Float', 'Critical', '% Complete', 'Predecessors', 'Resources', 'BL Start', 'BL Finish'];
+    const codes = p.codes || [];
+    const head = ['ID', 'Name', 'Level', 'Duration', 'Start', 'Finish', 'Late Start', 'Late Finish', 'Total Float', 'Free Float', 'Critical', '% Complete', 'Predecessors', 'Resources', 'BL Start', 'BL Finish', ...codes.map(c => c.name || c.id)];
     const rows = [head];
     p.activities.forEach((a, i) => {
       const x = sched.results.get(a.id), sum = sched.summary[i], b = baseline && baseline.acts[a.id];
       const preds = (p.links || []).filter(l => l.to === a.id).map(l => l.from + (l.type && l.type !== 'FS' || l.lag ? ' ' + (l.type || 'FS') + (l.lag ? (l.lag > 0 ? '+' : '') + l.lag : '') : '')).join('; ');
       rows.push([a.id, a.name, a.level || 0, sum ? x.dur : a.dur, x.start, x.finish, sum ? '' : x.lateStart, sum ? '' : x.lateFinish, x.tf, sum ? '' : x.ff, x.critical ? 'Yes' : '', Math.round(sum ? x.pct : a.pct || 0),
-        preds, (a.resources || []).map(r => `${r.res}×${r.units}`).join('; '), b ? b.start : '', b ? b.finish : '']);
+        preds, (a.resources || []).map(r => `${r.res}×${r.units}`).join('; '), b ? b.start : '', b ? b.finish : '', ...codes.map(c => sum ? '' : (a.codes && a.codes[c.id]) || '')]);
     });
     return rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
   }

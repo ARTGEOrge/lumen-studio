@@ -21,11 +21,14 @@
       ${ro('Total float', x.tf + ' d', x.tf < 0 ? 'neg' : '')}${ro('Budget', money(rollBudget(a)))}${v ? ro('BL finish var.', fmtVar(v.finish)) : ''}</div>`;
     return `<div class="dgrid">
       ${inp('Activity ID', 'id', 'text', a.id)}${inp('Name', 'name', 'text', a.name, 'style="grid-column:span 5"')}
-      ${inp('Duration (d)', 'dur', 'number', a.dur, 'min="0" step="1"')}${inp('% complete', 'pct', 'number', a.pct || 0, 'min="0" max="100" step="5"')}
+      ${inp('Duration (d)', 'dur', 'number', a.dur, 'min="0" step="1"')}${inp('% complete', 'pct', 'number', a.pct || 0, 'min="0" max="100" step="5"' + (a.pctType === 'physical' && a.steps ? ' readonly title="Calculated from the activity’s steps"' : ''))}
       ${inp('Actual start', 'actualStart', 'date', a.actualStart || '')}${inp('Actual finish', 'actualFinish', 'date', a.actualFinish || '')}
       <label>Constraint</label><select data-k="ctype">${CSTR.map(([k, l]) => `<option value="${k}" ${(a.constraint?.type || '') === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
       ${inp('Constraint date', 'cdate', 'date', a.constraint?.date || '')}
       ${inp('Fixed cost', 'cost', 'number', a.cost || 0, 'min="0" step="100"')}${inp('Actual cost', 'actualCost', 'number', a.actualCost || 0, 'min="0" step="100"')}
+      <label>% complete type</label><select data-k="pctType"><option value="">Duration</option><option value="physical" ${a.pctType === 'physical' ? 'selected' : ''}>Physical${a.steps ? ' (from steps)' : ''}</option></select>
+      ${a.pctType === 'physical' ? inp('Remaining dur (d)', 'remaining', 'number', a.remaining ?? '', `min="0" step="1" placeholder="${Math.ceil(a.dur * (1 - (a.pct || 0) / 100))}"`) : ro('Remaining dur', (x.status === 'done' ? 0 : x.status === 'active' ? x.ef - Math.max(x.es, A.S.dataIdx) : a.dur) + ' d')}
+      ${(A.P.codes || []).map(c => `<label>${esc(c.name)}</label><select data-code="${esc(c.id)}"><option value=""></option>${c.values.map(v => `<option value="${esc(v.v)}" ${(a.codes || {})[c.id] === v.v ? 'selected' : ''}>${esc(v.v)}${v.d ? ' — ' + esc(v.d) : ''}</option>`).join('')}</select>`).join('')}
       ${ro('Early start', x.start)}${ro('Early finish', x.finish)}${ro('Late start', x.lateStart)}${ro('Late finish', x.lateFinish)}
       ${ro('Total float', (x.tf ?? '') + ' d', x.tf < 0 ? 'neg' : '')}${ro('Free float', (x.ff ?? '') + ' d')}${ro('Status', { done: 'Completed', active: 'In progress', planned: 'Not started' }[x.status] + (x.critical ? ' · <span class="neg">critical</span>' : '') + (x.longest ? ' · longest path' : ''))}${ro('Budget', money(C.budgetOf(A.P, a)))}
       ${v ? ro('BL start var.', fmtVar(v.start)) + ro('BL finish var.', fmtVar(v.finish)) + ro('BL duration', bl.acts[a.id].dur + ' d') + ro('Leveling', a.leveledStart ? 'Delayed to ' + a.leveledStart : '—') : ro('Leveling', a.leveledStart ? 'Delayed to ' + a.leveledStart : '—')}
@@ -45,10 +48,114 @@
         else if (k === 'pct') { a.pct = Math.max(0, Math.min(100, +v || 0)); if (a.pct > 0 && !a.actualStart) a.actualStart = A.S.results.get(id).start; if (a.pct >= 100 && !a.actualFinish) a.actualFinish = A.S.results.get(id).finish; if (a.pct < 100) a.actualFinish = null; }
         else if (k === 'ctype' || k === 'cdate') { const t = k === 'ctype' ? v : a.constraint?.type || 'SNET', d = k === 'cdate' ? v : a.constraint?.date || A.S.results.get(id).start; a.constraint = t ? { type: t, date: d } : null; }
         else if (k === 'cost' || k === 'actualCost') a[k] = +v || 0;
+        else if (k === 'pctType') { a.pctType = v || null; if (v === 'physical' && a.steps) syncSteps(a, id); }
+        else if (k === 'remaining') a.remaining = v === '' ? null : Math.max(0, Math.round(+v || 0));
         else if (k === 'actualFinish') { a.actualFinish = v || null; if (v) { a.pct = 100; if (!a.actualStart) a.actualStart = A.S.results.get(id).start; } }
         else a[k] = v || (k === 'name' ? a.name : null);
       });
     }));
+  }
+
+  function bindCodes() {
+    body.querySelectorAll('[data-code]').forEach(el => el.addEventListener('change', () => { const id = A.cur, c = el.dataset.code;
+      A.commit('Set activity code', P => { const a = P.activities.find(x => x.id === id); if (!a) return; a.codes = a.codes || {}; if (el.value) a.codes[c] = el.value; else delete a.codes[c]; }); }));
+  }
+
+  // ---------- steps ----------
+  // keep % complete and actual dates in step with the weighted steps of a Physical activity
+  function syncSteps(a, id) {
+    if (a.pctType !== 'physical' || !a.steps || !a.steps.length) return;
+    const pct = C.stepsPct(a.steps), x = A.S.results.get(id) || {};
+    a.pct = pct; if (pct > 0 && !a.actualStart) a.actualStart = x.start; if (pct >= 100 && !a.actualFinish) a.actualFinish = x.finish; if (pct < 100) a.actualFinish = null;
+  }
+  function steps() {
+    const a = cur(); if (!a || A.S.summary[A.P.activities.indexOf(a)]) return `<div class="empty">Select an activity (not a WBS row) to list its steps.</div>`;
+    const st = a.steps || [], phys = a.pctType === 'physical', tot = C.stepsPct(st), W = st.reduce((t, x) => t + (+x.weight || 0), 0);
+    return `<div class="stepbar"><b>${esc(a.id)} — ${esc(a.name)}</b><label>% complete type <select id="spt"><option value="">Duration</option><option value="physical" ${phys ? 'selected' : ''}>Physical</option></select></label>
+      ${st.length ? `<span>Steps complete: <b>${tot}%</b>${phys ? '' : ' <span class="dim">— steps set % complete only with the Physical type</span>'}</span>` : '<span class="dim">Break the work into weighted steps; with the Physical type their progress becomes the activity’s % complete.</span>'}</div>
+      <table class="mini steps"><tr><th style="width:26px">#</th><th>Step</th><th style="width:70px">Weight</th><th style="width:80px">% complete</th><th style="width:44px">Done</th><th style="width:60px">Share</th><th style="width:150px"></th></tr>` +
+      st.map((x, i) => `<tr><td class="num">${i + 1}</td><td><input data-si="${i}" data-f="name" value="${esc(x.name)}"></td><td><input data-si="${i}" data-f="weight" type="number" min="0" step="1" value="${x.weight}"></td>
+        <td><input data-si="${i}" data-f="pct" type="number" min="0" max="100" step="5" value="${x.pct}"></td><td style="text-align:center"><input data-si="${i}" data-f="done" type="checkbox" ${x.pct >= 100 ? 'checked' : ''}></td>
+        <td class="num">${W ? Math.round(100 * (+x.weight || 0) / W) : Math.round(100 / st.length)}%</td><td><button class="aero-btn small" data-smv="${i}" data-d="-1" ${i ? '' : 'disabled'}>↑</button> <button class="aero-btn small" data-smv="${i}" data-d="1" ${i < st.length - 1 ? '' : 'disabled'}>↓</button> <button class="aero-btn small" data-sdel="${i}">Remove</button></td></tr>`).join('') +
+      `<tr><td colspan="7"><button class="aero-btn small" id="sadd">+ Add step</button></td></tr></table>`;
+  }
+  function bindSteps() {
+    const id = A.cur;
+    const edit = (label, fn) => A.commit(label, P => { const a = P.activities.find(x => x.id === id); if (!a) return; fn(a); syncSteps(a, id); });
+    const spt = document.getElementById('spt'); if (spt) spt.onchange = () => edit('% complete type', a => { a.pctType = spt.value || null; });
+    body.querySelectorAll('[data-si]').forEach(el => el.addEventListener('change', () => edit('Edit step', a => { const x = a.steps[+el.dataset.si], f = el.dataset.f;
+      if (f === 'name') x.name = el.value || x.name; else if (f === 'done') x.pct = el.checked ? 100 : 0; else if (f === 'weight') x.weight = Math.max(0, +el.value || 0); else x.pct = Math.max(0, Math.min(100, +el.value || 0)); })));
+    body.querySelectorAll('[data-sdel]').forEach(el => el.onclick = () => edit('Remove step', a => { a.steps.splice(+el.dataset.sdel, 1); if (!a.steps.length) delete a.steps; }));
+    body.querySelectorAll('[data-smv]').forEach(el => el.onclick = () => edit('Move step', a => { const i = +el.dataset.smv, j = i + +el.dataset.d; if (j < 0 || j >= a.steps.length) return; [a.steps[i], a.steps[j]] = [a.steps[j], a.steps[i]]; }));
+    const add = document.getElementById('sadd'); if (add) add.onclick = () => {
+      const first = !(cur().steps || []).length && cur().pctType !== 'physical';
+      edit('Add step', a => { (a.steps = a.steps || []).push({ name: 'Step ' + (a.steps.length + 1), weight: 1, pct: 0 }); if (first) a.pctType = 'physical'; });
+      if (first) Aero.toast('% complete type set to Physical — progress now comes from the steps.');
+      setTimeout(() => { const ins = body.querySelectorAll('[data-f="name"]'); const last = ins[ins.length - 1]; if (last) { last.focus(); last.select(); } });
+    };
+  }
+
+  // ---------- activity codes dictionary ----------
+  let codeSel = null;
+  function codes() {
+    const list = A.P.codes || [];
+    if (!list.some(c => c.id === codeSel)) codeSel = list.length ? list[0].id : null;
+    const c = list.find(x => x.id === codeSel);
+    const sel = [...A.sel].map(id => A.P.activities.find(a => a.id === id)).filter((a, k) => a && !A.S.summary[A.P.activities.indexOf(a)]);
+    const used = (cid, v) => A.P.activities.filter(a => a.codes && a.codes[cid] === v).length;
+    const types = `<table class="mini"><tr><th style="width:90px">Code ID</th><th>Name</th><th style="width:50px">Values</th><th style="width:150px"></th></tr>` +
+      list.map((x, i) => `<tr class="${x.id === codeSel ? 'csel' : ''}"><td><input data-ci="${i}" data-f="id" value="${esc(x.id)}"></td><td><input data-ci="${i}" data-f="name" value="${esc(x.name)}"></td><td class="num">${x.values.length}</td>
+        <td><button class="aero-btn small" data-cpick="${esc(x.id)}">Values →</button> <button class="aero-btn small" data-cdel="${i}">Delete</button></td></tr>`).join('') +
+      `<tr><td colspan="4"><button class="aero-btn small" id="cadd">+ Add code</button></td></tr></table>`;
+    const vals = c ? `<table class="mini"><tr><th style="width:90px">${esc(c.name)} value</th><th>Description</th><th style="width:60px">Activities</th><th style="width:70px"></th></tr>` +
+      c.values.map((v, j) => `<tr><td><input data-vi="${j}" data-f="v" value="${esc(v.v)}"></td><td><input data-vi="${j}" data-f="d" value="${esc(v.d)}"></td><td class="num">${used(c.id, v.v)}</td><td><button class="aero-btn small" data-vdel="${j}">Delete</button></td></tr>`).join('') +
+      `<tr><td colspan="4"><button class="aero-btn small" id="vadd">+ Add value</button></td></tr></table>` : '<div class="empty">Add a code (e.g. Responsibility, Area, Phase) to tag and group activities.</div>';
+    const assign = list.length ? `<div class="stepbar"><b>Assign to ${sel.length} selected activit${sel.length === 1 ? 'y' : 'ies'}</b>${list.map(x => `<label>${esc(x.name)} <select data-assign="${esc(x.id)}" ${sel.length ? '' : 'disabled'}><option value="">— keep —</option><option value="\u0000">(clear)</option>${x.values.map(v => `<option value="${esc(v.v)}">${esc(v.v)}</option>`).join('')}</select></label>`).join('')}
+      <button class="aero-btn small" id="cgroup" style="margin-left:auto">Group activities by code…</button></div>` : '';
+    return assign + `<div class="cols2"><div>${types}</div><div>${vals}</div></div>`;
+  }
+  function bindCodesTab() {
+    const uniq = (base, taken) => { let k = 1; while (taken.has(base + k)) k++; return base + k; };
+    body.querySelectorAll('[data-ci]').forEach(el => el.addEventListener('change', () => { const i = +el.dataset.ci, f = el.dataset.f;
+      if (f === 'id') { const nv = el.value.trim().slice(0, 20), old = A.P.codes[i].id; if (!nv || A.P.codes.some((x, k) => k !== i && x.id === nv)) { Aero.toast(nv ? 'That code ID is already used.' : 'Code ID can’t be empty.'); Panels.render(); return; }
+        if (codeSel === old) codeSel = nv; if (A.view.groupBy === old) A.view.groupBy = nv;
+        A.commit('Rename code', P => { P.codes[i].id = nv; P.activities.forEach(a => { if (a.codes && a.codes[old] != null) { a.codes[nv] = a.codes[old]; delete a.codes[old]; } }); }); }
+      else A.commit('Rename code', P => { P.codes[i].name = el.value.slice(0, 60) || P.codes[i].name; }); }));
+    body.querySelectorAll('[data-cpick]').forEach(el => el.onclick = () => { codeSel = el.dataset.cpick; Panels.render(); });
+    body.querySelectorAll('[data-cdel]').forEach(el => el.onclick = async () => { const c = A.P.codes[+el.dataset.cdel];
+      if (!await Aero.confirm('Delete activity code', `Delete “${c.name}” and remove it from every activity?`)) return;
+      A.commit('Delete code', P => { P.codes.splice(+el.dataset.cdel, 1); P.activities.forEach(a => { if (a.codes) delete a.codes[c.id]; }); }); });
+    const cadd = document.getElementById('cadd'); if (cadd) cadd.onclick = () => { const id = uniq('CODE', new Set((A.P.codes || []).map(c => c.id))); codeSel = id; A.commit('Add code', P => { (P.codes = P.codes || []).push({ id, name: 'New code', values: [] }); }); };
+    const ci = (A.P.codes || []).findIndex(c => c.id === codeSel);
+    body.querySelectorAll('[data-vi]').forEach(el => el.addEventListener('change', () => { const j = +el.dataset.vi, f = el.dataset.f, c = A.P.codes[ci];
+      if (f === 'v') { const nv = el.value.trim().slice(0, 40), old = c.values[j].v; if (!nv || c.values.some((x, k) => k !== j && x.v === nv)) { Aero.toast(nv ? 'That value already exists.' : 'Value can’t be empty.'); Panels.render(); return; }
+        A.commit('Rename code value', P => { P.codes[ci].values[j].v = nv; P.activities.forEach(a => { if (a.codes && a.codes[c.id] === old) a.codes[c.id] = nv; }); }); }
+      else A.commit('Edit code value', P => { P.codes[ci].values[j].d = el.value.slice(0, 120); }); }));
+    body.querySelectorAll('[data-vdel]').forEach(el => el.onclick = () => { const c = A.P.codes[ci], v = c.values[+el.dataset.vdel].v;
+      A.commit('Delete code value', P => { P.codes[ci].values.splice(+el.dataset.vdel, 1); P.activities.forEach(a => { if (a.codes && a.codes[c.id] === v) delete a.codes[c.id]; }); }); });
+    const vadd = document.getElementById('vadd'); if (vadd) vadd.onclick = () => { const c = A.P.codes[ci]; const v = uniq('V', new Set(c.values.map(x => x.v))); A.commit('Add code value', P => P.codes[ci].values.push({ v, d: '' })); };
+    body.querySelectorAll('[data-assign]').forEach(el => el.addEventListener('change', () => { if (!el.value) return; const cid = el.dataset.assign, v = el.value, ids = new Set(A.sel);
+      A.commit('Assign activity code', P => P.activities.forEach((a, i) => { if (!ids.has(a.id) || A.S.summary[i]) return; a.codes = a.codes || {}; if (v === '\u0000') delete a.codes[cid]; else a.codes[cid] = v; }));
+      Aero.toast(v === '\u0000' ? 'Code cleared.' : `${v} assigned to ${[...ids].length} activit${ids.size === 1 ? 'y' : 'ies'}.`); }));
+    const cg = document.getElementById('cgroup'); if (cg) cg.onclick = () => A.setGroupBy(codeSel);
+  }
+
+  // ---------- schedule quality check ----------
+  function check() {
+    if (A.S.error) return `<div class="neg" style="padding:10px">${esc(A.S.error)}</div>`;
+    const r = C.dcma(A.P, A.S, A.baseline()); if (!r) return '';
+    const fmt = c => c.value == null ? '—' : c.unit === '%' ? (+c.value).toFixed(1) + '%' : (c.key === 'cpli' || c.key === 'bei') ? (+c.value).toFixed(2) : c.unit === ' d' ? (c.value > 0 ? '+' : '') + c.value + ' d' : String(c.value);
+    const badge = c => c.pass === true ? '<span class="ok">✔ Pass</span>' : c.pass === false ? '<span class="bad">✖ Fail</span>' : '<span class="dim">n/a</span>';
+    const chips = c => c.ids.slice(0, 10).map(id => `<a class="chip" data-goto="${esc(id)}">${esc(id)}</a>`).join('') + (c.ids.length > 10 ? `<span class="dim"> +${c.ids.length - 10} more</span>` : '');
+    return `<div class="stepbar"><b>DCMA 14-point assessment</b><span><span class="ok">${r.passed} passed</span> · <span class="${r.failed ? 'bad' : 'dim'}">${r.failed} failed</span> · <span class="dim">${r.na} not applicable</span></span>
+      <span class="dim">${A.baseline() ? 'Baseline: ' + esc(A.baseline().name) : 'Checks 11 and 14 need a baseline.'} · data date ${A.P.dataDate || A.P.start}</span></div>
+      <table class="mini dcma"><tr><th style="width:24px">#</th><th style="width:230px">Check</th><th style="width:70px">Result</th><th style="width:66px">Target</th><th style="width:60px"></th><th>Details</th><th style="width:300px">Activities</th></tr>` +
+      r.checks.map(c => `<tr class="${c.pass === false ? 'fail' : ''}"><td class="num">${c.n}</td><td>${esc(c.name)}</td><td class="num">${fmt(c)}</td><td>${esc(c.threshold)}</td><td>${badge(c)}</td><td class="dim">${esc(c.note || '')}</td><td>${chips(c)}</td></tr>`).join('') + '</table>';
+  }
+  function bindCheck() {
+    body.querySelectorAll('[data-goto]').forEach(el => el.onclick = () => { const id = el.dataset.goto;
+      if (!A.rows.some(r => r.id === id)) { A.view.filter = ''; document.getElementById('filter').value = ''; A.view.critOnly = false; document.getElementById('critOnly').checked = false; A.view.lookahead = 0; A.collapsed.clear(); A.rebuild(); }
+      A.select(id); const row = document.querySelector(`.prow[data-id="${CSS.escape(id)}"]`); if (row) row.scrollIntoView({ block: 'center' }); Gantt.scrollToDate(A.S.results.get(id).start); });
   }
 
   function rel() {
@@ -208,7 +315,7 @@
     return `<table class="mini">${lines.map(([k, v]) => `<tr><th style="width:220px">${k}</th><td>${v}</td></tr>`).join('')}</table>`;
   }
 
-  const TABS = { general: [general, bindGeneral], rel: [rel, bindRel], asg: [asg, bindAsg], usage: [usage, bindUsage], reslist: [reslist, bindRes], ev: [ev, () => requestAnimationFrame(drawEV)], bl: [bls, bindBl], log: [log, () => {}] };
+  const TABS = { general: [general, () => { bindGeneral(); bindCodes(); }], steps: [steps, bindSteps], codes: [codes, bindCodesTab], check: [check, bindCheck], rel: [rel, bindRel], asg: [asg, bindAsg], usage: [usage, bindUsage], reslist: [reslist, bindRes], ev: [ev, () => requestAnimationFrame(drawEV)], bl: [bls, bindBl], log: [log, () => {}] };
 
   function render() {
     const active = document.activeElement; if (active && body.contains(active) && active.matches('input,textarea') && !render.force) return; // don't clobber typing

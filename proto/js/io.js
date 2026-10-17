@@ -41,6 +41,8 @@
     doc.modes = IO.cleanModes(d.modes);
     doc.colorStyles.forEach(cs => { if (cs.modes) for (const k in cs.modes) if (!doc.modes.some(m => m.id === k)) delete cs.modes[k]; });
     doc.comments = IO.cleanComments(d.comments);
+    doc.effectStyles = LP.cleanEffectStyles(d.effectStyles);
+    if (d.guides != null) { const g = LP.cleanGuides(d.guides); if (g.length) doc.guides = g; }
     doc.textStyles = (Array.isArray(d.textStyles) ? d.textStyles : []).filter(s => s && typeof s.id === 'string').map(s => ({ id: s.id, name: String(s.name || 'Text').slice(0, 100), font: String(s.font || 'Inter').replace(/["\;{}<>]/g, '').slice(0, 60), size: num(s.size, 16, 1, 1000), weight: num(s.weight, 400, 100, 900), italic: !!s.italic, lh: num(s.lh, 0, 0, 2000), ls: num(s.ls, 0, -100, 100), ...(s.lib ? { lib: String(s.lib).slice(0, 100) } : {}) }));
     doc.images = {};
     for (const k in (d.images || {})) { const v = d.images[k]; if (typeof v === 'string' && /^data:image\/(png|jpeg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(v)) doc.images[k] = v; }
@@ -58,6 +60,7 @@
       return true;
     };
     doc.children = doc.children.filter(fix);
+    LP.syncEffectStyles(doc);
     return doc;
   };
   // coerce every field of an untrusted node into the shape the app expects
@@ -75,7 +78,11 @@
     for (const k in ENUMS) if (n[k] != null && !ENUMS[k].includes(n[k])) delete n[k];
     if (n.mask != null) n.mask = !!n.mask;
     if (n.cmode != null && !/^[\w-]{1,40}$/.test(n.cmode)) delete n.cmode;
-    if (n.maskType != null && !['alpha', 'luminance', 'vector'].includes(n.maskType)) delete n.maskType;
+    if (n.guides != null) { const g = LP.cleanGuides(n.guides); if (g.length && n.type === 'frame') n.guides = g; else delete n.guides; }
+    if (n.fxStyle != null && (typeof n.fxStyle !== 'string' || !/^[\w-]{1,64}$/.test(n.fxStyle))) delete n.fxStyle;
+    if (n.blur != null) { n.blur = LP.cleanBlur(n.blur); if (!n.blur) delete n.blur; }
+    Object.values(n.overrides || {}).forEach(o => { if (o && typeof o === 'object' && o.fxStyle != null && (typeof o.fxStyle !== 'string' || !/^[\w-]{1,64}$/.test(o.fxStyle))) delete o.fxStyle; });
+    if (n.maskType != null &&!['alpha', 'luminance', 'vector'].includes(n.maskType)) delete n.maskType;
     ['minW', 'maxW', 'minH', 'maxH', 'viewportW'].forEach(k => { if (n[k] != null) { const v = Number(n[k]); if (isFinite(v) && v > 0) n[k] = Math.min(1e5, v); else delete n[k]; } });
     if (n.runs) n.runs = IO.cleanRuns(n.runs);
     if (!n.runs) delete n.runs;
@@ -464,15 +471,15 @@
   /* ---------------- design system libraries (.lplib): share styles + components between files ---------------- */
   IO.libraryData = () => {
     const comps = Object.values(ED.scene.byId).filter(n => n.component && !ED.isClone(n));
-    const lib = { format: 'lproto-lib', version: 2, name: ED.doc.name || 'Library', uid: ED.doc.uid, modes: LP.modesOf(ED.doc), colorStyles: ED.doc.colorStyles, textStyles: ED.doc.textStyles, components: comps, images: {} };
+    const lib = { format: 'lproto-lib', version: 2, name: ED.doc.name || 'Library', uid: ED.doc.uid, modes: LP.modesOf(ED.doc), colorStyles: ED.doc.colorStyles, textStyles: ED.doc.textStyles, effectStyles: ED.doc.effectStyles || [], components: comps, images: {} };
     lib.images = usedImages(Object.assign({}, lib, { images: ED.doc.images }));
     return JSON.stringify(lib, (k, v) => k[0] === '_' ? undefined : v);
   };
   IO.exportLibrary = async () => {
     const comps = Object.values(ED.scene.byId).filter(n => n.component && !ED.isClone(n));
-    if (!comps.length && !ED.doc.colorStyles.length && !ED.doc.textStyles.length) { Aero.alert('Export library', 'This document has no components or styles to publish.'); return; }
+    if (!comps.length && !ED.doc.colorStyles.length && !ED.doc.textStyles.length && !(ED.doc.effectStyles || []).length) { Aero.alert('Export library', 'This document has no components or styles to publish.'); return; }
     await Aero.saveFile({ name: safeName(ED.doc.name) + '.lplib', data: IO.libraryData(), filters: [{ name: 'Lumen Proto library', extensions: ['lplib'] }] });
-    Aero.toast(`Library exported: ${comps.length} components, ${ED.doc.colorStyles.length} colors, ${ED.doc.textStyles.length} text styles`);
+    Aero.toast(`Library exported: ${comps.length} components, ${ED.doc.colorStyles.length} colors, ${ED.doc.textStyles.length} text styles, ${(ED.doc.effectStyles || []).length} effect styles`);
   };
   IO.importLibraryFile = async () => {
     const f = await Aero.openFile({ accept: '.lplib,.lproto', filters: [{ name: 'Lumen Proto library or file', extensions: ['lplib', 'lproto'] }] });
@@ -484,12 +491,13 @@
     if (!raw || (raw.format !== 'lproto-lib' && raw.format !== 'lproto')) throw new Error('Not a Lumen Proto library');
     let comps = raw.format === 'lproto-lib' ? raw.components : [];
     if (raw.format === 'lproto') { const all = []; const walk = n => { if (!n || typeof n !== 'object') return; if (n.component) { all.push(n); return; } (Array.isArray(n.children) ? n.children : []).forEach(walk); }; (raw.children || []).forEach(walk); comps = all; }
-    const clean = IO.parseDoc(JSON.stringify({ format: 'lproto', name: raw.name, children: Array.isArray(comps) ? comps : [], colorStyles: raw.colorStyles, textStyles: raw.textStyles, images: raw.images, modes: raw.modes || (raw.colorStyles || []).some(s => s && s.dark) ? raw.modes : null }));
+    const clean = IO.parseDoc(JSON.stringify({ format: 'lproto', name: raw.name, children: Array.isArray(comps) ? comps : [], colorStyles: raw.colorStyles, textStyles: raw.textStyles, effectStyles: raw.effectStyles, images: raw.images, modes: raw.modes || (raw.colorStyles || []).some(s => s && s.dark) ? raw.modes : null }));
     ED.doc.modes = LP.modesOf(ED.doc).slice(); clean.modes.forEach(m => { if (!ED.doc.modes.some(x => x.id === m.id)) ED.doc.modes.push(m); });
     const libName = String(raw.name || Aero.baseName(fname || 'Library')).slice(0, 100);
     let nc = 0, uc = 0, ns = 0, us = 0;
     clean.colorStyles.forEach(s => { s.lib = libName; const e = ED.doc.colorStyles.find(x => x.id === s.id); if (e) { Object.assign(e, s); us++; } else { ED.doc.colorStyles.push(s); ns++; } });
     clean.textStyles.forEach(s => { s.lib = libName; const e = ED.doc.textStyles.find(x => x.id === s.id); if (e) { Object.assign(e, s); us++; } else { ED.doc.textStyles.push(s); ns++; } });
+    ED.doc.effectStyles = ED.doc.effectStyles || []; let nf = 0, uf = 0; clean.effectStyles.forEach(s => { s.lib = libName; const e = ED.doc.effectStyles.find(x => x.id === s.id); if (e) { Object.assign(e, s); uf++; } else { ED.doc.effectStyles.push(s); nf++; } });
     Object.assign(ED.doc.images, clean.images);
     // components: ids that clash with non-component layers get fresh ids (references remapped)
     const remap = {};
@@ -504,11 +512,12 @@
       if (e && e.component) { const par = ED.parent(e), arr = ED.childArr(par); c.x = e.x; c.y = e.y; arr.splice(arr.indexOf(e), 1, c); uc++; }
       else { c.x = x; c.y = y0; x += c.w + 48; ED.doc.children.push(c); placed.push(c); nc++; }
     });
+    LP.syncEffectStyles(ED.doc);
     ED.commit('Import library ' + libName);
     LP.imagesReady(ED.doc).then(() => ED.redraw());
     window.PANELS?.renderAssets?.();
-    Aero.toast(`Library "${libName}": ${nc} new / ${uc} updated components, ${ns} new / ${us} updated styles`);
-    return { nc, uc, ns, us, placed };
+    Aero.toast(`Library "${libName}": ${nc} new / ${uc} updated components, ${ns} new / ${us} updated styles${nf + uf ? `, ${nf} new / ${uf} updated effect styles` : ""}`);
+    return { nc, uc, ns, us, nf, uf, placed };
   };
 
   /* ---------------- review comments from the HTML viewer ---------------- */

@@ -12,3 +12,11 @@
 .kv b{color:var(--navy);font-weight:600}
 .warn{color:#a35a00}
 .chart{flex:1;min-height:120px;width:100%;display:block;background:#fff}
+.chartbar{display:flex;gap:6px;align-items:center;padding:3px 6px;font-size:11px;background:#f4f8fc;border-bottom:1px solid var(--line);min-height:22px;flex-wrap:wrap}
+.chartbar:empty{display:none}
+.chartbar select{font:inherit;font-size:11px}
+.chartbar .seg{display:inline-flex;border:1px solid #b9cce0;border-radius:3px;overflow:hidden}
+.chartbar .seg span{padding:1px 7px;cursor:pointer}
+.chartbar .seg span.on{background:#cfe3f7;color:var(--navy)}
+.aero-tabs#ctabs .aero-tab{padding-left:7px;padding-right:7px}
+.mon-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:3px;vertical-align:-1px}

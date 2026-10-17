@@ -67,20 +67,26 @@
     // run text in the base workspace (command window, editor Run). name labels errors.
     run(src, name) {
       const ast = Lang.parse(src);
-      const f = this.frames[0], saved = f.funcs, savedName = f.name;
+      const f = this.frames[0], saved = f.funcs, savedName = f.name, savedSrc = f.src;
+      f.src = name || null;
       if (ast.funcs.length) { f.funcs = new Map(saved); ast.funcs.forEach(fn => f.funcs.set(fn.name, { def: fn, file: name || 'base', funcs: new Map(ast.funcs.map(x => [x.name, x])) })); }
       if (name) f.name = name;
       try { this.execBlock(ast.body); }
       catch (e) { if (e === RETURN) return; throw e; }
-      finally { f.name = savedName; if (!name) { /* keep functions typed at the prompt */ } }
+      finally { f.name = savedName; f.src = savedSrc; }
     }
-    execBlock(stmts) { for (let i = 0; i < stmts.length; i++) this.exec(stmts[i]); }
+    // hook(s, sameLine): debugger / profiler entry before every statement (null when neither is active)
+    execBlock(stmts) {
+      if (!this.hook) { for (let i = 0; i < stmts.length; i++) this.exec(stmts[i]); return; }
+      for (let i = 0; i < stmts.length; i++) { const s = stmts[i]; this.frame.line = s.line; const tok = this.hook(s, i > 0 && stmts[i - 1].line === s.line); this.exec(s); if (tok) this.hookEnd(tok); }
+    }
     exec(s) {
       this.frame.line = s.line;
       try { this['s_' + s.t](s); }
       catch (e) {
         if (e instanceof Signal) throw e;
         if (!(e instanceof M.LabError)) { const x = new M.LabError(e instanceof RangeError && /call stack/.test(e.message) ? 'Maximum recursion limit reached.' : (e.message || String(e))); x.js = e; e = x; }
+        if (this.onError && !e.dbgSeen && !e.interrupt && !this.tryDepth) { e.dbgSeen = true; this.frame.line = s.line; this.onError(e, s); }
         if (!e.where) e.where = []; if (!e.marked) { e.marked = new Set(); }
         if (!e.marked.has(this.frames.length)) { e.marked.add(this.frames.length); e.where.push({ name: this.frame.name, line: s.line }); }
         throw e;
@@ -147,8 +153,10 @@
     }
     s_try(s) {
       const depth = this.frames.length;
-      try { this.execBlock(s.body); }
+      const td = this.tryDepth || 0; this.tryDepth = td + 1;
+      try { this.execBlock(s.body); this.tryDepth = td; }
       catch (e) {
+        this.tryDepth = td;
         if (e instanceof Signal) throw e;
         if (e.interrupt) throw e;
         this.frames.length = depth;
@@ -539,16 +547,18 @@
       const b = this.lib[name];
       if (b) {
         this.tick();
+        if (this.prof && this.prof.on && !b.noProfile) { const p = this.prof.enter(name, 'built-in'); try { const r = b(args, nargout, this); return r === undefined ? [] : Array.isArray(r) ? r : [r]; } finally { this.prof.leave(p); } }
         const r = b(args, nargout, this);
         return r === undefined ? [] : Array.isArray(r) ? r : [r];
       }
       fail(`Unrecognized function or variable '${name}'.`, 'MATLAB:UndefinedFunction');
     }
     runScript(ast, name) {
-      const f = this.frame, saved = f.funcs, savedName = f.name;
+      const f = this.frame, saved = f.funcs, savedName = f.name, savedSrc = f.src;
       if (ast.funcs.length) f.funcs = new Map([...saved, ...ast.funcs.map(x => [x.name, { def: x, file: name, funcs: new Map(ast.funcs.map(y => [y.name, y])) }])]);
-      f.name = name;
-      try { this.execBlock(ast.body); } catch (e) { if (e !== RETURN) throw e; } finally { f.funcs = saved; f.name = savedName; }
+      f.name = name; f.src = name;
+      const prof = this.prof && this.prof.on ? this.prof.enter(name, 'script', name) : null;
+      try { this.execBlock(ast.body); } catch (e) { if (e !== RETURN) throw e; } finally { if (prof) this.prof.leave(prof); f.funcs = saved; f.name = savedName; f.src = savedSrc; }
     }
     callUser(u, args, nargout) {
       const d = u.def;
@@ -561,11 +571,13 @@
       const fixed = hasVarargin ? nparams - 1 : nparams;
       for (let i = 0; i < Math.min(fixed, args.length); i++) if (d.params[i] !== '~') scope.set(d.params[i], args[i]);
       if (hasVarargin) { const rest = args.slice(fixed); scope.set('varargin', new Cell(1, rest.length, rest)); }
-      const frame = { scope, name: d.name, funcs: u.funcs || new Map(), file: u.file, globalNames: new Set(), nargin: args.length, nargout, def: d, persistNames: new Set() };
+      const frame = { scope, name: d.name, funcs: u.funcs || new Map(), file: u.file, src: u.file, globalNames: new Set(), nargin: args.length, nargout, def: d, persistNames: new Set() };
       this.frames.push(frame); this.depth++;
+      const prof = this.prof && this.prof.on ? this.prof.enter(d.name === u.file || !u.file ? d.name : `${u.file}>${d.name}`, 'function', u.file) : null;
       try { this.execBlock(d.body); }
       catch (e) { if (e !== RETURN) { if (e instanceof Signal) fail('A BREAK or CONTINUE statement is outside a loop.'); throw e; } }
       finally {
+        if (prof) this.prof.leave(prof);
         this.depth--; this.frames.pop();
         if (d.persist) for (const n of frame.persistNames) d.persist.set(n, scope.get(n));
       }
@@ -592,8 +604,9 @@
       f.params.forEach((p, i) => { if (p === 'varargin') scope.set(p, new Cell(1, Math.max(0, args.length - i), args.slice(i))); else if (i < args.length && p !== '~') scope.set(p, args[i]); });
       if (this.depth > 400) fail('Maximum recursion limit of 400 reached.', 'MATLAB:recursionLimit');
       this.frames.push({ scope, name: 'anonymous function', funcs: f.funcs || new Map(), globalNames: new Set(), nargin: args.length, nargout }); this.depth++;
+      const prof = this.prof && this.prof.on ? this.prof.enter(f._profName || (f._profName = (s => s.length > 48 ? s.slice(0, 47) + '…' : s)(f.src)), 'anonymous') : null;
       try { return this.evalMulti(f.body, Math.max(1, nargout), false); }
-      finally { this.depth--; this.frames.pop(); }
+      finally { if (prof) this.prof.leave(prof); this.depth--; this.frames.pop(); }
     }
     // call a function value and return its first output (for library functions like ode45 / fzero)
     fcall(f, args) { const r = this.callFunc(f, args, 1); if (!r.length || r[0] === undefined) fail('The function did not return a value.'); return r[0]; }

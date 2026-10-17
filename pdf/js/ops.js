@@ -7,6 +7,9 @@ import { V } from './viewer.js';
 import { parseRanges, rectsIntersect, normRect, localFrame, f2, rgbOp, fmtBytes, esc, imageFileToDataUrl, dataUrlToBytes, prefs } from './util.js';
 import { AnnotationMode } from './pdfjs.js';
 import { appendToPage } from './content.js';
+import { redactPageContent, leakCheck, Unsupported } from './redact.js';
+import { loadPdf } from './pdfjs.js';
+import { removeHiddenDialog } from './sanitize.js';
 const L = window.PDFLib;
 const { PDFDocument, PDFName, PDFDict, PDFArray, PDFRef, PDFRawStream, PDFNumber, StandardFonts } = L;
 
@@ -29,56 +32,121 @@ const pageFrame = (d, i) => localFrame(d.info[i].view, d.info[i].rotate);
 export function applyRedactionsDialog() {
   const d = App.doc; if (!d) return;
   const marks = d.state.annots.filter(a => a.type === 'redact');
-  if (!marks.length) { Aero.alert('Apply redactions', 'Nothing is marked yet. Use the Redact tool to drag over areas, or select text and choose “Redact”.'); return; }
+  if (!marks.length) { Aero.alert('Apply redactions', 'Nothing is marked yet. Use the Redact tool to drag over areas, select text and choose “Redact”, or use Find & Redact to mark every match of a word or pattern.'); return; }
   const pages = [...new Set(marks.map(a => d.pageOf(a)))].sort((a, b) => a - b);
+  const o = App.opts.redact;
   Aero.dialog({
-    title: 'Apply redactions', width: 520,
+    title: 'Apply redactions', width: 540,
     instruction: `Permanently remove ${marks.length} marked area${marks.length > 1 ? 's' : ''} on page${pages.length > 1 ? 's' : ''} ${rangesText(pages)}?`,
-    html: `<div class="dnote">To guarantee that text, images and vector art under the marks are really gone, Lumen PDF re-renders each affected page as an image at the resolution below and blacks out the marked areas. Text outside the marks is kept as invisible, searchable text. Annotations, links and form fields overlapping a mark are deleted. Other pages are not touched. This cannot be undone after you save.</div>`,
-    fields: [{ key: 'dpi', label: 'Page resolution', type: 'select', value: String(App.opts.redact.dpi), options: [['150', '150 dpi (smaller file)'], ['200', '200 dpi'], ['300', '300 dpi (sharper)']] }, { key: 'keep', label: 'Keep other text searchable', type: 'checkbox', value: true }],
+    html: `<div class="dnote"><b>Remove content</b> deletes the text characters, images (or just the covered pixels) and vector shapes under each mark from the page itself — the rest of the page stays sharp and searchable. Every page is then re-checked; a page that can't be redacted precisely (unusual fonts or images) is re-rendered as an image instead. <b>Rasterize pages</b> always re-renders affected pages as images. Annotations, links and form fields overlapping a mark are deleted. This cannot be undone after you save.</div>`,
+    fields: [
+      { key: 'method', label: 'Method', type: 'select', value: o.method || 'remove', options: [['remove', 'Remove content (keep page vector & searchable)'], ['raster', 'Rasterize affected pages']] },
+      { key: 'fill', label: 'Box colour', type: 'color', value: o.fill || '#000000' },
+      { key: 'overlay', label: 'Overlay text (optional)', type: 'text', value: o.overlay || '' },
+      { key: 'dpi', label: 'Raster resolution', type: 'select', value: String(o.dpi), options: [['150', '150 dpi (smaller file)'], ['200', '200 dpi'], ['300', '300 dpi (sharper)']] },
+      { key: 'keep', label: 'Keep other text searchable on rasterized pages', type: 'checkbox', value: true }
+    ],
     ok: 'Apply Redactions',
-    onOK: v => { App.opts.redact.dpi = +v.dpi; applyRedactions({ dpi: +v.dpi, keepText: v.keep }); }
+    onOK: v => { Object.assign(o, { dpi: +v.dpi, method: v.method, fill: v.fill, overlay: v.overlay }); applyRedactions({ method: v.method, dpi: +v.dpi, keepText: v.keep, fill: v.fill, overlay: v.overlay }); }
   });
 }
-export async function applyRedactions({ dpi = 200, keepText = true } = {}) {
+// Does any redacted phrase survive in strings outside the page content (document info, bookmarks, annotations…)?
+async function redactedElsewhere(d, quotes) {
+  if (!quotes.length) return [];
+  const hay = [];
+  try {
+    const pdf = await PDFDocument.load(d.state.bytes, { updateMetadata: false });
+    const add = v => { if (v instanceof L.PDFString || v instanceof L.PDFHexString) { try { hay.push(v.decodeText()); } catch (e) { /* ignore */ } } };
+    for (const [, obj] of pdf.context.enumerateIndirectObjects()) {
+      const dict = obj instanceof L.PDFStream ? obj.dict : obj;
+      if (dict instanceof PDFDict) for (const [, v] of dict.entries()) { add(v); if (v instanceof PDFArray) v.asArray().forEach(add); if (v instanceof PDFDict) for (const [, w] of v.entries()) add(w); }
+      if (obj instanceof L.PDFStream && /Metadata/.test(dict.lookup(PDFName.of('Type'))?.toString() || '')) { try { hay.push(new TextDecoder().decode(obj instanceof PDFRawStream ? L.decodePDFRawStream(obj).decode() : obj.getContents())); } catch (e) { /* ignore */ } }
+    }
+  } catch (e) { return []; }
+  for (const v of Object.values(d.state.props || {})) hay.push(String(v ?? ''));
+  for (const a of d.state.annots) hay.push(a.contents || '', a.text || '', ...(a.replies || []).map(r => r.text || ''));
+  const H = hay.join(' ').replace(/\s+/g, ' ').toLowerCase();
+  return quotes.filter(q => H.includes(q.toLowerCase()));
+}
+function hexRgb(h) { const n = parseInt(String(h || '#000000').slice(1), 16) || 0; return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+async function rasterizePage(d, pdf, pg, pi, rects, { dpi, keepText, fill }, W, helv) {
+  const ctx = pdf.context;
+  const page = await d.getPage(pi);
+  const viewport = page.getViewport({ scale: dpi / 72, rotation: 0 });
+  const c = document.createElement('canvas'); c.width = Math.ceil(viewport.width); c.height = Math.ceil(viewport.height);
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  await page.render({ canvas: c, viewport, annotationMode: AnnotationMode.DISABLE }).promise;
+  g.fillStyle = fill || '#000';
+  for (const r of rects) { const [x1, y1] = viewport.convertToViewportPoint(r[0], r[1]), [x2, y2] = viewport.convertToViewportPoint(r[2], r[3]); g.fillRect(Math.floor(Math.min(x1, x2)) - 1, Math.floor(Math.min(y1, y2)) - 1, Math.ceil(Math.abs(x2 - x1)) + 2, Math.ceil(Math.abs(y2 - y1)) + 2); }
+  const png = new Uint8Array(await (await new Promise(res => c.toBlob(res, 'image/png'))).arrayBuffer()); c.width = 0;
+  const img = await pdf.embedPng(png);
+  const [vx1, vy1, vx2, vy2] = d.info[pi].view;
+  let ops = `q ${f2(vx2 - vx1)} 0 0 ${f2(vy2 - vy1)} ${f2(vx1)} ${f2(vy1)} cm /RedactIm Do Q `;
+  if (keepText) ops += await invisibleText(d, pi, rects, W, helv);
+  pg.node.set(PDFName.of('Contents'), ctx.register(ctx.flateStream(ops)));
+  pg.node.set(PDFName.of('Resources'), ctx.obj({ XObject: { RedactIm: img.ref }, Font: { RF: helv.ref } }));
+}
+// fill boxes (+ optional overlay text) drawn on top of the page content
+function boxOps(rects, fill, overlay, W, helv) {
+  const [r, g, b] = hexRgb(fill).map(v => v / 255);
+  let ops = `${f2(r)} ${f2(g)} ${f2(b)} rg `;
+  for (const q of rects) ops += `${f2(q[0])} ${f2(q[1])} ${f2(q[2] - q[0])} ${f2(q[3] - q[1])} re f `;
+  const text = overlay ? W.clean(helv, overlay) : '';
+  if (text) {
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b; const tc = lum < 0.5 ? '1 1 1' : '0 0 0';
+    for (const q of rects) {
+      const w = q[2] - q[0], h = q[3] - q[1]; const tw = helv.widthOfTextAtSize(text, 1) || 1;
+      const size = Math.min(h * 0.72, (w - 2) / tw); if (size < 3) continue;
+      ops += `BT ${tc} rg /@RF ${f2(size)} Tf ${f2(q[0] + (w - tw * size) / 2)} ${f2(q[1] + (h - size * 0.7) / 2)} Td ${helv.encodeText(text)} Tj ET `;
+    }
+  }
+  return ops;
+}
+function dropOverlapping(pdf, pg, rects, removeWidgets) {
+  const ctx = pdf.context; const arr = pg.node.Annots(); if (!arr) return;
+  const keep = [];
+  for (const ref of arr.asArray()) {
+    const ad = ref instanceof PDFRef ? ctx.lookup(ref) : ref;
+    const rr = ad instanceof PDFDict && ad.lookup(PDFName.of('Rect'));
+    const rect = rr instanceof PDFArray ? normRect(rr.asArray().map(x => x.asNumber?.() ?? 0)) : null;
+    if (rect && rects.some(r => rectsIntersect(rect, r))) { if (ad.lookup(PDFName.of('Subtype'))?.toString() === '/Widget') removeWidgets.add(ref instanceof PDFRef ? ref.tag : ad); }
+    else keep.push(ref);
+  }
+  pg.node.set(PDFName.of('Annots'), ctx.obj(keep));
+}
+// method: 'remove' (true content removal, verified, raster fallback per page) | 'raster'
+export async function applyRedactions({ method = 'remove', dpi = 200, keepText = true, fill = '#000000', overlay = '' } = {}) {
   const d = App.doc;
   const byPage = new Map();
   for (const a of d.state.annots) if (a.type === 'redact') { const i = d.pageOf(a); if (i < 0) continue; if (!byPage.has(i)) byPage.set(i, []); byPage.get(i).push(...a.rects.map(normRect)); }
   if (!byPage.size) return false;
-  let removedFields = 0;
+  const quotes = [...new Set(d.state.annots.filter(a => a.type === 'redact' && a.quote).map(a => String(a.quote).replace(/\s+/g, ' ').trim()).filter(q => q.length >= 3))];
+  let removedFields = 0; const report = { removed: [], raster: [], reasons: {}, glyphs: 0, images: 0, imagesEdited: 0, paths: 0, removedText: '' };
   const ok = await pageOp('Apply redactions', async (pdf, refs, ids) => {
-    const W = new PdfWriter(pdf); const helv = await W.font('Helvetica');
     const pages = pdf.getPages();
     const ctx = pdf.context; const removeWidgets = new Set();
-    for (const [pi, rects] of byPage) {
-      const page = await d.getPage(pi);
-      const viewport = page.getViewport({ scale: dpi / 72, rotation: 0 });
-      const c = document.createElement('canvas'); c.width = Math.ceil(viewport.width); c.height = Math.ceil(viewport.height);
-      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
-      await page.render({ canvas: c, viewport, annotationMode: AnnotationMode.DISABLE }).promise;
-      g.fillStyle = '#000';
-      for (const r of rects) { const [x1, y1] = viewport.convertToViewportPoint(r[0], r[1]), [x2, y2] = viewport.convertToViewportPoint(r[2], r[3]); g.fillRect(Math.floor(Math.min(x1, x2)) - 1, Math.floor(Math.min(y1, y2)) - 1, Math.ceil(Math.abs(x2 - x1)) + 2, Math.ceil(Math.abs(y2 - y1)) + 2); }
-      const png = new Uint8Array(await (await new Promise(res => c.toBlob(res, 'image/png'))).arrayBuffer()); c.width = 0;
-      const img = await pdf.embedPng(png);
-      const [vx1, vy1, vx2, vy2] = d.info[pi].view;
-      let ops = `q ${f2(vx2 - vx1)} 0 0 ${f2(vy2 - vy1)} ${f2(vx1)} ${f2(vy1)} cm /RedactIm Do Q `;
-      if (keepText) ops += await invisibleText(d, pi, rects, W, helv);
-      const pg = pages[pi];
-      pg.node.set(PDFName.of('Contents'), ctx.register(ctx.flateStream(ops)));
-      pg.node.set(PDFName.of('Resources'), ctx.obj({ XObject: { RedactIm: img.ref }, Font: { RF: helv.ref } }));
-      // remove overlapping annotations (links, widgets, foreign annotations)
-      const arr = pg.node.Annots();
-      if (arr) {
-        const keep = [];
-        for (const ref of arr.asArray()) {
-          const ad = ref instanceof PDFRef ? ctx.lookup(ref) : ref;
-          const rr = ad instanceof PDFDict && ad.lookup(PDFName.of('Rect'));
-          const rect = rr instanceof PDFArray ? normRect(rr.asArray().map(x => x.asNumber?.() ?? 0)) : null;
-          if (rect && rects.some(r => rectsIntersect(rect, r))) { if (ad.lookup(PDFName.of('Subtype'))?.toString() === '/Widget') removeWidgets.add(ref instanceof PDFRef ? ref.tag : ad); }
-          else keep.push(ref);
-        }
-        pg.node.set(PDFName.of('Annots'), ctx.obj(keep));
+    const raster = new Map();
+    if (method === 'remove') {
+      for (const [pi, rects] of byPage) {
+        try {
+          const s = await redactPageContent(pdf, pages[pi], rects);
+          report.glyphs += s.glyphs; report.images += s.images; report.imagesEdited += s.imagesEdited; report.paths += s.paths; report.removedText += s.removedText;
+        } catch (e) { if (e instanceof Unsupported) raster.set(pi, e.message); else throw e; }
       }
+      // verify independently with pdf.js that no character is left under a mark
+      const left = [...byPage.keys()].filter(pi => !raster.has(pi));
+      if (left.length) {
+        const pj = await loadPdf(await pdf.save({ useObjectStreams: false, updateFieldAppearances: false }));
+        try { for (const pi of left) { const leaks = await leakCheck(await pj.getPage(pi + 1), byPage.get(pi)); if (leaks.length) raster.set(pi, `text still found under a mark (“${leaks.slice(0, 12).join('')}”)`); } }
+        finally { pj.destroy?.(); }
+      }
+    } else for (const pi of byPage.keys()) raster.set(pi, 'rasterize chosen');
+    const W = new PdfWriter(pdf); const helv = await W.font('Helvetica');
+    for (const [pi, rects] of byPage) {
+      const pg = pages[pi];
+      if (raster.has(pi)) { await rasterizePage(d, pdf, pg, pi, rects, { dpi, keepText, fill }, W, helv); report.raster.push(pi); report.reasons[pi] = raster.get(pi); if (overlay) addOps(pdf, pg, boxOps(rects, fill, overlay, W, helv), { Font: { RF: helv.ref } }); }
+      else { addOps(pdf, pg, boxOps(rects, fill, overlay, W, helv), { Font: { RF: helv.ref } }); report.removed.push(pi); }
+      dropOverlapping(pdf, pg, rects, removeWidgets);
     }
     if (removeWidgets.size && pdf.catalog.get(PDFName.of('AcroForm'))) {
       const form = pdf.getForm();
@@ -92,11 +160,21 @@ export async function applyRedactions({ dpi = 200, keepText = true } = {}) {
       const pi = ids.indexOf(a.page); if (!byPage.has(pi)) return true;
       return !byPage.get(pi).some(r => rectsIntersect(annotRect(a), r));
     });
-    // drop form values of removed fields
     return { ids, annots };
-  });
-  if (ok) Aero.toast(`Redactions applied to ${byPage.size} page${byPage.size > 1 ? 's' : ''} (pages re-rendered as images)` + (removedFields ? ` · ${removedFields} form field${removedFields > 1 ? 's' : ''} removed` : ''), 4500);
-  return ok;
+  }, { toast: false });
+  if (ok) {
+    const parts = [];
+    const nImg = report.images + report.imagesEdited;
+    if (report.removed.length) parts.push(`content removed on ${report.removed.length} page${report.removed.length > 1 ? 's' : ''} (${report.glyphs} character${report.glyphs === 1 ? '' : 's'}${nImg ? `, ${nImg} image${nImg > 1 ? 's' : ''}` : ''}${report.paths ? `, ${report.paths} shape${report.paths > 1 ? 's' : ''}` : ''})`);
+    if (report.raster.length) parts.push(`${report.raster.length} page${report.raster.length > 1 ? 's' : ''} rasterized` + (method === 'remove' ? ` (p${rangesText(report.raster)}: ${report.reasons[report.raster[0]]})` : ''));
+    if (removedFields) parts.push(`${removedFields} form field${removedFields > 1 ? 's' : ''} removed`);
+    Aero.toast('Redactions applied — ' + parts.join(' · '), 6000);
+    report.elsewhere = await redactedElsewhere(d, quotes);
+    if (report.elsewhere.length) {
+      Aero.confirm('Redacted text found elsewhere', `The redacted text (“${report.elsewhere[0]}”${report.elsewhere.length > 1 ? ` and ${report.elsewhere.length - 1} more` : ''}) still appears in data stored in the file but not on the pages — for example the document properties, bookmarks or comments. Remove hidden information now?`, 'Remove Hidden Information…').then(yes => { if (yes) removeHiddenDialog(); });
+    }
+  }
+  return ok ? report : false;
 }
 async function invisibleText(d, pi, rects, W, font) {
   const t = await d.getText(pi); let ops = 'BT 3 Tr ';

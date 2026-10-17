@@ -23,6 +23,8 @@
     if (k === 'symbol') { it.applyMatrix = true; delete it.data.kind; delete it.data.sym; return it; }
     if (k === 'trace') return LV.trace.expand(it);
     if (k === 'blend') return LV.blend.expandOne(it);
+    if (k === 'repeat') return LV.repeat.expandOne(it);
+    if (k === 'warp') return LV.warp.expandOne(it);
     return it;
   };
   LV.copy = () => { if (!need()) return false; LV.clipboard = { items: sorted().map(it => it.exportJSON({ asString: false })), bounds: LV.selBounds() }; LV.toast(`Copied ${LV.sel.length} object${LV.sel.length > 1 ? 's' : ''}`); return true; };
@@ -111,7 +113,7 @@
 
   /* ---------- pathfinder ---------- */
   const toPathItem = it => {
-    if (['symbol', 'trace', 'blend'].includes(LV.kind(it))) it = LV.expandSpecial(it);
+    if (['symbol', 'trace', 'blend', 'repeat', 'warp'].includes(LV.kind(it))) it = LV.expandSpecial(it);
     if (LV.isPathItem(it)) return it;
     if (LV.isTextLike(it)) return LV.outlineText(it);
     if (it instanceof P.Group && !it.clipped) { // unite children into one compound shape

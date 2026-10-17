@@ -161,6 +161,7 @@
     });
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawOverlay(ctx, r);
+    ED.drawRulers?.(ctx, r);
   }
 
   const BLUE = '#1f8bff', PURPLE = '#9747ff', RED = '#f24822', PINK = '#ff2d84';
@@ -177,6 +178,7 @@
     const z = ED.view.z;
     // layout grids
     if (ED.showGrids) ED.scene && LP.walk(ED.doc, n => { if (n !== ED.doc && n.grids?.length && n.visible !== false) drawGrids(ctx, n); });
+    ED.drawGuideLines?.(ctx, r);
     // artboard titles
     ctx.save(); ctx.font = '11px "Segoe UI",sans-serif'; ctx.textBaseline = 'bottom';
     ED.doc.children.forEach(n => {
@@ -441,6 +443,7 @@
     exclude.forEach(n => { const p = ED.parent(n); (p === ED.doc || !p ? ED.doc.children : ED.kids(p)).forEach(s => { if (!ex.has(s) && s.visible !== false) sibs.add(s); }); });
     sibs.forEach(s => add(ED.wbox(s)));
     parents.forEach(p => { add(ED.wbox(p), 'parent'); const g = ED.gridLines(p); g.x.forEach(v => xs.push({ v, b: null })); g.y.forEach(v => ys.push({ v, b: null })); });
+    const gl = ED.guideSnapLines ? ED.guideSnapLines() : null; if (gl) { gl.x.forEach(v => xs.push({ v, b: null })); gl.y.forEach(v => ys.push({ v, b: null })); }
     return { xs, ys, boxes };
   }
   // snap box b (world). returns {dx, dy, lines}
@@ -513,6 +516,7 @@
     if (e.button === 1 || e.button === 0 && (spaceDown || ED.tool === 'hand')) { ED.drag = { kind: 'pan', sx, sy, vx: ED.view.x, vy: ED.view.y }; ED.updateCursor('grabbing'); return; }
     if (e.button === 2) return;
     if (e.button === 0 && ED.commentDown && ED.commentDown(e, sx, sy, w)) { ED.drag = null; return; }
+    if (e.button === 0 && ED.rulerDown && ED.rulerDown(e, sx, sy, w)) return;
     if (ED.mode === 'proto') return protoDown(e, sx, sy, w);
     if (ED.mode === 'inspect') { const ch = ED.hitChain(w.x, w.y); ED.select([ED.pickTarget(ch, true) || ED.pickTarget(ch)].filter(Boolean)); return; }
     const tool = ED.tool;
@@ -532,6 +536,7 @@
     }
     const h = handleAt(sx, sy);
     if (h) { startTransform(h, w, e); return; }
+    if (ED.guideGrab && ED.guideGrab(e, sx, sy)) return;
     // artboard title?
     const tnode = titleAt(sx, sy);
     if (tnode) { if (e.shiftKey) ED.select([tnode.id], true); else if (!ED.sel.includes(tnode.id)) ED.select([tnode.id]); startMove(w, e); return; }
@@ -588,6 +593,7 @@
     ED.cursorWorld = w; emit('cursor');
     const d = ED.drag;
     if (!d) return hoverMove(e, sx, sy, w);
+    if (d.kind === 'ext') { d.move(sx, sy, w, e); return; }
     switch (d.kind) {
       case 'pan': ED.view.x = d.vx + sx - d.sx; ED.view.y = d.vy + sy - d.sy; ED.redraw(); emit('view'); break;
       case 'marquee': {
@@ -635,6 +641,7 @@
     let cur = null;
     if (ED.mode === 'design' && ED.tool === 'select') { const h = handleAt(sx, sy); if (h) cur = h.kind === 'rotate' ? 'crosshair' : CURSORS[h.k]; }
     if (ED.mode === 'proto') { const h = ED.wireHandle(); if (h && Math.hypot(h.x - sx, h.y - sy) < 9) cur = 'pointer'; }
+    if (!cur && ED.mode === 'design' && ED.tool === 'select' && ED.guideAt) { const gl = ED.guideAt(sx, sy); if (gl) cur = gl.axis === 'x' ? 'col-resize' : 'row-resize'; }
     ED.updateCursor(cur);
     let hv = null;
     if (ED.tool === 'select' || ED.mode !== 'design') {
@@ -920,6 +927,7 @@
     const d = ED.drag; ED.drag = null; ED.guides = null;
     if (!d) return;
     const { sx, sy } = localPt(e), w = ED.s2w(sx, sy);
+    if (d.kind === 'ext') { d.up(sx, sy, w, e); ED.updateCursor(); return; }
     switch (d.kind) {
       case 'pan': ED.updateCursor(); break;
       case 'marquee': ED.redraw(); break;

@@ -248,6 +248,13 @@ const Sample = (() => {
     const added = await Cat.importFiles(files, { meta: metas, quiet: true });
     if (!added.length) return;
     const byName = n => added.find(p => p.name === n)?.id;
+    // snapshots on the mountains: the untouched original and a warmer alternative next to the current look
+    const mt = Cat.photos.get(byName('DSC_0412.jpg'));
+    if (mt) {
+      const warm = Model.clone(mt.settings); warm.wb.temp = 22; warm.calib.rH = 25; warm.calib.bH = -20; warm.pcurve = { ...warm.pcurve, sh: 20, hl: -15 };
+      mt.snapshots = [{ name: 'Original', s: Model.defaults() }, { name: 'Punchy landscape', s: mt.settings }, { name: 'Warm alternative', s: warm }].map(n => Model.sanitizeSnapshot({ ...n, id: Aero.uid(), t: Date.now() }));
+      DB.savePhoto(mt);
+    }
     // a black & white virtual copy of the mountains
     const [vc] = await Cat.virtualCopy([byName('DSC_0412.jpg')]);
     if (vc) { const p = Cat.photos.get(vc); Cat.setSettings(p, Model.presetApply(p.settings, Model.BUILTIN.find(b => b.name === 'B&W high contrast')), 'Preset: B&W high contrast'); p.rating = 4; DB.savePhoto(p); }

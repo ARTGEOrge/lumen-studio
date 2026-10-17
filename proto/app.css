@@ -188,3 +188,22 @@ table.kbd td{padding:5px 0;color:#222;line-height:1.5}
 .crow.res .cnum{background:#8a93a0}.crow.res{opacity:.7}
 #comments{flex:1;min-height:0;padding:0}
 #ltabs .aero-tab{padding-left:7px;padding-right:7px}
+/* 1.2: effect styles, contrast checker */
+.fxstyle{padding:5px 6px;gap:8px;display:flex;align-items:center}
+.fxwrap{display:inline-flex;align-items:center;justify-content:center;width:36px;height:26px;border-radius:4px;background:#e6ebf1;flex:none}
+.fxsw{width:20px;height:14px;border-radius:3px;background:#fff;flex:none}
+.chip.fxchip{background:#fff;box-shadow:none;outline:4px solid #e6ebf1;margin:0 10px 0 4px;width:14px;height:12px}
+.a11y-res{display:flex;align-items:center;gap:8px;margin:4px 0}
+.a11y-big{font:600 18px "Segoe UI",sans-serif;color:#1d2b3a}
+.a11y-badge{font:600 10.5px "Segoe UI",sans-serif;padding:1px 6px;border-radius:9px;color:#fff;background:#2e9d55}
+.a11y-badge.fail{background:#d64532}
+.a11y-sample{padding:5px 8px;border-radius:4px;font:600 13px "Segoe UI",sans-serif;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.a11y-sum{margin:2px 0 8px;font-size:12px}.a11y-sum .bad{color:#c43a26}.a11y-sum .good{color:#2e8a4c}
+.a11y-list{max-height:300px;overflow:auto;border:1px solid #d5dde7;border-radius:3px;background:#fff}
+.a11y-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid #edf1f5;cursor:pointer}
+.a11y-row:hover{background:linear-gradient(var(--hov-top,#f2f8fe),var(--hov-bot,#e3f0fc))}
+.a11y-chip{width:30px;height:22px;border-radius:3px;display:flex;align-items:center;justify-content:center;font:600 12px "Segoe UI",sans-serif;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15);flex:none}
+.a11y-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.a11y-name small,.a11y-ratio small{display:block;color:#6b7a8a;font-size:10.5px}
+.a11y-ratio{text-align:right;font:600 12px "Segoe UI",sans-serif;color:#c43a26}
+.a11y-ok{padding:12px;color:#2e8a4c;font-weight:600}

@@ -7,12 +7,15 @@
     layers: { top: true, bottom: true, silk: true, rats: true }, layer: 'top', trackW: 0.25, grid: 0.635, docName: 'Untitled', filePath: null,
   };
   const hist = new Aero.History({ max: 100 });
+  const editor = () => A.mode === 'sch' ? SchEditor : A.mode === '3d' ? View3D : BoardEditor;
+  A.routeWidth = net => { const c = Core.classOf(A.doc.board, net); return c.name === 'Default' ? A.trackW : c.width; };
 
   // ---------- state ----------
   function normalize(d) {
     d.sch = d.sch || {}; d.sch.parts = d.sch.parts || []; d.sch.wires = d.sch.wires || []; d.sch.labels = d.sch.labels || [];
     d.board = d.board || {}; const b = d.board; b.w = b.w || 60; b.h = b.h || 40; b.parts = b.parts || []; b.tracks = b.tracks || []; b.vias = b.vias || [];
     b.rules = { clearance: 0.2, track: 0.2, drill: 0.3, edge: 0.3, viaDia: 0.8, viaDrill: 0.4, ...(b.rules || {}) };
+    b.netClasses = Core.sanitizeClasses(b.netClasses);
     return d;
   }
   function recompute() { const nl = Core.netlist(A.doc.sch); A.netlist = nl; A.pinNet = nl.pinNet; A.refreshRats(); }
@@ -20,7 +23,7 @@
   function load(d, name, path) {
     A.doc = normalize(d); A.docName = name || d.name || 'Untitled'; A.filePath = path || null; A.sel = null; A.messages = []; A.msgKind = '';
     recompute(); hist.reset('Open', JSON.stringify(A.doc)); Aero.setDoc(A.docName, false);
-    SchEditor.fit(); BoardEditor.fit(); render();
+    SchEditor.fit(); BoardEditor.fit(); if (A.mode === '3d') View3D.fit(); render();
   }
   A.commit = (label, fn) => {
     const before = JSON.stringify(A.doc); fn(A.doc); normalize(A.doc);
@@ -35,15 +38,16 @@
   // ---------- rendering ----------
   A.status = s => { $('st1').textContent = s; };
   function render() {
-    (A.mode === 'sch' ? SchEditor : BoardEditor).draw();
+    editor().draw();
     renderProps(); renderMsgs();
     const sch = A.doc.sch, parts = sch.parts.filter(p => !LIB.PART[p.lib].power);
     $('st2').textContent = `${parts.length} parts · ${A.netlist.nets.length} nets`;
-    $('st3').textContent = A.mode === 'pcb' ? `${A.doc.board.w} × ${A.doc.board.h} mm · ${A.rats.totalNets - A.rats.unroutedNets}/${A.rats.totalNets} nets routed · ${A.doc.board.tracks.length} tracks · ${A.doc.board.vias.length} vias` : `${sch.wires.length} wires · ${sch.labels.length} labels`;
+    $('st3').textContent = A.mode !== 'sch' ? `${A.doc.board.w} × ${A.doc.board.h} mm · ${A.rats.totalNets - A.rats.unroutedNets}/${A.rats.totalNets} nets routed · ${A.doc.board.tracks.length} tracks · ${A.doc.board.vias.length} vias` : `${sch.wires.length} wires · ${sch.labels.length} labels`;
     $('hint').textContent = hintText();
   }
   A.render = render;
   function hintText() {
+    if (A.mode === '3d') return 'Drag to orbit · Shift-drag to pan · wheel to zoom';
     if (A.mode === 'sch') return { wire: 'Click to start, click to bend, end on a pin or wire. / flips the bend · Esc finishes', label: 'Click a wire end or pin to name its net', place: 'Click to place · R rotate · M mirror · Esc done' }[A.tool] || 'Drag parts to move (wires follow) · double-click to edit · Space-drag or right-drag pans';
     return { route: 'Click a pad to start · click to add corners · end on a pad · V = via + switch layer · / = 45° mode · Esc ends', via: 'Click to drop a via', measure: 'Click two points to measure' }[A.tool] || 'Drag footprints · R rotate · F flip to bottom · white lines = unrouted connections';
   }
@@ -106,16 +110,17 @@
     }
     if (A.mode === 'pcb' && s && s.kind === 'track') {
       const t = A.doc.board.tracks[s.i]; let len = 0; for (let k = 1; k < t.pts.length; k++) len += Math.hypot(t.pts[k][0] - t.pts[k - 1][0], t.pts[k][1] - t.pts[k - 1][1]);
-      el.innerHTML = `<div class="pform"><label>Track</label><span>${esc(t.net || 'no net')}</span><label>Layer</label><select data-f="layer"><option ${t.layer === 'top' ? 'selected' : ''}>top</option><option ${t.layer === 'bottom' ? 'selected' : ''}>bottom</option></select>
+      const tc = Core.classOf(A.doc.board, t.net);
+      el.innerHTML = `<div class="pform"><label>Track</label><span>${esc(t.net || 'no net')}${t.auto ? ' <span class="dim">· auto-routed</span>' : ''}</span><label>Net class</label><span class="ro">${esc(tc.name)} · min ${tc.width} mm · gap ${tc.clearance} mm</span><label>Layer</label><select data-f="layer"><option ${t.layer === 'top' ? 'selected' : ''}>top</option><option ${t.layer === 'bottom' ? 'selected' : ''}>bottom</option></select>
         <label>Width (mm)</label><input data-f="w" type="number" min="0.1" step="0.05" value="${t.w}"><label>Length</label><span class="ro">${len.toFixed(2)} mm</span></div>`;
       el.querySelectorAll('[data-f]').forEach(inp => inp.onchange = () => A.commit('Edit track', d => { const q = d.board.tracks[s.i]; q[inp.dataset.f] = inp.dataset.f === 'w' ? Math.max(0.05, +inp.value) : inp.value; }));
       return;
     }
-    if (A.mode === 'pcb') {
+    if (A.mode !== 'sch') {
       const b = A.doc.board;
       const zones = (b.zones || []).map((z, i) => { const f = Core.fillZone(b, z, A.pinNet); return `<label>Pour ${i + 1}</label><span>${esc(z.net)} · ${z.layer} · ${z.clearance} mm gap · ${f.area.toFixed(0)} mm² <button class="aero-btn small" data-zdel="${i}">✕</button></span>`; }).join('');
-      el.innerHTML = `<div class="pform">${zones}<label>Board</label><span>${b.w} × ${b.h} mm</span><label>Clearance</label><span class="ro">${b.rules.clearance} mm</span><label>Min track</label><span class="ro">${b.rules.track} mm</span><label>Via</label><span class="ro">${b.rules.viaDia} / ${b.rules.viaDrill} mm drill</span></div><button class="aero-btn small" id="bSetup" style="margin-top:6px">Board setup…</button>`;
-      $('bSetup').onclick = boardSetup; el.querySelectorAll('[data-zdel]').forEach(x => x.onclick = () => A.commit('Remove pour', d => d.board.zones.splice(+x.dataset.zdel, 1))); return;
+      el.innerHTML = `<div class="pform">${zones}<label>Board</label><span>${b.w} × ${b.h} mm</span><label>Clearance</label><span class="ro">${b.rules.clearance} mm</span><label>Min track</label><span class="ro">${b.rules.track} mm</span><label>Via</label><span class="ro">${b.rules.viaDia} / ${b.rules.viaDrill} mm drill</span><label>Net classes</label><span class="ro">${b.netClasses.length ? b.netClasses.map(c => esc(c.name) + ' (' + c.nets.length + ')').join(', ') : 'Default only'}</span></div><div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap"><button class="aero-btn small" id="bSetup">Board setup…</button><button class="aero-btn small" id="bClasses">Net classes…</button><button class="aero-btn small" id="bLens">Net lengths…</button></div>`;
+      $('bSetup').onclick = boardSetup; $('bClasses').onclick = netClasses; $('bLens').onclick = lengthReport; el.querySelectorAll('[data-zdel]').forEach(x => x.onclick = () => A.commit('Remove pour', d => d.board.zones.splice(+x.dataset.zdel, 1))); return;
     }
     el.innerHTML = `<span class="dim">Pick a part from the library, or select something to edit it.</span>`;
   }
@@ -132,7 +137,7 @@
     $('msgCount').textContent = A.msgKind ? A.messages.length : '';
     if (!A.msgKind) { list.appendChild(Aero.el('div', 'aero-item msg', `<span class="dim">Run <b style="color:inherit">Check</b> to list problems here.</span>`)); return; }
     if (!A.messages.length) { list.appendChild(Aero.el('div', 'aero-item msg ok', `<b>✓ No problems</b>`)); return; }
-    A.messages.forEach(m => { const d = Aero.el('div', 'aero-item msg', `<b>${esc(m.type)}</b> ${esc(m.msg)}`); d.onclick = () => { if (m.x == null) return; const ed = A.mode === 'sch' ? SchEditor : BoardEditor; const v = ed.view; const s = A.mode === 'sch' ? 30 : 30; v.scale = Math.max(v.scale, s); v.ox = m.x - v.w / 2 / v.scale; v.oy = m.y - v.h / 2 / v.scale; ed.draw(); }; list.appendChild(d); });
+    A.messages.forEach(m => { const d = Aero.el('div', 'aero-item msg', `<b>${esc(m.type)}</b> ${esc(m.msg)}`); d.onclick = () => { if (m.x == null || A.mode === '3d') return; const ed = A.mode === 'sch' ? SchEditor : BoardEditor; const v = ed.view; const s = A.mode === 'sch' ? 30 : 30; v.scale = Math.max(v.scale, s); v.ox = m.x - v.w / 2 / v.scale; v.oy = m.y - v.h / 2 / v.scale; ed.draw(); }; list.appendChild(d); });
   }
 
   // ---------- modes & tools ----------
@@ -155,13 +160,14 @@
     A.tool = id; tb.set(id === 'place' ? '' : id); render();
   };
   function setMode(m) {
-    if (A.mode === m) return; SchEditor.cancel(); BoardEditor.cancel();
+    if (A.mode === m) return; SchEditor.cancel(); BoardEditor.cancel(); const was = A.mode;
     A.mode = m; A.sel = null; A.tool = 'select'; A.placing = null;
-    if (m === 'pcb' && A.msgKind === 'erc') { A.msgKind = ''; A.messages = []; } if (m === 'sch' && A.msgKind === 'drc') { A.msgKind = ''; A.messages = []; }
+    if (m !== 'sch' && A.msgKind === 'erc') { A.msgKind = ''; A.messages = []; } if (m === 'sch' && A.msgKind === 'drc') { A.msgKind = ''; A.messages = []; }
     document.querySelectorAll('.mode').forEach(b => b.classList.toggle('on', b.dataset.m === m));
-    $('schBar').hidden = m !== 'sch'; $('pcbBar').hidden = m !== 'pcb'; $('libBox').hidden = m !== 'sch'; $('layerBar').hidden = m !== 'pcb';
-    $('stage').style.background = m === 'pcb' ? '#0d1117' : '#fbfbf6';
+    $('schBar').hidden = m !== 'sch'; $('pcbBar').hidden = m !== 'pcb'; $('v3dBar').hidden = m !== '3d'; $('libBox').hidden = m !== 'sch'; $('layerBar').hidden = m !== 'pcb';
+    $('stage').style.background = m === 'pcb' ? '#0d1117' : m === '3d' ? '#0e1319' : '#fbfbf6';
     document.querySelectorAll('#tools .aero-tool').forEach(b => { const t = TOOLS.find(x => x && x.id === b.dataset.tool); b.hidden = t.m !== 'both' && t.m !== m; });
+    if (m === '3d' && was === 'sch') View3D.fit();
     tb.set('select'); render();
   }
   A.select = s => { A.sel = s; render(); };
@@ -207,6 +213,81 @@
       { key: 'clearance', label: 'Clearance (mm)', type: 'number', value: 0.4, min: 0.1, step: 0.05 },
     ], onOK: v => { setMode('pcb'); A.commit('Copper pour', d => { (d.board.zones = d.board.zones || []).push({ net: v.net, layer: v.layer, clearance: Math.max(0.1, +v.clearance) }); }); Aero.toast(`Poured ${v.net} on ${v.layer} copper`); } });
   }
+  // ---------- autorouter ----------
+  function autoRoute(scope) {
+    if (A.mode !== 'pcb') setMode('pcb');
+    if (!A.rats.lines.length) return Aero.toast('Nothing to route — every net is connected.');
+    const selNet = A.sel && A.sel.net, nets = [...new Set(A.rats.lines.map(l => l.net))];
+    Aero.dialog({ title: 'Auto-route', instruction: 'Routes the white ratsnest connections on a grid with 45° corners and vias, keeping every net-class width and clearance. Tracks you drew stay; run it again after moving parts.', fields: [
+      { key: 'scope', label: 'Route', type: 'select', options: [['all', `All unrouted nets (${nets.length})`], ...(selNet && nets.includes(selNet) ? [['net', 'Only net ' + selNet]] : [])], value: scope === 'net' && selNet && nets.includes(selNet) ? 'net' : 'all' },
+      { key: 'layers', label: 'Layers', type: 'select', options: [['both', 'Top and bottom'], ['top', 'Top only'], ['bottom', 'Bottom only']], value: 'both' },
+      { key: 'vias', label: 'Allow vias', type: 'checkbox', value: true },
+      { key: 'width', label: 'Track width, Default class (mm)', type: 'number', value: A.trackW, min: 0.1, max: 3, step: 0.05 },
+      { key: 'res', label: 'Routing grid (mm)', type: 'select', options: [['0.25', '0.25 (default)'], ['0.2', '0.2 (finer, slower)'], ['0.3175', '0.3175 (1/8 of 0.1 in)'], ['0.5', '0.5 (fast, coarse)']], value: '0.25' },
+    ], ok: 'Route', onOK: v => {
+      Aero.busy('Auto-routing…');
+      setTimeout(() => {
+        let r;
+        try { r = PcbRoute.autoroute(A.doc.board, A.pinNet, { nets: v.scope === 'net' ? [selNet] : null, layers: v.layers === 'both' ? ['top', 'bottom'] : [v.layers], vias: v.vias, width: Math.max(0.1, +v.width || A.trackW), res: +v.res || 0.25 }); }
+        catch (e) { Aero.busy(); return Aero.alert('Auto-route', e.message || String(e)); }
+        Aero.busy();
+        if (r.tracks.length || r.vias.length) A.commit('Auto-route', d => { d.board.tracks.push(...r.tracks); d.board.vias.push(...r.vias); });
+        Aero.toast(r.failed.length ? `Routed ${r.routed.length} of ${r.connections} connections — ${r.failed.length} could not be routed (still shown as ratsnest)` : `Routed all ${r.connections} connections · ${r.tracks.length} tracks · ${r.vias.length} vias · ${(r.ms / 1000).toFixed(1)} s`, 4000);
+      }, 30);
+    } });
+  }
+  function unroute(kind) {
+    if (A.mode !== 'pcb') setMode('pcb');
+    const net = A.sel && A.sel.net;
+    if (kind === 'net' && !net) return Aero.toast('Select a track, via or pad of the net first.');
+    let n = 0; A.commit(kind === 'net' ? 'Un-route net' : kind === 'auto' ? 'Remove auto-routed tracks' : 'Un-route all', d => { n = PcbRoute.unroute(d.board, { nets: kind === 'net' ? [net] : null, autoOnly: kind === 'auto' }); });
+    A.sel = null; render(); Aero.toast(n ? `Removed ${n} track${n === 1 ? '' : 's'} and vias` : 'Nothing to remove');
+  }
+
+  // ---------- net classes ----------
+  function netClasses() {
+    const b = A.doc.board, all = A.netlist.nets.map(n => n.name).sort((a, c) => a.localeCompare(c, undefined, { numeric: true })), D = Core.defaultClass(b);
+    const row = c => `<tr><td><input class="nc-name" value="${esc(c.name)}" placeholder="Name"></td><td><input class="nc-w" type="number" min="0.05" step="0.05" value="${c.width ?? ''}" placeholder="${D.width}"></td><td><input class="nc-c" type="number" min="0.05" step="0.05" value="${c.clearance ?? ''}" placeholder="${D.clearance}"></td><td><input class="nc-vd" type="number" min="0.2" step="0.05" value="${c.viaDia ?? ''}" placeholder="${D.viaDia}"></td><td><input class="nc-vh" type="number" min="0.1" step="0.05" value="${c.viaDrill ?? ''}" placeholder="${D.viaDrill}"></td><td><input class="nc-nets" value="${esc((c.nets || []).join(' '))}" placeholder="GND +5V …" list="ncNets"></td><td><button class="aero-btn small nc-del" title="Remove class">✕</button></td></tr>`;
+    const dlg = Aero.dialog({ title: 'Net classes', width: 720, instruction: 'Nets in a class are routed and checked with its track width (minimum) and clearance; the larger clearance of two classes applies between them. Nets not listed use the board rules (Default class). Separate net names with spaces.', ok: 'Apply',
+      html: `<table class="ptab nc"><thead><tr><th>Class</th><th>Width</th><th>Clearance</th><th>Via Ø</th><th>Via drill</th><th>Nets</th><th></th></tr></thead><tbody>${b.netClasses.map(row).join('')}</tbody></table>
+        <datalist id="ncNets">${all.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+        <div style="display:flex;gap:6px;margin-top:6px"><button class="aero-btn small" id="ncAdd">Add class</button><button class="aero-btn small" id="ncPower">Add “Power” class for supply nets</button></div>
+        <div class="dim" style="margin-top:6px;font-size:11.5px">Nets: ${all.map(esc).join(' · ') || '—'}</div>`,
+      onOK: () => {
+        const rows = [...dlg.el.querySelectorAll('.nc tbody tr')].map(tr => ({ name: tr.querySelector('.nc-name').value, width: tr.querySelector('.nc-w').value, clearance: tr.querySelector('.nc-c').value, viaDia: tr.querySelector('.nc-vd').value, viaDrill: tr.querySelector('.nc-vh').value, nets: tr.querySelector('.nc-nets').value.split(/[\s,]+/).filter(Boolean) }));
+        const unknown = rows.flatMap(r => r.nets).filter(n => !all.includes(n));
+        const list = Core.sanitizeClasses(rows.map(r => ({ ...r, nets: r.nets.filter(n => all.includes(n)) })));
+        A.commit('Net classes', d => { d.board.netClasses = list; });
+        if (A.msgKind === 'drc') runCheck('drc', true);
+        Aero.toast(`${list.length} net class${list.length === 1 ? '' : 'es'}${unknown.length ? ' · ignored unknown nets: ' + unknown.join(' ') : ''}`, 3500);
+      } });
+    const tbody = dlg.el.querySelector('.nc tbody');
+    const wire = () => tbody.querySelectorAll('.nc-del').forEach(x => x.onclick = () => x.closest('tr').remove());
+    dlg.el.querySelector('#ncAdd').onclick = () => { tbody.insertAdjacentHTML('beforeend', row({ name: 'Class ' + (tbody.children.length + 1), nets: [] })); wire(); };
+    dlg.el.querySelector('#ncPower').onclick = () => { const pw = all.filter(n => /^(GND|AGND|DGND|VCC|VDD|VIN|VBAT|\+.*|-.*|.*V\d*)$/i.test(n)); tbody.insertAdjacentHTML('beforeend', row({ name: 'Power', width: 0.5, clearance: 0.3, nets: pw })); wire(); };
+    wire();
+  }
+
+  // ---------- net length report ----------
+  function lengthReport() {
+    const rows = Core.netLengths(A.doc.board, A.pinNet), f = v => v ? v.toFixed(2) : '—';
+    const csv = () => [['Net', 'Class', 'Length mm', 'Top mm', 'Bottom mm', 'Vias', 'Delta to longest in class mm', 'Unrouted connections'], ...rows.map(r => [r.net, r.cls, r.length.toFixed(3), r.top.toFixed(3), r.bottom.toFixed(3), r.vias, r.delta.toFixed(3), r.open])]
+      .map(r => r.map(c => /[",]/.test(String(c)) ? `"${String(c).replace(/"/g, '""')}"` : c).join(',')).join('\r\n') + '\r\n';
+    const dlg = Aero.dialog({ title: 'Net lengths', width: 640, noCancel: true, ok: 'Close', instruction: 'Routed track length per net (centre line), grouped by net class. Δ is how much shorter a net is than the longest net of its class — use it to length-match buses and clock lines.',
+      html: `<div style="max-height:340px;overflow:auto"><table class="ptab"><thead><tr><th>Net</th><th>Class</th><th>Length</th><th>Top</th><th>Bottom</th><th>Vias</th><th>Δ</th><th>Status</th></tr></thead><tbody>${rows.map(r => `<tr class="lr" data-net="${esc(r.net)}"><td>${esc(r.net)}</td><td>${esc(r.cls)}</td><td class="num"><b>${f(r.length)}</b></td><td class="num">${f(r.top)}</td><td class="num">${f(r.bottom)}</td><td class="num">${r.vias}</td><td class="num">${r.length ? r.delta.toFixed(2) : '—'}</td><td>${r.open ? `<span style="color:#a01818">${r.open} open</span>` : '<span style="color:#2d7d2d">routed</span>'}</td></tr>`).join('') || '<tr><td colspan="8" class="dim">No nets yet</td></tr>'}</tbody></table></div>
+        <div style="margin-top:6px"><button class="aero-btn small" id="lrCsv">Export CSV…</button> <span class="dim">Click a net to highlight it on the board. All lengths in mm.</span></div>` });
+    dlg.el.querySelector('#lrCsv').onclick = () => Aero.saveFile({ name: A.docName + '-net-lengths.csv', data: csv(), filters: [{ name: 'CSV', extensions: ['csv'] }] });
+    dlg.el.querySelectorAll('tr.lr').forEach(tr => tr.onclick = () => { if (A.mode !== 'pcb') setMode('pcb'); A.select({ net: tr.dataset.net }); dlg.el.querySelectorAll('tr.lr').forEach(x => x.classList.toggle('sel', x === tr)); });
+  }
+
+  function shortcuts() {
+    const K = [['Ctrl+N / Ctrl+O / Ctrl+S', 'New, open, save project'], ['Ctrl+Shift+S', 'Save as'], ['Ctrl+Z / Ctrl+Y', 'Undo / redo'], ['F2 / F3 / F4', 'Schematic / PCB / 3-D view'],
+      ['F7', 'Check schematic (ERC)'], ['F8', 'Update PCB from schematic'], ['F9', 'Check design rules (DRC)'], ['Ctrl+Shift+A', 'Auto-route…'], ['Home', 'Fit to window'],
+      ['V', 'Select (PCB: via while routing)'], ['W / L', 'Wire / net label'], ['G / P', 'Ground / power rail'], ['X', 'Route track'], ['M', 'Mirror (schematic) / measure (PCB)'],
+      ['R / F', 'Rotate / mirror or flip to bottom'], ['/', 'Toggle 45° bend direction'], ['Delete', 'Delete selection'], ['Esc', 'Finish / cancel'], ['Space-drag, right-drag', 'Pan (2-D)'], ['Wheel', 'Zoom'], ['Drag / Shift-drag (3-D)', 'Orbit / pan the 3-D view']];
+    Aero.dialog({ title: 'Keyboard shortcuts', noCancel: true, ok: 'Close', width: 520, html: `<table class="ptab keys">${K.map(([a, b]) => `<tr><td><b>${esc(a)}</b></td><td>${esc(b)}</td></tr>`).join('')}</table>` });
+  }
+
   A.editPart = () => { const i = $('props').querySelector('input'); if (i) { i.focus(); i.select(); } };
   A.editLabel = A.editPart;
 
@@ -217,7 +298,7 @@
     catch (e) { Aero.alert('Couldn’t open ' + f.name, e.message || String(e)); }
   }
   async function save(as) {
-    const p = await Aero.saveFile({ name: A.docName + '.lpcb', data: JSON.stringify({ format: 'lumen-pcb', version: 1, doc: A.doc }), filters: [{ name: 'Lumen PCB project', extensions: ['lpcb'] }], path: as ? null : A.filePath });
+    const p = await Aero.saveFile({ name: A.docName + '.lpcb', data: JSON.stringify({ format: 'lumen-pcb', version: 2, doc: A.doc }), filters: [{ name: 'Lumen PCB project', extensions: ['lpcb'] }], path: as ? null : A.filePath });
     if (p) { if (typeof p === 'string' && /[\\/]/.test(p)) A.filePath = p; A.docName = String(p).split(/[\\/]/).pop().replace(/\.lpcb$/i, ''); Aero.setDoc(A.docName, false); return true; } return false;
   }
   async function exportFab() {
@@ -225,15 +306,17 @@
     const unrouted = A.rats.unroutedNets;
     if ((drcErr.length || unrouted) && !await Aero.confirm('Export Gerbers', `${drcErr.length ? drcErr.length + ' DRC problem(s)' : ''}${drcErr.length && unrouted ? ' and ' : ''}${unrouted ? unrouted + ' unrouted net(s)' : ''}. Export anyway?`)) return;
     const base = A.docName.replace(/[^\w.-]+/g, '_');
-    const files = Core.fabFiles(A.doc.board, base, A.pinNet); files.push({ name: base + '-BOM.csv', data: Core.bom(A.doc.sch) });
+    const files = Core.fabFiles(A.doc.board, base, A.pinNet, A.doc.sch); files.push({ name: base + '-BOM.csv', data: Core.bom(A.doc.sch) });
     await Aero.saveFile({ name: base + '-gerbers.zip', data: Core.zip(files), filters: [{ name: 'ZIP archive', extensions: ['zip'] }] });
   }
+  async function exportPnp() { await Aero.saveFile({ name: A.docName + '-pos.csv', data: Core.placement(A.doc.sch, A.doc.board), filters: [{ name: 'CSV', extensions: ['csv'] }] }); }
+  async function exportIpc() { await Aero.saveFile({ name: A.docName + '-netlist.ipc', data: Core.ipc356(A.doc.board, A.pinNet, A.docName), filters: [{ name: 'IPC-D-356 netlist', extensions: ['ipc', 'd356'] }] }); }
   async function exportBom() { await Aero.saveFile({ name: A.docName + '-BOM.csv', data: Core.bom(A.doc.sch), filters: [{ name: 'CSV', extensions: ['csv'] }] }); }
   async function exportNetlist() {
     const rows = [['Net', 'Pins']]; A.netlist.nets.forEach(n => rows.push([n.name, n.nodes.map(x => x.ref + '.' + x.pin).join(' ')]));
     await Aero.saveFile({ name: A.docName + '-netlist.csv', data: rows.map(r => r.map(c => /[",]/.test(c) ? `"${c}"` : c).join(',')).join('\r\n'), filters: [{ name: 'CSV', extensions: ['csv'] }] });
   }
-  async function exportPng() { const c = $('cv'); const blob = await new Promise(r => c.toBlob(r, 'image/png')); await Aero.saveFile({ name: A.docName + (A.mode === 'sch' ? '-schematic' : '-board') + '.png', data: blob, filters: [{ name: 'PNG', extensions: ['png'] }] }); }
+  async function exportPng() { const c = $('cv'); const blob = await new Promise(r => c.toBlob(r, 'image/png')); await Aero.saveFile({ name: A.docName + (A.mode === 'sch' ? '-schematic' : A.mode === '3d' ? '-3d' : '-board') + '.png', data: blob, filters: [{ name: 'PNG', extensions: ['png'] }] }); }
   async function newDoc() { if (hist.items.length > 1 && !await Aero.confirm('New project', 'Start a new, empty project?')) return; load({ sch: {}, board: { w: 50, h: 40 } }, 'Untitled'); }
 
   // ---------- wiring ----------
@@ -241,32 +324,36 @@
     menus: {
       File: [['New project', 'Ctrl+N', newDoc], ['Open sample (555 blinker)', '', () => load(PcbSample.samplePcb(), '555 LED blinker')], ['Open…', 'Ctrl+O', async () => openFiles(await Aero.openFile({ accept: '.lpcb,.json', filters: [{ name: 'Lumen PCB project', extensions: ['lpcb'] }] }))], '-',
         ['Save', 'Ctrl+S', () => save(false)], ['Save as…', 'Ctrl+Shift+S', () => save(true)], '-', '#Fabrication',
-        ['Gerbers + drill + BOM (.zip)…', '', exportFab], ['Bill of materials (.csv)…', '', exportBom], ['Netlist (.csv)…', '', exportNetlist], ['Image of this view (.png)…', '', exportPng]],
+        ['Gerbers + drill + BOM + P&P (.zip)…', '', exportFab], ['Bill of materials (.csv)…', '', exportBom], ['Pick-and-place / centroid (.csv)…', '', exportPnp], ['IPC-D-356 test netlist (.ipc)…', '', exportIpc], ['Netlist (.csv)…', '', exportNetlist], ['Image of this view (.png)…', '', exportPng]],
       Edit: [['Undo', 'Ctrl+Z', () => restore(hist.undo())], ['Redo', 'Ctrl+Y', () => restore(hist.redo())], '-', ['Delete', 'Delete', del], ['Rotate', 'R', () => A.mode === 'sch' ? SchEditor.rotateSel() : BoardEditor.rotateSel()], ['Mirror / flip side', 'F', () => A.mode === 'sch' ? SchEditor.mirrorSel() : BoardEditor.flipSel()]],
       Place: [['Part…', '', () => { setMode('sch'); $('libSearch').focus(); }], ['Wire', 'W', () => { setMode('sch'); A.setTool('wire'); }], ['Net label', 'L', () => { setMode('sch'); A.setTool('label'); }], ['Ground', 'G', () => { setMode('sch'); startPlace('GND'); }], ['Power rail…', 'P', () => { setMode('sch'); startPlace('VCC'); }], '-',
         ['Route track', 'X', () => { setMode('pcb'); A.setTool('route'); }], ['Via', '', () => { setMode('pcb'); A.setTool('via'); }], ['Copper pour…', '', addPour]],
-      Design: [['Annotate references', '', () => A.commit('Annotate', d => Core.annotate(d.sch))], ['Check schematic (ERC)', 'F7', () => { setMode('sch'); runCheck('erc'); }], ['Update PCB from schematic', 'F8', syncPcb], '-', ['Check design rules (DRC)', 'F9', () => { setMode('pcb'); runCheck('drc'); }], ['Board setup…', '', () => { setMode('pcb'); boardSetup(); }]],
-      View: [['Schematic', 'F2', () => setMode('sch')], ['PCB', 'F3', () => setMode('pcb')], '-', ['Fit to window', 'Home', () => { (A.mode === 'sch' ? SchEditor : BoardEditor).fit(); render(); }],
+      Route: [['Auto-route…', 'Ctrl+Shift+A', () => autoRoute('all')], ['Auto-route selected net…', '', () => autoRoute('net')], '-',
+        ['Un-route selected net', '', () => unroute('net')], ['Remove auto-routed tracks', '', () => unroute('auto')], ['Un-route all', '', () => unroute('all')]],
+      Design: [['Annotate references', '', () => A.commit('Annotate', d => Core.annotate(d.sch))], ['Check schematic (ERC)', 'F7', () => { setMode('sch'); runCheck('erc'); }], ['Update PCB from schematic', 'F8', syncPcb], '-', ['Check design rules (DRC)', 'F9', () => { setMode('pcb'); runCheck('drc'); }], ['Board setup…', '', () => { setMode('pcb'); boardSetup(); }], ['Net classes…', '', netClasses], ['Net length report…', '', lengthReport]],
+      View: [['Schematic', 'F2', () => setMode('sch')], ['PCB', 'F3', () => setMode('pcb')], ['3D view', 'F4', () => setMode('3d')], '-', ['Fit to window', 'Home', () => { editor().fit(); render(); }],
         { label: 'Top copper', checked: () => A.layers.top, fn: () => { A.layers.top = !A.layers.top; renderLayerBar(); render(); } }, { label: 'Bottom copper', checked: () => A.layers.bottom, fn: () => { A.layers.bottom = !A.layers.bottom; renderLayerBar(); render(); } },
         { label: 'Silkscreen', checked: () => A.layers.silk, fn: () => { A.layers.silk = !A.layers.silk; renderLayerBar(); render(); } }, { label: 'Ratsnest', checked: () => A.layers.rats, fn: () => { A.layers.rats = !A.layers.rats; renderLayerBar(); render(); } }],
       Help: [['How to make a board', '', () => Aero.alert('Making a board in Lumen PCB',
-        '1. Schematic: pick parts from the Library and click to place them (R rotates). Draw wires with W; end a wire on a pin or another wire. Name nets with labels (L) — pins with the same label name are connected. Add Ground (G) and power rails (P).\n2. Check the schematic (F7) for unconnected pins.\n3. Update PCB (F8): footprints appear on the board with white ratsnest lines showing what still needs connecting.\n4. Arrange footprints, then route (X): click a pad, click to add corners, finish on the other pad. Press V while routing to drop a via and continue on the other layer.\n5. Run DRC (F9) until it is clean, then File → Gerbers to get a zip any PCB fab accepts (copper, mask, silk, outline, Excellon drill, BOM).\n\nGround planes: Place → Copper pour fills a layer with a net and is exported as Gerber regions.\n\nNot included yet: autorouter, thermal relief spokes, more than two layers, signal-integrity analysis.')]],
+        '1. Schematic: pick parts from the Library and click to place them (R rotates). Draw wires with W; end a wire on a pin or another wire. Name nets with labels (L) — pins with the same label name are connected. Add Ground (G) and power rails (P).\n2. Check the schematic (F7) for unconnected pins.\n3. Update PCB (F8): footprints appear on the board with white ratsnest lines showing what still needs connecting.\n4. Arrange footprints, then route (X): click a pad, click to add corners, finish on the other pad. Press V while routing to drop a via and continue on the other layer.\n5. Or let Route → Auto-route (Ctrl+Shift+A) lay the tracks for you; Design → Net classes gives power nets wider tracks and bigger gaps.\n6. Run DRC (F9) until it is clean, check it in 3-D (F4), then File → Gerbers to get a zip any PCB fab accepts (copper, mask, silk, outline, Excellon drill, BOM, pick-and-place, IPC-D-356 netlist).\n\nGround planes: Place → Copper pour fills a layer with a net and is exported as Gerber regions.\n\nNot included yet: push-and-shove routing, thermal relief spokes, more than two layers, signal-integrity analysis.')],
+        ['Keyboard shortcuts', '', shortcuts], ['About Lumen PCB', '', () => Aero.alert('Lumen PCB', 'Schematic capture and two-layer board layout. ERC and DRC with net classes, ratsnest, a grid autorouter with vias, copper pours, length report, 3-D preview, and fabrication output: Gerber RS-274X, Excellon drill, BOM, pick-and-place and IPC-D-356 netlist.')]],
     } });
   tb = Aero.toolbox($('tools'), TOOLS, id => { if (id && id !== A.tool) A.setTool(id); });
   // mode-aware single-key shortcuts
   const key = (k, fn) => Aero.shortcut(k, fn);
   key('V', () => { if (A.mode === 'pcb' && BoardEditor.routing) BoardEditor.placeVia(); else A.setTool('select'); });
-  key('M', () => { if (A.mode === 'sch') SchEditor.mirrorSel(); else A.setTool('measure'); });
-  key('/', () => (A.mode === 'sch' ? SchEditor : BoardEditor).toggleBend());
-  key('Escape', () => { if (!(A.mode === 'sch' ? SchEditor : BoardEditor).cancel()) A.select(null); });
+  key('M', () => { if (A.mode === 'sch') SchEditor.mirrorSel(); else if (A.mode === 'pcb') A.setTool('measure'); });
+  key('/', () => editor().toggleBend());
+  key('Escape', () => { if (!editor().cancel()) A.select(null); });
   document.querySelectorAll('.mode').forEach(b => b.onclick = () => setMode(b.dataset.m));
-  $('bAnno').onclick = () => A.commit('Annotate', d => Core.annotate(d.sch)); $('bErc').onclick = () => runCheck('erc'); $('bSync').onclick = syncPcb; $('bDrc').onclick = () => runCheck('drc'); $('bFab').onclick = exportFab;
+  $('bAnno').onclick = () => A.commit('Annotate', d => Core.annotate(d.sch)); $('bErc').onclick = () => runCheck('erc'); $('bSync').onclick = syncPcb; $('bDrc').onclick = () => runCheck('drc'); $('bFab').onclick = exportFab; $('bAuto').onclick = () => autoRoute('all');
+  document.querySelectorAll('#v3dBar [data-v]').forEach(b => b.onclick = () => View3D.setView(b.dataset.v)); $('v3dParts').onchange = () => { View3D.showParts = $('v3dParts').checked; }; $('v3dSave').onclick = exportPng;
   $('layer').onchange = () => { A.layer = $('layer').value; BoardEditor.draw(); };
   $('trackW').onchange = () => { A.trackW = +$('trackW').value; };
   $('grid').onchange = () => { A.grid = +$('grid').value; BoardEditor.draw(); };
   $('libSearch').oninput = renderLib;
-  const cv = $('cv'); SchEditor.attach(A, cv); BoardEditor.attach(A, cv);
-  new ResizeObserver(() => (A.mode === 'sch' ? SchEditor : BoardEditor).draw()).observe($('stage'));
+  const cv = $('cv'); SchEditor.attach(A, cv); BoardEditor.attach(A, cv); View3D.attach(A, cv);
+  new ResizeObserver(() => editor().draw()).observe($('stage'));
   renderLib(); renderLayerBar();
   document.querySelectorAll('#tools .aero-tool').forEach(b => { const t = TOOLS.find(x => x && x.id === b.dataset.tool); b.hidden = t.m === 'pcb'; });
   let start = null; try { const j = JSON.parse(localStorage.getItem(AUTOSAVE) || 'null'); if (j && j.doc && j.doc.sch) start = j; } catch (e) { }

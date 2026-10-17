@@ -73,11 +73,13 @@
     if (type === 'FS' && b >= a - 1) { pts.push([b + 3, y1], [b + 3, y2 + (y2 > y1 ? -5 : 5)]); }
     else { const ym = ib > ia ? pb.y : pb.y + RH; pts.push([a, y1], [a, ym], [b, ym], [b, y2], [x2, y2]); }
     const crit = l._driving && A.S.results.get(l.from)?.critical && A.S.results.get(l.to)?.critical;
-    g.strokeStyle = crit ? '#c81e2a' : '#4c6580'; g.fillStyle = g.strokeStyle; g.lineWidth = 1;
+    const traced = A.fp && A.fp.drivingLinks.includes(l);
+    g.strokeStyle = traced ? '#e07800' : crit ? '#c81e2a' : '#4c6580'; g.fillStyle = g.strokeStyle; g.lineWidth = traced ? 2 : 1;
     g.setLineDash(l._driving ? [] : [3, 3]);
     g.beginPath(); pts.forEach(([x, y], k) => k ? g.lineTo(Math.round(x) + .5, Math.round(y) + .5) : g.moveTo(Math.round(x) + .5, Math.round(y) + .5)); g.stroke(); g.setLineDash([]);
     const [ex, ey] = pts[pts.length - 1], [px, py] = pts[pts.length - 2];
     const ang = Math.atan2(ey - py, ex - px); g.beginPath(); g.moveTo(ex, ey); g.lineTo(ex - 6 * Math.cos(ang - .45), ey - 6 * Math.sin(ang - .45)); g.lineTo(ex - 6 * Math.cos(ang + .45), ey - 6 * Math.sin(ang + .45)); g.fill();
+    g.lineWidth = 1;
   }
 
   // Draw the chart. For export pass {g, sl:0, st:0, w, h, full:true}
@@ -116,8 +118,14 @@
         if (bx2 > bx1) { g.fillRect(bx1, p.y + 17, bx2 - bx1, 4); g.strokeRect(bx1 + .5, p.y + 17.5, bx2 - bx1 - 1, 3); }
         else { g.beginPath(); g.moveTo(bx1, p.y + 15); g.lineTo(bx1 + 3, p.y + 19); g.lineTo(bx1, p.y + 23); g.lineTo(bx1 - 3, p.y + 19); g.fill(); }
       }
+      const drv = A.fp && !x.summary && A.fp.info.get(a.id) && A.fp.info.get(a.id).driving;
+      if (drv) { // driving-path trace: amber halo behind the bar
+        g.fillStyle = 'rgba(240,140,0,.35)';
+        if (p.mile) { g.beginPath(); g.moveTo(p.x1, p.mid - 10); g.lineTo(p.x1 + 10, p.mid); g.lineTo(p.x1, p.mid + 10); g.lineTo(p.x1 - 10, p.mid); g.closePath(); g.fill(); }
+        else g.fillRect(p.x1 - 3, by - 3, Math.max(2, p.x2 - p.x1) + 6, bh + 6);
+      }
       if (x.summary) {
-        g.fillStyle = c1; g.fillRect(p.x1, p.y + 7, p.x2 - p.x1, 5);
+        g.fillStyle = a._grp ? '#3c5a7a' : c1; g.fillRect(p.x1, p.y + 7, p.x2 - p.x1, 5);
         [p.x1, p.x2].forEach(ex => { g.beginPath(); g.moveTo(ex - 4, p.y + 7); g.lineTo(ex + 4, p.y + 7); g.lineTo(ex, p.y + 15); g.fill(); });
       } else if (p.mile) {
         g.fillStyle = c2; g.beginPath(); g.moveTo(p.x1, p.mid - 7); g.lineTo(p.x1 + 7, p.mid); g.lineTo(p.x1, p.mid + 7); g.lineTo(p.x1 - 7, p.mid); g.closePath(); g.fill();
@@ -133,6 +141,7 @@
       // label
       const label = A.view.labels === 'res' ? (a.resources || []).map(r => r.res).join(', ') : a.name;
       if (label) { g.fillStyle = x.summary ? '#1e2c3a' : '#24313f'; g.fillText(label, (p.mile ? p.x1 + 10 : p.x2 + 6) + (A.sel.has(a.id) && !x.summary && !full ? 14 : 0), p.mid); }
+      if (A.trace === a.id && !x.summary) { g.fillStyle = '#e07800'; g.font = '600 11px Segoe UI, Tahoma, sans-serif'; const lx = (p.mile ? p.x1 - 12 : p.x1 - 6); g.textAlign = 'right'; g.fillText('trace target ▸', lx, p.mid); g.textAlign = 'left'; g.font = '11px Segoe UI, Tahoma, sans-serif'; }
       if (A.sel.has(a.id) && !x.summary && !full) { // link handle
         g.fillStyle = '#fff'; g.strokeStyle = '#2d78c4'; g.beginPath(); g.arc((p.mile ? p.x1 + 7 : p.x2) + 9, p.mid, 4, 0, 7); g.fill(); g.stroke();
       }
@@ -224,19 +233,31 @@
   function scrollToDate(date) { wrap.scrollLeft = Math.max(0, xOf(date) - 60); }
 
   // Full chart image with an activity column, for Export → PNG
+  const exportSize = () => ({ colW: 300, w: Math.min(16000, totalWidth()), h: HH + A.rows.length * RH + 8 });
   function exportCanvas() {
-    const colW = 300, w = Math.min(16000, totalWidth()), h = HH + A.rows.length * RH + 8;
+    const { colW, w, h } = exportSize();
     const c = document.createElement('canvas'); c.width = colW + w; c.height = h; const g = c.getContext('2d');
-    g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    drawExport(g, colW, w, h);
+    return c;
+  }
+  // Same drawing as the PNG, recorded as vector SVG (text stays text, bars stay shapes)
+  function exportSVG() {
+    const { colW, w, h } = exportSize();
+    const mc = document.createElement('canvas').getContext('2d');
+    const g = new PlanSVG.SvgContext(colW + w, h, (t, font) => { mc.font = font; return mc.measureText(t); });
+    drawExport(g, colW, w, h);
+    return g.toString((A.P.name || 'Project') + ' — Gantt chart');
+  }
+  function drawExport(g, colW, w, h) {
+    g.fillStyle = '#fff'; g.fillRect(0, 0, colW + w, h);
     g.save(); g.translate(colW, 0); g.beginPath(); g.rect(0, 0, w, h); g.clip(); paint(g, 0, 0, w, h, true); g.restore();
     g.fillStyle = '#e8f0fa'; g.fillRect(0, 0, colW, HH); g.fillStyle = '#1e395b'; g.font = '600 12px Segoe UI, Tahoma, sans-serif'; g.textBaseline = 'middle';
     g.fillText(A.P.name || 'Project', 8, 13); g.font = '11px Segoe UI, Tahoma, sans-serif'; g.fillText('Finish ' + A.S.finishDate + (A.P.dataDate ? ' · data date ' + A.P.dataDate : ''), 8, 30);
     A.rows.forEach((a, i) => { const x = A.S.results.get(a.id); g.font = (x.summary ? '600 ' : '') + '11.5px Segoe UI, Tahoma, sans-serif'; g.fillStyle = x.critical && !x.summary ? '#b4141e' : '#1d2733';
-      g.save(); g.beginPath(); g.rect(0, rowY(i), colW - 6, RH); g.clip(); g.fillText(`${a.id}  ${a.name}`, 8 + (a.level || 0) * 12, rowY(i) + RH / 2); g.restore();
+      g.save(); g.beginPath(); g.rect(0, rowY(i), colW - 6, RH); g.clip(); g.fillText(a._grp ? a.name : `${a.id}  ${a.name}`, 8 + (a.level || 0) * 12, rowY(i) + RH / 2); g.restore();
       g.strokeStyle = '#f0f3f7'; g.beginPath(); g.moveTo(0, rowY(i) + RH - .5); g.lineTo(colW, rowY(i) + RH - .5); g.stroke(); });
     g.strokeStyle = '#a7bcd6'; g.beginPath(); g.moveTo(colW - .5, 0); g.lineTo(colW - .5, h); g.stroke();
-    return c;
   }
 
-  window.Gantt = { attach, draw, scrollToDate, exportCanvas, RH, HH, xOf: d => xOf(d), scrollLeft: () => wrap.scrollLeft };
+  window.Gantt = { attach, draw, scrollToDate, exportCanvas, exportSVG, RH, HH, xOf: d => xOf(d), scrollLeft: () => wrap.scrollLeft };
 })();

@@ -42,7 +42,7 @@
       const b = F.shape(main, 'ellipse', { name: 'Bokeh ' + (i + 1), size: [s, s], fill: c, pos: [x, y] });
       b.tr.opacity.v = 38; b.blend = 'screen'; b.label = 4;
       const bl = F.effect('blur'); bl.p.amount.v = 40 + i * 6; b.effects.push(bl);
-      X(b.tr.position, `wiggle(0.35, ${70 + i * 15})`);
+      X(b.tr.position, `wiggle(0.35, thisComp.layer("Camera Push").effect("Bokeh Drift")("Slider") + ${i * 15})`);
       K(b.tr.opacity, [[0, 0], [1.5, 38]]);
       return b;
     });
@@ -96,6 +96,9 @@
     burst.out = 8;
 
     main.layers = [fade, sub, line, matteT, sweep, title, logoL, burst, master, ...bokeh, bg];
+    // an Expression Control drives the bokeh drift; comp markers label the beats of the soundtrack
+    const drift = F.effect('slider'); drift.name = 'Bokeh Drift'; drift.p.slider.v = 70; master.effects.push(drift);
+    main.markers = [[1.6, 'Logo hit', 1], [3.45, 'Title sweep', 2], [6.6, 'Outro', 8]].map(([t, name, label]) => ({ id: LM.uid(), t, name, dur: 0, label }));
     return { comps: [main, logo], active: main.id };
   };
 

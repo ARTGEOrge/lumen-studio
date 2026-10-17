@@ -115,10 +115,10 @@ const Swatches = (() => {
     const item = it => { fix(it, 'fill'); fix(it, 'stroke'); if (it.grad) { fix(it.grad, 'c0'); fix(it.grad, 'c1'); } if (it.type === 'table') tbl(it); };
     M.walkAll(d, item);
     for (const s of Object.values(d.stories)) {
-      s.attrs = s.attrs.map(a => { const o = { ...a }; fix(o, 'color'); return o; }); s.paras.forEach(p => fix(p, 'color'));
+      s.attrs = s.attrs.map(a => { const o = { ...a }; fix(o, 'color'); return o; }); s.paras.forEach(p => { fix(p, 'color'); if (p.ruleA) fix(p.ruleA, 'color'); if (p.ruleB) fix(p.ruleB, 'color'); });
       for (const o of Object.values(s.objs || {})) { if (o.kind === 'table') tbl(o); else if (o.item) item(o.item); }
     }
-    Object.values(d.paraStyles).forEach(st => fix(st, 'color')); Object.values(d.charStyles).forEach(st => fix(st, 'color'));
+    Object.values(d.paraStyles).forEach(st => { fix(st, 'color'); if (st.ruleA) fix(st.ruleA, 'color'); if (st.ruleB) fix(st.ruleB, 'color'); }); Object.values(d.charStyles).forEach(st => fix(st, 'color'));
   }
   // add swatches for unnamed colors used in the document
   function addUnnamed() {

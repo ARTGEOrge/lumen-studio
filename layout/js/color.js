@@ -125,10 +125,10 @@
     for (const [p, i] of pages) M.walkItems(p.items, it => item(it, { page: i, id: it.id }));
     for (const s of Object.values(d.stories)) {
       s.attrs.forEach(a => add(a.color, { story: s.id }));
-      s.paras.forEach(p => add(p.color, { story: s.id }));
+      s.paras.forEach(p => { add(p.color, { story: s.id }); add(p.ruleA?.color, { story: s.id }); add(p.ruleB?.color, { story: s.id }); });
       for (const o of Object.values(s.objs || {})) { if (o.kind === 'table') tableRefs(o, { story: s.id }); else if (o.item) item(o.item, { story: s.id }); }
     }
-    Object.values(d.paraStyles).forEach(st => add(st.color, { style: true }));
+    Object.values(d.paraStyles).forEach(st => { add(st.color, { style: true }); add(st.ruleA?.color, { style: true }); add(st.ruleB?.color, { style: true }); });
     Object.values(d.charStyles).forEach(st => add(st.color, { style: true }));
     return out;
   }

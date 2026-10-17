@@ -213,3 +213,8 @@ table.kbd td:first-child{color:#2c3e55}
 .curves .cvtabs .aero-btn.on{border-color:#2c628b;background:linear-gradient(#e5f4fc,#c4e5f6 50%,#98d1ef 50%,#68b3db)}
 #textinput{position:fixed;left:-1000px;top:0;width:200px;height:40px;opacity:0;pointer-events:none;resize:none}
 .lwarn{margin:6px 0 2px 18px;padding:0;max-height:260px;overflow:auto;line-height:1.45;color:#2c3e55}
+/* v1.2: layer markers on the layer bar */
+.tl-track .lmk{position:absolute;top:2px;width:9px;height:12px;z-index:2;cursor:ew-resize}
+.tl-track .lmk::before{content:'';position:absolute;inset:0;background:#3c3010;clip-path:polygon(0 0,100% 0,100% 62%,50% 100%,0 62%)}
+.tl-track .lmk::after{content:'';position:absolute;left:1px;top:1px;width:7px;height:9px;background:var(--mc);clip-path:polygon(0 0,100% 0,100% 62%,50% 100%,0 62%)}
+.tl-track .lmk.named span,.tl-track .lmk .mkn{position:absolute;left:11px;top:-1px;font-size:10px;line-height:12px;white-space:nowrap;color:#2c2410;pointer-events:none;max-width:160px;overflow:hidden;text-overflow:ellipsis;text-shadow:0 0 2px #fff,0 0 2px #fff}

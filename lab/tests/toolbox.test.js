@@ -118,4 +118,137 @@ t('yyaxis keeps two y axes with their own labels, limits and colors', () => {
   assert.deepStrictEqual(ax.series[0].color, [0, 0.447, 0.741]); assert.deepStrictEqual(ax.series[1].color, [0.85, 0.325, 0.098]); near(Array.from(ax.series[1].y), [30, 20, 10]);
 });
 
+// ---------- v1.2: constrained optimization ----------
+t('linprog matches the MATLAB documentation examples; infeasible and unbounded flags', () => {
+  const { v } = lab(`[x, fv, fl] = linprog([-1; -1/3], [1 1; 1 1/4; 1 -1; -1/4 -1; -1 -1; -1 1], [2; 1; 2; 1; -1; 2]);
+    [x2, f2] = linprog([-5 -4 -6], [1 -1 1; 3 2 4; 3 2 0], [20; 42; 30], [], [], [0 0 0], []);
+    [x3, f3] = linprog([-1; -1/3], [1 1; 1 1/4; 1 -1; -1/4 -1; -1 -1; -1 1], [2; 1; 2; 1; -1; 2], [1 1/4], 1/2, [-1; -0.5], [1.5; 1.25]);
+    [~, ~, bad] = linprog([1 1], [1 1; -1 -1], [1; -2]); [~, ~, unb] = linprog([-1 0], [0 1], 1, [], [], [0 0], []);`);
+  near(v('x'), [2 / 3, 4 / 3], 1e-9); near(v('fv'), -10 / 9, 1e-9); near(v('fl'), 1);
+  near(v('x2'), [0, 15, 3], 1e-9); near(v('f2'), -78, 1e-9);
+  near(v('x3'), [0.1875, 1.25], 1e-9); near(v('f3'), -0.6042, 1e-4);
+  near(v('bad'), -2); near(v('unb'), -3);
+});
+
+t('intlinprog branch and bound finds the integer optimum (knapsack)', () => {
+  const { v } = lab(`w = [12 2 1 1 4]; val = [4 2 1 2 10];
+    [x, fv, fl] = intlinprog(-val, 1:5, w, 15, [], [], zeros(1,5), ones(1,5));
+    [y, fy] = intlinprog([-1 -1], 1:2, [2 2; -2 2], [3; 1], [], [], [0 0], []);`);
+  near(v('x'), [0, 1, 1, 1, 1], 1e-9); near(v('fv'), -15); near(v('fl'), 1); near(v('fy'), -1);
+});
+
+t('quadprog solves convex QPs with inequalities, equalities and bounds', () => {
+  const { v } = lab(`H = [1 -1; -1 2]; f = [-2; -6]; A = [1 1; -1 2; 2 1]; b = [2; 2; 3];
+    [x, fv, fl] = quadprog(H, f, A, b);
+    [y, fy] = quadprog(H, f, [], [], [1 1], 0);
+    z = quadprog(eye(2), [-5; -5], [], [], [], [], [0 0], [1 2]);`);
+  near(v('x'), [2 / 3, 4 / 3], 1e-8); near(v('fv'), -8.2222, 1e-4); near(v('fl'), 1);
+  near(v('y'), [-0.8, 0.8], 1e-8); near(v('fy'), -1.6, 1e-8); near(v('z'), [1, 2], 1e-9);
+});
+
+t('fmincon (SQP) handles linear, bound and nonlinear constraints', () => {
+  const { v } = lab(`fun = @(x) 100*(x(2) - x(1)^2)^2 + (1 - x(1))^2;
+    a = fmincon(fun, [-1, 2], [1 2], 1);
+    b = fmincon(fun, [-1, 2], [], [], [2 1], 1);
+    c = fmincon(fun, [0 0], [], [], [], [], [0 0.2], [0.5 0.8]);
+    [d, fd, ed, out] = fmincon(fun, [0 0], [], [], [], [], [], [], @(x) deal(x(1)^2 + x(2)^2 - 1, []));
+    e = fmincon(@(x) x(1)*x(2), [1 0.5], [], [], [], [], [], [], @(x) deal([], x(1)^2 + x(2)^2 - 2));`);
+  near(v('a'), [0.5022, 0.2489], 1e-3); near(v('b'), [0.4149, 0.1701], 1e-3); near(v('c'), [0.5, 0.25], 1e-6);
+  near(v('d'), [0.7864, 0.6177], 1e-3); near(v('fd'), 0.0457, 1e-3); near(v('ed'), 1);
+  near(Math.abs(v('e')[0]), 1, 1e-5); near(v('e')[0] * v('e')[1], -1, 1e-6);
+});
+
+// ---------- v1.2: spectral analysis ----------
+t('periodogram / pwelch: Parseval, peak location and MATLAB default sizes', () => {
+  const { v } = lab(`fs = 1000; t = (0:999)/fs; x = cos(2*pi*100*t) + 0.5*sin(2*pi*250*t);
+    [p, f] = periodogram(x, [], 1000, fs); df = f(2) - f(1); pw = sum(p)*df; ms = mean(x.^2);
+    [~, i] = max(p); fpk = f(i);
+    [pp, ff] = pwelch(x, [], [], [], fs); [~, j] = max(pp); fw = ff(j); nw = numel(pp); pw2 = sum(pp)*(ff(2) - ff(1));
+    [pn, wn] = periodogram([1 2 3 4]); n1 = numel(pn); last = wn(end);`);
+  near(v('pw'), v('ms'), 1e-9); near(v('fpk'), 100); near(v('fw'), 100, 5); near(v('nw'), 129); near(v('pw2'), v('ms'), 0.02);
+  near(v('n1'), 129); near(v('last'), Math.PI);
+});
+
+t('spectrogram: frames, times, PSD scaling and the plot', () => {
+  const { v, In } = lab(`fs = 8000; t = (0:fs-1)/fs; x = cos(2*pi*(500 + 1000*t).*t);
+    [s, f, tt, ps] = spectrogram(x, 256, 128, 256, fs); sz = size(s); n = numel(tt); t1 = tt(1); df = f(2) - f(1);
+    [~, i1] = max(ps(:, 1)); [~, i2] = max(ps(:, end)); fa = f(i1); fb = f(i2);
+    figure; spectrogram(x, 256, 128, 256, fs);`);
+  near(v('sz'), [129, 61]); near(v('n'), 61); near(v('t1'), 128 / 8000); near(v('df'), 31.25);
+  near(v('fa'), 500 + 2000 * 128 / 8000, 40); near(v('fb'), 500 + 2000 * v('tt')[60], 40);
+  const c = lab("t = [0 0.25 0.5]; a = chirp(t, 0, 1, 100); b = chirp(t, 10, 1, 40, 'quadratic'); g = chirp(t, 10, 1, 1000, 'logarithmic');").v;
+  near(c('a'), [0, 0.25, 0.5].map(t => Math.cos(2 * Math.PI * 50 * t * t)), 1e-9);
+  near(c('b'), [0, 0.25, 0.5].map(t => Math.cos(2 * Math.PI * (10 * t + 10 * t ** 3))), 1e-9);
+  near(c('g'), [0, 0.25, 0.5].map(t => Math.cos(2 * Math.PI * 10 * (100 ** t - 1) / Math.log(100))), 1e-9);
+  const ax = In.gfx.figs[In.gfx.figs.length - 1].axes[0];
+  assert.strictEqual(ax.series[0].kind, 'image'); assert.ok(ax.colorbar); assert.strictEqual(ax.ydir, 'normal'); assert.strictEqual(ax.ylabel, 'Frequency (Hz)');
+});
+
+// ---------- v1.2: debugger and profiler ----------
+const DEMO = 'x = 1;\nfor k = 1:3\n    x = x + k;\nend\ny = sq(x);\ndisp(y)\nfunction r = sq(v)\n    % square it\n    r = v^2;\nend\n';
+function dbg(src, cmds, files) {
+  const pauses = [], queue = cmds.slice(); let out = '';
+  const host = {
+    debugPause(info) { pauses.push({ reason: info.reason, file: info.file, line: info.line, name: info.name, vars: Object.fromEntries([...info.scope].map(([k, x]) => [k, js(x)])), depth: info.stack.length }); },
+    debugRead() { return queue.length ? queue.shift() : 'dbquit'; },
+    debugResume() {},
+  };
+  const In = E.create({ out: s => { out += s; }, host });
+  In.files.set('demo.m', DEMO); if (files) for (const k in files) In.files.set(k, files[k]);
+  let err = null; try { In.run(src); } catch (e) { err = e; }
+  return { pauses, out: () => out, In, err, left: queue.length };
+}
+
+t('breakpoints pause on every pass; conditions; K>> edits the paused workspace', () => {
+  let r = dbg('dbstop in demo at 3\ndemo', ['dbcont', 'dbcont', 'dbcont']);
+  assert.deepStrictEqual(r.pauses.map(p => [p.reason, p.file, p.line, p.vars.k]), [['breakpoint', 'demo', 3, 1], ['breakpoint', 'demo', 3, 2], ['breakpoint', 'demo', 3, 3]]);
+  assert.ok(/49/.test(r.out()), 'the script finished after dbcont');
+  r = dbg('dbstop in demo at 3 if k == 2\ndemo', ['dbcont']);
+  assert.deepStrictEqual(r.pauses.map(p => p.vars.k), [2]);
+  r = dbg('dbstop in demo at 5\ndemo', ['x = 100;', 'dbcont']);
+  assert.strictEqual(r.pauses.length, 2, 'a prompt refresh after the edit'); assert.ok(/10000/.test(r.out()), 'the edited x was used');
+  r = dbg('dbstop in demo at 4\ndbstop in demo at 8\ndbstatus', []);
+  assert.ok(/Breakpoint in demo at line 5\.\nBreakpoint in demo at line 9\./.test(r.out()), 'breakpoints snap to the next line with code: ' + r.out());
+});
+
+t('dbstep / dbstep in / dbstep out / dbup / dbstack / dbquit', () => {
+  let r = dbg('dbstop in demo at 5\ndemo', ['dbstep in', 'dbstack', 'dbup', 'w = x;', 'dbstep out', 'dbstep', 'dbcont']);
+  assert.deepStrictEqual(r.pauses.map(p => [p.name, p.line]), [['demo', 5], ['sq', 9], ['sq', 9], ['demo', 5], ['demo', 5], ['demo', 6]]);
+  assert.strictEqual(r.pauses[1].depth, 2); assert.ok(/> In sq \(demo\.m\) \(line 9\)/.test(r.out()), r.out());
+  near(js(r.In.base.get('w')), 7, 0, 'dbup evaluates in the caller');
+  r = dbg('dbstop in demo at 2\ndemo\nafter = 1;', ['dbstep', 'dbstep', 'dbquit']);
+  assert.deepStrictEqual(r.pauses.map(p => p.line), [2, 3, 3]);
+  assert.ok(r.err && r.err.dbquit, 'dbquit stops the run'); assert.strictEqual(r.In.base.get('after'), undefined);
+});
+
+t('dbstop if error pauses where the error happens (not inside try); keyboard', () => {
+  const bad = { 'boom.m': 'function boom(n)\n    q = n * 2;\n    error(\'bad value %d\', q);\nend\n' };
+  let r = dbg('dbstop if error\nboom(4)', ['dbcont'], bad);
+  assert.strictEqual(r.pauses.length, 1); assert.strictEqual(r.pauses[0].reason, 'error'); assert.strictEqual(r.pauses[0].file, 'boom'); assert.strictEqual(r.pauses[0].line, 3);
+  near(r.pauses[0].vars.q, 8); assert.ok(r.err && /bad value 8/.test(r.err.message));
+  r = dbg('dbstop if error\ntry, boom(1); catch, ok = 1; end', [], bad);
+  assert.strictEqual(r.pauses.length, 0); near(js(r.In.base.get('ok')), 1);
+  r = dbg('a = 5;\nkeyboard\nb = a + 1;', ['a = 10;', 'dbcont']);
+  assert.strictEqual(r.pauses[0].reason, 'keyboard'); near(js(r.In.base.get('b')), 11);
+  assert.throws(() => lab('dbcont'), /only be used while stopped/);
+});
+
+t('profile counts calls and lines and reports self/total time', () => {
+  const { v, In } = lab(`profile on
+    s = 0; for k = 1:3, s = s + sq(k); end
+    profile off
+    p = profile('info'); names = p.FunctionName; calls = p.NumCalls; lf = p.LineFile; ln = p.LineNumber; lc = p.LineCount;`, { 'sq.m': 'function r = sq(v)\n    r = v^2;\nend\n' });
+  const names = In.getVar('names').data.map(x => M.toStr(x)), calls = [].concat(v('calls')), k = names.indexOf('sq');
+  assert.ok(k >= 0, 'sq was profiled: ' + names); near(calls[k], 3);
+  const lf = In.getVar('lf').data.map(x => M.toStr(x)), ln = [].concat(v('ln')), lc = [].concat(v('lc')), i = lf.findIndex((f, j) => f === 'sq' && ln[j] === 2);
+  near(lc[i], 3); near(v('s'), 14);
+  assert.ok(In.prof.report().functions.every(f => f.self <= f.total + 1e-9 || f.name === 'sq'), 'self ≤ total');
+  const txt = (() => { let o = ''; const In2 = E.create({ out: s => { o += s; } }); In2.files.set('sq.m', 'function r = sq(v)\n    r = v^2;\nend\n'); In2.run('profile on\nfor k=1:4, sq(k); end\nprofile viewer'); return o; })();
+  assert.ok(/Profile summary/.test(txt) && /sq\s+4/.test(txt), txt);
+  // several statements on one line count once; anonymous functions are profiled too
+  const In3 = E.create({ out: () => {} }); In3.files.set('two.m', 'a = 1; b = 2; c = 3;\nf = @(x) x + 1;\nfor k = 1:5, a = f(a); end\n');
+  In3.run('profile on\ntwo\nprofile off'); const rep = In3.prof.report();
+  assert.strictEqual(rep.lines.two.find(l => l[0] === 1)[1], 1); assert.strictEqual(rep.functions.find(f => f.type === 'anonymous').calls, 5);
+});
+
 console.log(`\n${n} tests passed`);

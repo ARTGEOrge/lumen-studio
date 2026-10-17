@@ -28,7 +28,47 @@ const opts = {
 const BLENDS = [['source-over', 'Normal'], ['multiply', 'Multiply'], ['screen', 'Screen'], ['overlay', 'Overlay'],
   ['darken', 'Darken'], ['lighten', 'Lighten'], ['color-dodge', 'Color Dodge'], ['color-burn', 'Color Burn'],
   ['hard-light', 'Hard Light'], ['soft-light', 'Soft Light'], ['difference', 'Difference'], ['exclusion', 'Exclusion'],
-  ['hue', 'Hue'], ['saturation', 'Saturation'], ['color', 'Color'], ['luminosity', 'Luminosity'], ['lighter', 'Linear Dodge (Add)']];
+  ['hue', 'Hue'], ['saturation', 'Saturation'], ['color', 'Color'], ['luminosity', 'Luminosity'], ['lighter', 'Linear Dodge (Add)'],
+  ['linear-burn', 'Linear Burn'], ['linear-light', 'Linear Light'], ['vivid-light', 'Vivid Light'], ['pin-light', 'Pin Light'],
+  ['hard-mix', 'Hard Mix'], ['subtract', 'Subtract'], ['divide', 'Divide']];
+/* Blend modes the canvas can't do natively: per-channel formulas B(backdrop, source) on 0..255, composited with the
+   W3C separable-blend equation. 128 is neutral for Linear Light (as in Photoshop), which makes Frequency Separation exact. */
+const CUSTOM_BLEND_FNS = {
+  'linear-burn': (b, s) => b + s - 255,
+  'linear-light': (b, s) => b + 2 * s - 256,
+  'vivid-light': (b, s) => s < 128 ? (s === 0 ? (b === 255 ? 255 : 0) : 255 - (255 - b) * 255 / (2 * s)) : (s === 255 ? (b === 0 ? 0 : 255) : b * 255 / (2 * (255 - s))),
+  'pin-light': (b, s) => s < 128 ? Math.min(b, 2 * s) : Math.max(b, 2 * s - 255),
+  'hard-mix': (b, s) => b + s >= 255 ? 255 : 0,
+  'subtract': (b, s) => b - s,
+  'divide': (b, s) => s === 0 ? (b === 0 ? 0 : 255) : b * 255 / s
+};
+const blendLUTs = {};
+function blendLUT(m) {   // lut[b << 8 | s]
+  if (blendLUTs[m]) return blendLUTs[m];
+  const f = CUSTOM_BLEND_FNS[m], t = new Float32Array(65536);
+  for (let b = 0; b < 256; b++) for (let s = 0; s < 256; s++) t[b << 8 | s] = clamp(f(b, s), 0, 255);
+  return (blendLUTs[m] = t);
+}
+// Draw `img` onto context `c` (identity transform) at (x, y) with opacity `alpha` and any blend mode, native or custom.
+function blendDraw(c, img, x, y, alpha, mode) {
+  if (!CUSTOM_BLEND_FNS[mode]) { c.globalAlpha = alpha; c.globalCompositeOperation = mode; c.drawImage(img, x, y); reset(c); return; }
+  reset(c);
+  const T = c.canvas; x = Math.round(x); y = Math.round(y);
+  const r = interRect({ x, y, w: img.width, h: img.height }, { x: 0, y: 0, w: T.width, h: T.height });
+  if (!r || !(alpha > 0)) return;
+  const bi = c.getImageData(r.x, r.y, r.w, r.h), b = bi.data, s = cx(img).getImageData(r.x - x, r.y - y, r.w, r.h).data;
+  const lut = blendLUT(mode), A = alpha / 255;
+  for (let i = 0; i < b.length; i += 4) {
+    const as = s[i + 3] * A; if (as <= 0) continue;
+    const ba = b[i + 3] / 255, ao = as + ba * (1 - as);
+    for (let k = 0; k < 3; k++) {
+      const cs = s[i + k], cb = b[i + k], mix = (1 - ba) * cs + ba * lut[cb << 8 | cs];
+      b[i + k] = (as * mix + (1 - as) * ba * cb) / ao;
+    }
+    b[i + 3] = ao * 255;
+  }
+  c.putImageData(bi, r.x, r.y);
+}
 
 /* ---------- helpers ---------- */
 function mk(w, h) { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
@@ -327,7 +367,7 @@ function drawLayerOnto(target, L, i) {
     tc.drawImage(src, 0, 0); tc.globalCompositeOperation = 'destination-in'; drawLumAlpha(tc, maskSrc, 0, 0); reset(tc); img = t;
   }
   if (L.style && styleHasEffects(L.style)) { drawStyled(target, L, img, i >= 0 && !act); return; }
-  reset(c); c.globalAlpha = L.opacity; c.globalCompositeOperation = L.blend; c.drawImage(img, L.x, L.y); reset(c);
+  reset(c); blendDraw(c, img, L.x, L.y, L.opacity, L.blend);
 }
 /* Groups: layers form a tree through `parent` (a group's id). In the flat array a group's descendants sit
    contiguously directly below the group entry. Pass-through groups composite their children straight into the
@@ -358,7 +398,7 @@ function renderGroup(target, n, isDoc, depth) {
   const buf = scratchSized('grp' + depth, target.width, target.height), bc = cx(buf);
   renderNodes(buf, n.kids, isDoc, depth + 1);
   if (maskSrc) { bc.globalCompositeOperation = 'destination-in'; bc.drawImage(maskK(L, maskSrc, full), 0, 0); reset(bc); }
-  const c = cx(target); reset(c); c.globalAlpha = L.opacity; c.globalCompositeOperation = L.blend; c.drawImage(buf, 0, 0); reset(c);
+  const c = cx(target); reset(c); blendDraw(c, buf, 0, 0, L.opacity, L.blend);
 }
 // Flatten any history state (used by Compare and Time-lapse)
 function compositeState(state) {

@@ -218,10 +218,11 @@ const Sample = (() => {
     const L1 = d.layers[1].id;
     d.paraStyles = {
       basic: { name: 'Basic Paragraph', font: 'Source Serif 4', size: 10, lead: 13.5, color: INK },
-      body: { name: 'Body', basedOn: 'basic', size: 9.5, lead: 13.5, align: 'justify', indF: 12, hyph: true, grid: true, composer: 'paragraph' },
+      body: { name: 'Body', basedOn: 'basic', size: 9.5, lead: 13.5, align: 'justify', indF: 12, hyph: true, grid: true, composer: 'paragraph', keepStart: 2, keepEnd: 2 },
       bodyNoInd: { name: 'Body No Indent', basedOn: 'body', indF: 0 },
       bodyFirst: { name: 'Body First (Drop Cap)', basedOn: 'body', indF: 0, dropL: 3, dropC: 1, next: 'body' },
-      sub: { name: 'Subhead', font: 'Montserrat', weight: 700, size: 7.5, lead: 13.5, caps: 'all', track: 140, color: ACC, spB: 6, hyph: false, grid: true, next: 'bodyNoInd' },
+      sub: { name: 'Subhead', font: 'Montserrat', weight: 700, size: 7.5, lead: 13.5, caps: 'all', track: 140, color: ACC, spB: 6, hyph: false, grid: true, next: 'bodyNoInd', keepNext: 2,
+        ruleA: { w: 1.5, color: ACC, off: 9, mode: 'text', indL: 0, indR: 0 } },
       kicker: { name: 'Kicker', font: 'Oswald', weight: 500, size: 10, track: 260, caps: 'all', color: ACC, hyph: false },
       head: { name: 'Headline', font: 'Playfair Display', weight: 900, size: 54, lead: 54, track: -10, color: NAVY, hyph: false },
       head2: { name: 'Headline Small', basedOn: 'head', size: 30, lead: 32 },
@@ -229,7 +230,7 @@ const Sample = (() => {
       byline: { name: 'Byline', font: 'Montserrat', weight: 600, size: 6.5, track: 160, caps: 'all', color: GREY, hyph: false },
       caption: { name: 'Caption', font: 'Montserrat', size: 6.8, lead: 9, color: GREY, hyph: false },
       capTitle: { name: 'Caption Title', font: 'Montserrat', weight: 700, size: 7, lead: 9, caps: 'all', track: 100, color: NAVY, hyph: false, next: 'caption' },
-      pull: { name: 'Pull Quote', font: 'Playfair Display', italic: true, size: 17, lead: 21, color: NAVY, align: 'left', hyph: false },
+      pull: { name: 'Pull Quote', font: 'Playfair Display', italic: true, size: 17, lead: 21, color: NAVY, align: 'left', hyph: false, keepAll: true },
       pullBy: { name: 'Pull Quote Source', font: 'Montserrat', weight: 600, size: 6.5, track: 160, caps: 'all', color: ACC, spB: 6 },
       folio: { name: 'Folio', font: 'Montserrat', weight: 600, size: 6.5, track: 180, caps: 'all', color: GREY, hyph: false },
       mast: { name: 'Masthead', font: 'Playfair Display', weight: 900, size: 104, lead: 104, track: 40, color: WHITE, align: 'center', hyph: false },

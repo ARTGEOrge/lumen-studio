@@ -254,6 +254,7 @@ function renderLayers() {
     if (L.clip) it.appendChild(el('span', 'lclip', '↳'));
     const nm = el('span', 'grow lname'); nm.textContent = L.name; it.appendChild(nm);
     const badges = el('span', 'lbadges');
+    if (L.ref) badges.insertAdjacentHTML('beforeend', '<span class="lref" title="Reference layer — the Paint Bucket and Magic Wand can sample it">Ref</span>');
     if (L.lockAlpha) badges.insertAdjacentHTML('beforeend', '<span title="Transparency locked">🔒︎</span>');
     if (L.blend !== 'normal') badges.insertAdjacentHTML('beforeend', `<span class="dim">${esc((blendOptions(L).find(b => b[0] === L.blend) || [, ''])[1].split(' ')[0])}</span>`);
     if (L.opacity < 1) badges.insertAdjacentHTML('beforeend', `<span class="dim">${Math.round(L.opacity * 100)}%</span>`);

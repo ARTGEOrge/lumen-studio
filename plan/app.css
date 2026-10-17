@@ -60,6 +60,18 @@
 .usage canvas{flex:1;width:100%;min-height:0;display:block}
 .empty{color:var(--dim);padding:20px;text-align:center}
 
+.prow.band{background:linear-gradient(#f3f7fc,#e2ebf6);color:#1e395b}
+.prow.band .c-name{overflow:visible}
+.prow.drvrow .c-id{box-shadow:inset 3px 0 0 #e07800}
+.drvtxt{color:#c06400;font-weight:600}
+.stepbar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.stepbar label{display:inline-flex;gap:5px;align-items:center;color:var(--navy)}
+.mini tr.csel td{background:#eef5fd}
+.mini.dcma tr.fail td{background:#fff6f6}
+.ok{color:#2d7d2d;font-weight:600}
+.bad{color:#c0141e;font-weight:600}
+.chip{display:inline-block;padding:0 5px;margin:1px 3px 1px 0;border:1px solid #c5d5e8;border-radius:3px;background:linear-gradient(#fff,#eaf1f9);color:#1e395b;cursor:pointer;font-size:11px;line-height:16px;text-decoration:none}
+.chip:hover{border-color:#3c7fb1;background:linear-gradient(#f4f9ff,#d9e9f9)}
 @media print{
   .aero-cmdbar,.hsplit,.plan-bottom,.aero-status,.vsplit{display:none!important}
   .plan-work{grid-template-rows:1fr!important}

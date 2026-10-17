@@ -184,25 +184,101 @@
   };
 
   /* ---------- UI ---------- */
+  /* ---------- audio-only export: offline mixdown → 16-bit PCM WAV ---------- */
+  LC.exportAudio = async (opts = {}) => {
+    const P = LC.project, seq = LC.seqDuration(), fps = LC.fps(), started = performance.now();
+    let t0 = 0, t1 = seq;
+    if (opts.range === 'inout') { t0 = P.inPoint ?? 0; t1 = P.outPoint ?? seq; }
+    if (t1 - t0 < 1 / fps) throw new Error('Nothing to export in that range');
+    const buf = await LC.audio.mixdown(t0, t1, 48000);
+    return { blob: LC.audio.toWav(buf), ext: 'wav', info: { duration: buf.duration, sampleRate: buf.sampleRate, channels: buf.numberOfChannels, audio: 'pcm-s16', seconds: (performance.now() - started) / 1000 } };
+  };
+
+  /* ---------- export presets. `short` = target short side in pixels (never upscales); null = sequence size ---------- */
+  LC.EXPORT_PRESETS = [
+    { id: 'match', name: 'Match Sequence · H.264 High', format: 'mp4', short: null, quality: 'high', audio: true },
+    { id: 'yt4k', name: 'YouTube 2160p 4K · H.264', format: 'mp4', short: 2160, quality: 'high', audio: true },
+    { id: 'yt1080', name: 'YouTube / Vimeo 1080p · H.264', format: 'mp4', short: 1080, quality: 'high', audio: true },
+    { id: 'social', name: 'Social Media 720p · H.264 (small)', format: 'mp4', short: 720, quality: 'medium', audio: true },
+    { id: 'webm', name: 'Web Video · WebM VP9', format: 'webm', short: null, quality: 'high', audio: true },
+    { id: 'draft', name: 'Draft Preview · Quarter, Low', format: 'mp4', scale: .25, quality: 'low', audio: true },
+    { id: 'wav', name: 'Audio Only · WAV 48 kHz', format: 'wav', short: null, quality: 'high', audio: true }
+  ];
+  const SHORTS = [2160, 1440, 1080, 720, 480];
+  const sc = x => String(+x.toFixed(6));
+  // resolution options for the current sequence: full, standard sizes below it, half and quarter
+  LC.exportScales = (S = LC.project.settings) => {
+    const sh = Math.min(S.w, S.h), out = [[sc(1), `Full (${S.w}×${S.h})`]], seen = new Set([sc(1)]);
+    const add = (k, lab) => { const v = sc(k); if (seen.has(v)) return; seen.add(v); out.push([v, `${lab} (${even(S.w * k)}×${even(S.h * k)})`]); };
+    SHORTS.forEach(s => { if (s < sh) add(s / sh, s + 'p'); });
+    add(.5, 'Half'); add(.25, 'Quarter');
+    return out;
+  };
+  LC.presetSettings = (id, S = LC.project.settings) => {
+    const p = LC.EXPORT_PRESETS.find(x => x.id === id); if (!p) return null;
+    const sh = Math.min(S.w, S.h), k = p.scale ?? (p.short && p.short < sh ? p.short / sh : 1);
+    return { format: p.format, scale: sc(k), quality: p.quality, audio: p.audio };
+  };
+  const LAST_KEY = 'lumen-cut-export';
+  const loadLast = () => { try { return JSON.parse(localStorage.getItem(LAST_KEY) || 'null'); } catch (e) { return null; } };
+  const saveLast = v => { try { localStorage.setItem(LAST_KEY, JSON.stringify({ preset: v.preset, format: v.format, quality: v.quality, audio: v.audio })); } catch (e) { } };
+
   LC.exportDialog = () => {
     LC.stop();
     const P = LC.project, S = P.settings, seq = LC.seqDuration();
     if (seq <= 0) return Aero.alert('Export', 'The sequence is empty. Add some clips to the timeline first.');
     const hasIO = P.inPoint != null || P.outPoint != null;
-    const summary = v => { const sc = +v.scale, W = even(S.w * sc), H = even(S.h * sc); const d = v.range === 'inout' ? (P.outPoint ?? seq) - (P.inPoint ?? 0) : seq; const mb = W * H * S.fps * BITRATE[v.quality] * d / 8 / 1e6;
-      return `${W}×${H} · ${S.fps} fps · ${LC.tc(d)} · ${v.format === 'mp4' ? 'H.264 + AAC' : 'VP9 + Opus'} · ≈${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`; };
-    const dlg = Aero.dialog({ title: 'Export Media', instruction: 'Render the sequence to a video file', ok: 'Export', width: 520,
+    const scales = LC.exportScales(S), last = loadLast() || {};
+    const init = last.preset && last.preset !== 'custom' ? LC.presetSettings(last.preset, S) : null;
+    const v0 = init || { format: ['mp4', 'webm', 'wav'].includes(last.format) ? last.format : 'mp4', scale: sc(1), quality: BITRATE[last.quality] ? last.quality : 'high', audio: last.audio !== false };
+    const summary = v => {
+      const d = v.range === 'inout' ? (P.outPoint ?? seq) - (P.inPoint ?? 0) : seq;
+      if (v.format === 'wav') { const mb = d * 48000 * 4 / 1e6; return `Audio only · 48 kHz stereo 16-bit PCM · ${LC.tc(d)} · ≈${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`; }
+      const k = +v.scale, W = even(S.w * k), H = even(S.h * k), mb = W * H * S.fps * BITRATE[v.quality] * d / 8 / 1e6;
+      return `${W}×${H} · ${S.fps} fps · ${LC.tc(d)} · ${v.format === 'mp4' ? 'H.264 + AAC' : 'VP9 + Opus'}${v.audio ? '' : ' (no audio)'} · ≈${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+    };
+    const matches = v => LC.EXPORT_PRESETS.find(p => { const q = LC.presetSettings(p.id, S); return q.format === v.format && (v.format === 'wav' || (q.scale === v.scale && q.quality === v.quality && q.audio === v.audio)); })?.id || 'custom';
+    let syncing = false, dlg = null;
+    dlg = Aero.dialog({ title: 'Export Media', instruction: 'Render the sequence to a video or audio file', ok: 'Export', width: 540,
       fields: [
-        { key: 'format', label: 'Format', type: 'select', value: 'mp4', options: [['mp4', 'MP4 (H.264 / AAC)'], ['webm', 'WebM (VP9 / Opus)']] },
+        { key: 'preset', label: 'Preset', type: 'select', value: matches(v0), options: [...LC.EXPORT_PRESETS.map(p => [p.id, p.name]), ['custom', 'Custom']] },
+        { key: 'format', label: 'Format', type: 'select', value: v0.format, options: [['mp4', 'MP4 (H.264 / AAC)'], ['webm', 'WebM (VP9 / Opus)'], ['wav', 'WAV (audio only)']] },
         { key: 'range', label: 'Range', type: 'select', value: hasIO ? 'inout' : 'all', options: [['all', 'Entire sequence'], ['inout', 'In to Out']] },
-        { key: 'scale', label: 'Resolution', type: 'select', value: '1', options: [['1', `Full (${S.w}×${S.h})`], ['0.5', `Half (${even(S.w / 2)}×${even(S.h / 2)})`], ['0.25', `Quarter (${even(S.w / 4)}×${even(S.h / 4)})`]] },
-        { key: 'quality', label: 'Quality', type: 'select', value: 'high', options: [['high', 'High'], ['medium', 'Medium'], ['low', 'Low (small file)']] },
-        { key: 'audio', label: 'Include audio', type: 'checkbox', value: true }],
+        { key: 'scale', label: 'Resolution', type: 'select', value: scales.some(o => o[0] === v0.scale) ? v0.scale : sc(1), options: scales },
+        { key: 'quality', label: 'Quality', type: 'select', value: v0.quality, options: [['high', 'High'], ['medium', 'Medium'], ['low', 'Low (small file)']] },
+        { key: 'audio', label: 'Include audio', type: 'checkbox', value: v0.audio }],
       html: '<div class="dnote" id="exsum"></div>',
-      onChange: v => { const e = document.getElementById('exsum'); if (e) e.textContent = summary(v); },
-      onOK: v => runExport({ ...v, scale: +v.scale }) });
+      onInput: (key, v, set) => {
+        if (syncing) return; syncing = true;
+        try {
+          if (key === 'preset' && v.preset !== 'custom') { const q = LC.presetSettings(v.preset, S); ['format', 'scale', 'quality', 'audio'].forEach(k => set(k, q[k])); }
+          else if (key !== 'preset' && key !== 'range') set('preset', matches(v));
+        } finally { syncing = false; }
+      },
+      onChange: v => {
+        const e = document.getElementById('exsum'); if (e) e.textContent = summary(v);
+        const box = document.getElementById('exsum')?.closest('.aero-box');
+        if (box) box.querySelectorAll('.aero-row').forEach(r => { const lab = r.querySelector('label')?.textContent, i = r.querySelector('select, input'); if (i && (lab === 'Resolution' || lab === 'Quality')) i.disabled = v.format === 'wav'; });
+      },
+      onOK: v => { saveLast(v); runExport({ ...v, scale: +v.scale }); } });
+    return dlg;
+  };
+  LC.exportWav = () => {
+    LC.stop(); const P = LC.project;
+    if (LC.seqDuration() <= 0) return Aero.alert('Export', 'The sequence is empty. Add some clips to the timeline first.');
+    return runExport({ format: 'wav', range: P.inPoint != null || P.outPoint != null ? 'inout' : 'all' });
   };
   async function runExport(opts) {
+    if (opts.format === 'wav') {
+      Aero.busy('Mixing audio…');
+      try {
+        const res = await LC.exportAudio(opts); Aero.busy();
+        const fname = `${LC.project.name}.wav`;
+        const p = await Aero.saveFile({ name: fname, data: res.blob, filters: [{ name: 'WAV audio', extensions: ['wav'] }] });
+        if (p) Aero.toast(`Exported ${fname} · ${(res.blob.size / 1048576).toFixed(1)} MB`, 4000);
+      } catch (e) { Aero.busy(); Aero.alert('Export failed', e.message || String(e)); }
+      return;
+    }
     const ext = opts.format; const name = `${LC.project.name}.${ext}`;
     const signal = { aborted: false };
     const ov = Aero.el('div', 'aero-modal'); ov.innerHTML = `<div class="aero-box exbox"><h3><img src="../kit/icons/cut.png" alt="">Exporting</h3><div class="content"><div class="aero-instr"></div>

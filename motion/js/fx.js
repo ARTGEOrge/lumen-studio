@@ -85,6 +85,24 @@
     return dlg;
   };
 
+  /* ---------- Color Key (chroma keyer: YCbCr chroma distance, soft edge, spill suppression) ---------- */
+  I.ckey = (fx, buf, L, t) => {
+    const K = LM.hex2rgb(fxv(fx, 'color', t)), tol = fxv(fx, 'tolerance', t) / 100 * .6, soft = Math.max(0, fxv(fx, 'softness', t) / 100 * .6), sp = clamp01(fxv(fx, 'spill', t) / 100), matte = fxv(fx, 'view', t) === 'matte';
+    const kY = K[0] * .299 + K[1] * .587 + K[2] * .114, kb = K[2] - kY, kr = K[0] - kY;
+    const ch = K[1] >= K[0] && K[1] >= K[2] ? 1 : K[2] >= K[0] ? 2 : 0, o1 = (ch + 1) % 3, o2 = (ch + 2) % 3;
+    LM.pixelOp(buf, d => {
+      for (let i = 0; i < d.length; i += 4) {
+        const a = d[i + 3]; if (!a) continue;
+        const r = d[i], g = d[i + 1], b = d[i + 2], Y = r * .299 + g * .587 + b * .114;
+        const dn = Math.hypot(b - Y - kb, r - Y - kr) / 255;
+        let k = soft > 0 ? clamp01((dn - tol) / soft) : (dn > tol ? 1 : 0); k = k * k * (3 - 2 * k);
+        if (matte) { const m = Math.round(a * k); d[i] = d[i + 1] = d[i + 2] = m; d[i + 3] = 255; continue; }
+        d[i + 3] = Math.round(a * k);
+        if (sp > 0) { const lim = Math.max(d[i + o1], d[i + o2]); if (d[i + ch] > lim) d[i + ch] -= sp * (d[i + ch] - lim); }
+      }
+    });
+  };
+
   /* ---------- Fill ---------- */
   I.fill = (fx, buf, L, t) => {
     const op = clamp01(fxv(fx, 'opacity', t) / 100); if (op <= 0) return;

@@ -6,9 +6,9 @@ const IO = (() => {
     const ink = d.cmyk ? '@black' : '#1a1a1a';
     Object.assign(d.paraStyles, {
       basic: { name: 'Basic Paragraph', font: 'Source Serif 4', size: 10.5, lead: 14, hyph: true, color: ink },
-      body: { name: 'Body', basedOn: 'basic', font: 'Source Serif 4', size: 9.5, lead: 13.5, align: 'justify', indF: 12, hyph: true },
-      head: { name: 'Headline', font: 'Playfair Display', weight: 900, size: 36, lead: 38, color: d.cmyk ? 'cmyk(80,60,30,70)' : '#14202e', hyph: false, next: 'body', spA: 8 },
-      sub: { name: 'Subhead', font: 'Montserrat', weight: 700, size: 9, caps: 'all', track: 80, color: d.cmyk ? '@blue' : '#1f6fb5', spB: 10, spA: 3, hyph: false, next: 'body' },
+      body: { name: 'Body', basedOn: 'basic', font: 'Source Serif 4', size: 9.5, lead: 13.5, align: 'justify', indF: 12, hyph: true, keepStart: 2, keepEnd: 2 },
+      head: { name: 'Headline', font: 'Playfair Display', weight: 900, size: 36, lead: 38, color: d.cmyk ? 'cmyk(80,60,30,70)' : '#14202e', hyph: false, next: 'body', spA: 8, keepNext: 1 },
+      sub: { name: 'Subhead', font: 'Montserrat', weight: 700, size: 9, caps: 'all', track: 80, color: d.cmyk ? '@blue' : '#1f6fb5', spB: 10, spA: 3, hyph: false, next: 'body', keepNext: 1 },
       cap: { name: 'Caption', font: 'Montserrat', size: 7, lead: 9.5, color: d.cmyk ? '@black/70' : '#5b6b7c', hyph: false },
     });
     d.charStyles = Object.assign(d.charStyles || {}, { em: { name: 'Emphasis', italic: true }, strong: { name: 'Strong', weight: 700 } });
@@ -94,12 +94,13 @@ const IO = (() => {
     Aero.dialog({ title: 'Export PDF', instruction: 'Print-quality PDF with vector shapes and real, selectable text', fields: [
       { key: 'range', label: 'Pages', type: 'select', value: 'all', options: [['all', 'All pages'], ['current', 'Current page'], ['custom', 'Range…']] }, { key: 'pages', label: 'Range (e.g. 1-3, 5)', type: 'text', value: `1-${S.doc.pages.length}` },
       { key: 'bleed', label: `Include bleed (${M.fmtU(S.doc.bleed, S.doc.units)} ${S.doc.units})`, type: 'checkbox', value: S.doc.bleed > 0 }, { key: 'marks', label: 'Crop marks & page info', type: 'checkbox', value: false },
+      { key: 'nav', label: 'Bookmarks from headings & clickable contents', type: 'checkbox', value: true },
       { key: 'color', label: 'Color', type: 'select', value: S.doc.cmyk ? 'cmyk' : 'keep', options: [['keep', 'Keep colors (CMYK & spot as defined, RGB as RGB)'], ['cmyk', 'Convert colors and images to CMYK (spots kept)'], ['process', 'Convert everything to process CMYK (no spot plates)']] }],
       ok: 'Export', onOK: async v => {
         const pages = pageListFrom(v); if (!pages.length) { Aero.toast('No pages in range'); return; }
         Aero.busy('Exporting PDF…');
         try {
-          const bytes = await PdfOut.exportPDF({ doc: S.doc, engine: S.eng, images: S.images, name: S.name }, { pages, bleed: !!v.bleed, marks: !!v.marks, cmyk: v.color !== 'keep', spotsToProcess: v.color === 'process' });
+          const bytes = await PdfOut.exportPDF({ doc: S.doc, engine: S.eng, images: S.images, name: S.name }, { pages, bleed: !!v.bleed, marks: !!v.marks, bookmarks: !!v.nav, links: !!v.nav, cmyk: v.color !== 'keep', spotsToProcess: v.color === 'process' });
           Aero.busy();
           const p = await Aero.saveFile({ name: S.name + '.pdf', data: bytes, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
           if (p) Aero.toast(`Exported ${pages.length} page${pages.length > 1 ? 's' : ''} to PDF (${(bytes.length / 1024).toFixed(0)} KB)`);

@@ -108,7 +108,7 @@
     const [x, y] = view.eventWorld(e); mouse = [x, y]; const sx = snap(x), sy = snap(y);
     if (A.tool === 'route') {
       const pad = padAt(x, y, A.layer), here = pad ? [pad.x, pad.y] : [sx, sy];
-      if (!route) { const net = netAt(x, y, A.layer); route = { pts: [here], layer: A.layer, w: A.trackW, net, vias: [] }; A.select(net ? { net } : null); draw(); return; }
+      if (!route) { const net = netAt(x, y, A.layer); route = { pts: [here], layer: A.layer, w: A.routeWidth(net), net, vias: [] }; A.select(net ? { net } : null); draw(); return; }
       route.snapTo = pad ? here : null; const pts = routePreview(); route.snapTo = null; route.pts = pts;
       const endNet = pad ? netOfPad(pad.ref, pad.n) : null;
       if (!route.net && endNet) route.net = endNet;

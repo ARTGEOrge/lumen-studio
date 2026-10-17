@@ -88,7 +88,7 @@ async function saveProject(as) {
 window.lumenSaveBeforeClose = async () => { try { return await saveProject(false); } catch (e) { return false; } };
 
 /* ---------- PSD ---------- */
-const PSD_BLEND = { 'normal': 'source-over', 'pass through': 'source-over', 'dissolve': 'source-over', 'multiply': 'multiply', 'screen': 'screen', 'overlay': 'overlay', 'darken': 'darken', 'lighten': 'lighten', 'color dodge': 'color-dodge', 'linear dodge': 'lighter', 'color burn': 'color-burn', 'hard light': 'hard-light', 'soft light': 'soft-light', 'difference': 'difference', 'exclusion': 'exclusion', 'hue': 'hue', 'saturation': 'saturation', 'color': 'color', 'luminosity': 'luminosity' };
+const PSD_BLEND = { 'normal': 'source-over', 'pass through': 'source-over', 'dissolve': 'source-over', 'multiply': 'multiply', 'screen': 'screen', 'overlay': 'overlay', 'darken': 'darken', 'lighten': 'lighten', 'color dodge': 'color-dodge', 'linear dodge': 'lighter', 'color burn': 'color-burn', 'hard light': 'hard-light', 'soft light': 'soft-light', 'difference': 'difference', 'exclusion': 'exclusion', 'hue': 'hue', 'saturation': 'saturation', 'color': 'color', 'luminosity': 'luminosity', 'linear burn': 'linear-burn', 'linear light': 'linear-light', 'vivid light': 'vivid-light', 'pin light': 'pin-light', 'hard mix': 'hard-mix', 'subtract': 'subtract', 'divide': 'divide' };
 const TO_PSD_BLEND = Object.fromEntries(BLENDS.map(([v]) => [v, v === 'source-over' ? 'normal' : v === 'lighter' ? 'linear dodge' : v.replace('-', ' ')]));
 // PSD masks may come as gray RGB or as alpha; normalize to opaque gray in the layer's bounds
 function psdMaskCanvas(ch, mask) {
@@ -260,3 +260,89 @@ function newDialog() {
 // Desktop: open files passed on the command line / via "Open with"
 async function openPath(p) { try { const f = await nativeApi.readFile(p); handleBuffer(f.name, f.data.buffer.slice(f.data.byteOffset, f.data.byteOffset + f.data.byteLength), 'open', f.path); } catch (e) { toast('Could not open ' + p); } }
 if (nativeApi) { nativeApi.onOpenFile(openPath); nativeApi.launchFile().then(p => { if (p) openPath(p); }); }
+/* ---------- Export Multiple Sizes: several sizes / formats in one go (one file, or a ZIP) ---------- */
+const EXPORT_SET_PRESETS = {
+  web: { name: 'Web @1x · @2x · @3x', rows: [['scale', 100, 'png', 92, '@1x'], ['scale', 200, 'png', 92, '@2x'], ['scale', 300, 'png', 92, '@3x']] },
+  resp: { name: 'Responsive widths (JPEG)', rows: [['w', 480, 'jpeg', 82, '-480w'], ['w', 960, 'jpeg', 82, '-960w'], ['w', 1440, 'jpeg', 82, '-1440w'], ['w', 1920, 'jpeg', 85, '-1920w']] },
+  thumbs: { name: 'Thumbnails (long edge)', rows: [['long', 150, 'jpeg', 85, '-thumb150'], ['long', 300, 'jpeg', 85, '-thumb300'], ['long', 600, 'jpeg', 85, '-thumb600']] },
+  icons: { name: 'Icon sizes (PNG, long edge)', rows: [16, 32, 48, 64, 128, 256, 512].map(n => ['long', n, 'png', 92, '-' + n]) },
+  modern: { name: 'Full size in every format', rows: [['scale', 100, 'png', 92, ''], ['scale', 100, 'jpeg', 90, ''], ['scale', 100, 'webp', 90, '']] }
+};
+let exportSetRows = EXPORT_SET_PRESETS.web.rows.map(r => r.slice());
+try { const s = JSON.parse(localStorage.getItem('lumen.exportSet') || 'null'); if (Array.isArray(s)) exportSetRows = sanitizeExportRows(s); } catch (e) { }
+function sanitizeExportRows(rows) {
+  const out = (Array.isArray(rows) ? rows : []).slice(0, 24).filter(Array.isArray).map(r => [
+    ['scale', 'w', 'h', 'long'].includes(r[0]) ? r[0] : 'scale', clamp(Math.round(+r[1]) || 100, 1, 20000),
+    ['png', 'jpeg', 'webp'].includes(r[2]) ? r[2] : 'png', clamp(Math.round(+r[3]) || 92, 10, 100), String(r[4] ?? '').replace(/[\\/:*?"<>|]/g, '').slice(0, 40)]);
+  return out.length ? out : EXPORT_SET_PRESETS.web.rows.map(r => r.slice());
+}
+// Output pixel size for a row; capped at 16384 px per side
+function exportRowSize(r, w = doc.w, h = doc.h) {
+  const [mode, n] = r, f = mode === 'scale' ? n / 100 : mode === 'w' ? n / w : mode === 'h' ? n / h : n / Math.max(w, h);
+  const k = Math.min(f, 16384 / w, 16384 / h);
+  return { w: Math.max(1, Math.round(w * k)), h: Math.max(1, Math.round(h * k)) };
+}
+// Encode the flattened image at an exact size; big reductions step down by halves for clean thumbnails
+async function exportBytesAt(fmt, q, w, h) {
+  composite(); let src = comp;
+  while (src.width / 2 >= w && src.height / 2 >= h && src.width > 2) {
+    const t = mk(Math.ceil(src.width / 2), Math.ceil(src.height / 2)), tc = cx(t); tc.imageSmoothingQuality = 'high'; tc.drawImage(src, 0, 0, t.width, t.height); src = t;
+  }
+  const o = mk(w, h), c = cx(o);
+  if (fmt === 'jpeg') { c.fillStyle = '#fff'; c.fillRect(0, 0, w, h); }
+  c.imageSmoothingQuality = 'high'; c.drawImage(src, 0, 0, w, h);
+  const blob = await new Promise(r => o.toBlob(r, 'image/' + fmt, q / 100));
+  return new Uint8Array(await blob.arrayBuffer());
+}
+async function exportSetFiles(base, rows) {
+  const out = [];
+  for (const r of rows) {
+    const { w, h } = exportRowSize(r), ext = r[2] === 'jpeg' ? 'jpg' : r[2];
+    out.push({ name: `${base}${r[4]}.${ext}`, bytes: await exportBytesAt(r[2], r[3], w, h), w, h });
+  }
+  return out;
+}
+function exportSizesDialog() {
+  let rows = exportSetRows.map(r => r.slice());
+  const opt = (v, list) => list.map(([a, b]) => `<option value="${a}"${a === v ? ' selected' : ''}>${b}</option>`).join('');
+  showDialog({
+    title: 'Export Multiple Sizes', ok: 'Export All',
+    fields: [{ key: 'name', label: 'Base file name', type: 'text', value: doc.name }],
+    html: `<div class="row"><label>Preset</label><select id="xsp"><option value="">Choose a set…</option>${Object.entries(EXPORT_SET_PRESETS).map(([k, p]) => `<option value="${k}">${p.name}</option>`).join('')}</select><span></span></div>
+      <table class="xstable"><thead><tr><th>Size by</th><th>Value</th><th>Format</th><th>Quality</th><th>Suffix</th><th>Result</th><th></th></tr></thead><tbody id="xsrows"></tbody></table>
+      <div class="btnrow"><button class="b small" id="xsadd">＋ Add size</button></div>
+      <p class="dnote">One size is saved as a single file; several are saved together as a ZIP. Your set is remembered for next time.</p>`,
+    onMount: box => {
+      const tb = box.querySelector('#xsrows');
+      const render = () => {
+        tb.innerHTML = rows.map((r, i) => `<tr data-i="${i}"><td><select data-k="0">${opt(r[0], [['scale', 'Scale %'], ['w', 'Width px'], ['h', 'Height px'], ['long', 'Long edge px']])}</select></td>
+          <td><input type="number" data-k="1" min="1" max="20000" value="${r[1]}" style="width:64px"></td>
+          <td><select data-k="2">${opt(r[2], [['png', 'PNG'], ['jpeg', 'JPEG'], ['webp', 'WebP']])}</select></td>
+          <td><input type="number" data-k="3" min="10" max="100" value="${r[3]}" style="width:48px"${r[2] === 'png' ? ' disabled' : ''}></td>
+          <td><input type="text" data-k="4" value="${Aesc(r[4])}" style="width:84px" spellcheck="false"></td>
+          <td class="dim xsdim">${(s => s.w + '×' + s.h)(exportRowSize(r))}</td><td><button class="b small" data-del="${i}" title="Remove">✕</button></td></tr>`).join('');
+      };
+      tb.addEventListener('input', e => {
+        const tr = e.target.closest('tr'), k = +e.target.dataset.k; if (!tr || Number.isNaN(k)) return;
+        const r = rows[+tr.dataset.i]; r[k] = k === 1 || k === 3 ? +e.target.value : e.target.value;
+        rows[+tr.dataset.i] = sanitizeExportRows([r])[0];
+        tr.querySelector('.xsdim').textContent = (s => s.w + '×' + s.h)(exportRowSize(rows[+tr.dataset.i]));
+        if (k === 2) render();
+      });
+      tb.addEventListener('click', e => { const d = e.target.dataset.del; if (d != null) { if (rows.length > 1) { rows.splice(+d, 1); render(); } else toast('Keep at least one size'); } });
+      box.querySelector('#xsadd').onclick = () => { if (rows.length >= 24) return toast('Up to 24 sizes'); rows.push(rows[rows.length - 1].slice()); render(); };
+      box.querySelector('#xsp').onchange = e => { const p = EXPORT_SET_PRESETS[e.target.value]; if (p) { rows = p.rows.map(r => r.slice()); render(); } e.target.value = ''; };
+      render();
+    },
+    onOK: async v => {
+      rows = sanitizeExportRows(rows); exportSetRows = rows;
+      try { localStorage.setItem('lumen.exportSet', JSON.stringify(rows)); } catch (e) { }
+      const base = String(v.name || doc.name || 'image').replace(/[\\/:*?"<>|]/g, '').slice(0, 120) || 'image';
+      busy('Exporting ' + rows.length + ' file(s)…');
+      let files; try { files = await exportSetFiles(base, rows); } finally { busy(); }
+      const ok = files.length === 1 ? await saveBytes(files[0].name, files[0].name.split('.').pop(), files[0].bytes) : await saveBytes(base + ' (sizes).zip', 'zip', makeZip(files));
+      if (ok) toast(`Exported ${files.length} file${files.length > 1 ? 's' : ''}`);
+    }
+  });
+}
+const Aesc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

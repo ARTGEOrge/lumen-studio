@@ -129,7 +129,7 @@ function buildStyled(L, img, s) {
   }
   const body = mk(W, H), bc = cx(body);
   bc.globalAlpha = s.fill ?? 1; bc.drawImage(shape, 0, 0); reset(bc);
-  const onBody = (cv, opacity, blend) => { bc.globalAlpha = opacity; bc.globalCompositeOperation = blend; bc.drawImage(cv, 0, 0); reset(bc); };
+  const onBody = (cv, opacity, blend) => { reset(bc); blendDraw(bc, cv, 0, 0, opacity, blend); };
   const clipToShape = cv => { const c = cx(cv); c.globalCompositeOperation = 'destination-in'; c.drawImage(shape, 0, 0); reset(c); return cv; };
   if (s.gradientOverlay.on) {
     const e = s.gradientOverlay, g = mk(W, H), c = cx(g), a = rad(e.angle); let cxp, cyp;
@@ -209,8 +209,8 @@ function styledOf(L, img, cacheable) {
 }
 function drawStyled(target, L, img, cacheable) {
   const r = styledOf(L, img, cacheable), c = cx(target); reset(c);
-  r.behind.forEach(b => { c.globalAlpha = L.opacity * b.opacity; c.globalCompositeOperation = b.blend; c.drawImage(b.canvas, r.x, r.y); });
-  c.globalAlpha = L.opacity; c.globalCompositeOperation = L.blend; c.drawImage(r.body, r.x, r.y); reset(c);
+  r.behind.forEach(b => blendDraw(c, b.canvas, r.x, r.y, L.opacity * b.opacity, b.blend));
+  blendDraw(c, r.body, r.x, r.y, L.opacity, L.blend);
 }
 // Bake a layer's style (and mask) into plain pixels: {canvas, x, y} with normal blending of the effects
 function bakeStyled(L) {

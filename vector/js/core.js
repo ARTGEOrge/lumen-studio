@@ -122,7 +122,7 @@ LV.tol = (px = 4) => px / P.view.zoom;
 LV.hitTest = (pt, { leaf = false, tol = LV.tol(4), filter } = {}) => {
   const test = it => {
     if (!it.visible || it.locked || it.data.role === 'frame' && !leaf) return null;
-    if (leaf && it.data.role === 'blendSteps') return null;
+    if (leaf && (it.data.role === 'blendSteps' || it.data.role === 'repeatCopies' || it.data.role === 'warpOut')) return null;
     if (it.data.role === 'blendSpine') return leaf && it.getNearestPoint(pt).getDistance(pt) <= tol * 1.5 ? it : null; // unpainted spine: hit near its line (direct selection)
     const k = LV.kind(it);
     if (k === 'symbol') { // instance: hit its artwork as a whole (children live in the instance's own coordinate space)
@@ -200,6 +200,7 @@ LV.paintTargets = it => {      // the items that actually carry the paint for an
   const k = LV.kind(it);
   if (k === 'symbol' || k === 'trace') return [];
   if (k === 'blend') return it.children.filter(c => c.data.role === 'blendKey').flatMap(LV.paintTargets);
+  if (k === 'repeat' || k === 'warp') return it.children.filter(c => c.data.role === 'repeatSrc' || c.data.role === 'warpSrc').flatMap(LV.paintTargets);
   if (k === 'areatext') return [it.children.find(c => c.data.role === 'text')].filter(Boolean);
   if (k === 'pathtext') return [it.children.find(c => c.data.role === 'glyphs')].filter(Boolean);
   if (it instanceof P.Group || it instanceof P.Layer) { const out = []; it.children.forEach(c => { if (!c.clipMask) out.push(...LV.paintTargets(c)); }); return out; }

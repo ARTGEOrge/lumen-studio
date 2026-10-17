@@ -282,7 +282,7 @@
 
   /* ---------------- scene: resolved + laid-out view of a document ---------------- */
   const OWN_INST_KEYS = new Set(['id', 'type', 'name', 'x', 'y', 'w', 'h', 'r', 'visible', 'locked', 'cons', 'sizeH', 'sizeV', 'absolute', 'proto', 'componentId', 'overrides', 'exports', 'flowStart', 'children']);
-  LP.OVERRIDABLE = new Set(['text', 'runs', 'bindText', 'showIf', 'fills', 'strokes', 'visible', 'opacity', 'shadows', 'icon', 'color', 'componentId', 'blur', 'textStyleId']);
+  LP.OVERRIDABLE = new Set(['text', 'runs', 'bindText', 'showIf', 'fills', 'strokes', 'visible', 'opacity', 'shadows', 'icon', 'color', 'componentId', 'blur', 'textStyleId', 'fxStyle']);
 
   class Scene {
     constructor(doc) { this.doc = doc; this.byId = {}; this.parent = {}; this.views = new Map(); this.kidsMap = new Map(); this.text = new Map(); this.done = new Set(); this.busy = new Set(); this.vars = LP.varValues(doc); }
@@ -730,8 +730,8 @@
   /* ---------------- tree helpers on the raw document ---------------- */
   LP.walk = (n, fn, parent = null) => { fn(n, parent); (n.children || []).forEach(c => LP.walk(c, fn, n)); };
   LP.findParent = (root, id) => { let r = null; LP.walk(root, (n, p) => { if (n.id === id) r = p; }); return r; };
-  LP.FORMAT_VERSION = 3;
-  LP.newDoc = () => ({ format: 'lproto', version: LP.FORMAT_VERSION, id: '0', uid: LP.newId() + LP.newId(), name: 'Untitled', children: [], colorStyles: [], textStyles: [], vars: [], comments: [], modes: LP.DEFAULT_MODES(), images: {}, bg: '#e8ecf1' });
+  LP.FORMAT_VERSION = 4;
+  LP.newDoc = () => ({ format: 'lproto', version: LP.FORMAT_VERSION, id: '0', uid: LP.newId() + LP.newId(), name: 'Untitled', children: [], colorStyles: [], textStyles: [], effectStyles: [], vars: [], comments: [], modes: LP.DEFAULT_MODES(), images: {}, bg: '#e8ecf1' });
 
   /* ---------------- easing ---------------- */
   LP.EASE = {

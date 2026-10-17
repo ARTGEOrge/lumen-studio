@@ -124,29 +124,53 @@
     for (let t = Math.floor(TL.v0 / minor) * minor; t <= TL.v1 + 1e-9; t += minor) { const px = Math.round(TL.x(t)) + .5; const isMaj = Math.abs(t / major - Math.round(t / major)) < 1e-6; x.moveTo(px, h); x.lineTo(px, h - (isMaj ? 10 : 4)); if (isMaj) x.fillText(major < 1 ? `${Math.floor(t)}:${String(Math.round((t % 1) * c.fps)).padStart(2, '0')}f` : LM.fmtTC(t, c.fps).replace(/^0:/, ''), px + 3, h - 12); }
     x.stroke();
     x.strokeStyle = '#a7bcd6'; x.beginPath(); x.moveTo(0, h - .5); x.lineTo(w, h - .5); x.stroke();
+    // composition markers
+    (c.markers || []).forEach(m => {
+      const px = Math.round(TL.x(m.t)) + .5, col = LM.LABELS[m.label ?? 1] || '#e0c040'; if (px < -200 || px > w + 4) return;
+      if (m.dur > 0) { x.fillStyle = col + '88'; x.fillRect(px, 15, Math.max(1, TL.x(m.t + m.dur) - px), 4); }
+      x.fillStyle = col; x.strokeStyle = '#3c3010'; x.lineWidth = 1;
+      x.beginPath(); x.moveTo(px - 4.5, 14); x.lineTo(px + 4.5, 14); x.lineTo(px + 4.5, 21); x.lineTo(px, 26); x.lineTo(px - 4.5, 21); x.closePath(); x.fill(); x.stroke();
+      if (m.name) { x.font = '10px "Segoe UI"'; const tw = Math.min(140, x.measureText(m.name).width); x.fillStyle = 'rgba(255,255,255,.85)'; x.fillRect(px + 6, 14, tw + 4, 12); x.fillStyle = '#3c3010'; x.save(); x.beginPath(); x.rect(px + 6, 13, tw + 4, 14); x.clip(); x.fillText(m.name, px + 8, 23.5); x.restore(); }
+    });
   }
+  // composition marker under ruler x (px) / y (py)
+  function markerAt(px, py) { const c = LM.comp(); if (py < 12) return null; let best = null, bd = 6; (c.markers || []).forEach(m => { const d = Math.abs(TL.x(m.t) - px); if (d < bd) { bd = d; best = m; } }); return best; }
+  TL.markerAt = markerAt;
+  ruler.addEventListener('dblclick', e => { const r = ruler.getBoundingClientRect(), m = markerAt(e.clientX - r.left, e.clientY - r.top); if (m) LM.editMarker(m, null); });
+  ruler.addEventListener('contextmenu', e => {
+    e.preventDefault(); const r = ruler.getBoundingClientRect(), m = markerAt(e.clientX - r.left, e.clientY - r.top);
+    W.menu(e.clientX, e.clientY, m ? [`#Marker${m.name ? ': ' + m.name : ''}`, ['Edit Marker…', () => LM.editMarker(m, null)], ['Go to Marker', () => LM.setTime(m.t)], ['Delete Marker', () => LM.deleteMarker(m, null)]]
+      : [['Add Composition Marker Here', () => { const c = LM.comp(), t = LM.snap(TL.t(e.clientX - r.left)); c.markers = c.markers || []; if (!c.markers.some(q => Math.abs(q.t - t) < 1e-6)) { c.markers.push({ id: LM.uid(), t: Math.max(0, Math.min(c.duration, t)), name: '', dur: 0, label: 1 }); c.markers.sort((a, b) => a.t - b.t); LM.commit('Add Composition Marker'); } }], ['Delete All Composition Markers', () => { const c = LM.comp(); c.markers = []; LM.commit('Delete Composition Markers'); }, { disabled: !LM.comp().markers?.length }]]);
+  });
   TL.drawRuler = drawRuler;
   let rulerQueued = false;
   LM.on('cache', () => { if (rulerQueued) return; rulerQueued = true; setTimeout(() => { rulerQueued = false; drawRuler(); }, 120); });
   ruler.addEventListener('pointerdown', e => {
-    const c = LM.comp(); if (!c) return;
+    const c = LM.comp(); if (!c || e.button !== 0) return;
     try { ruler.setPointerCapture(e.pointerId); } catch (_) { }
     const r = ruler.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
     const wa0 = TL.x(c.workIn), wa1 = TL.x(c.workOut);
     let mode = 'scrub';
-    if (py < 13) { if (Math.abs(px - wa0) < 6) mode = 'wa0'; else if (Math.abs(px - wa1) < 6) mode = 'wa1'; else if (px > wa0 && px < wa1) mode = 'wam'; }
+    const mk = markerAt(px, py), mt0 = mk ? mk.t : 0; let mkMoved = false;
+    if (mk) mode = 'mk';
+    else if (py < 13) { if (Math.abs(px - wa0) < 6) mode = 'wa0'; else if (Math.abs(px - wa1) < 6) mode = 'wa1'; else if (px > wa0 && px < wa1) mode = 'wam'; }
     const t0 = TL.t(px), w0 = [c.workIn, c.workOut];
     if (st.playing) LM.stop();
     const mv = ev => {
       const t = TL.t(ev.clientX - r.left);
       if (mode === 'scrub') { LM.setTime(t); LM.audio.scrub(st.time); }
+      else if (mode === 'mk') { if (ev === e) return; const nt = Math.max(0, Math.min(c.duration, LM.snap(mt0 + t - t0))); if (nt !== mk.t || mkMoved) { mkMoved = true; mk.t = nt; LM.status('Marker ' + LM.fmtTC(nt, c.fps)); } }
       else if (mode === 'wa0') c.workIn = Math.max(0, Math.min(LM.snap(t), c.workOut - 1 / c.fps));
       else if (mode === 'wa1') c.workOut = Math.min(c.duration, Math.max(LM.snap(t), c.workIn + 1 / c.fps));
       else { let d = LM.snap(t - t0); d = Math.max(-w0[0], Math.min(c.duration - w0[1], d)); c.workIn = w0[0] + d; c.workOut = w0[1] + d; }
       if (mode !== 'scrub') drawRuler();
     };
     mv(e);
-    const up = () => { ruler.removeEventListener('pointermove', mv); ruler.removeEventListener('pointerup', up); if (mode !== 'scrub') LM.commit('Work Area', false); };
+    const up = () => {
+      ruler.removeEventListener('pointermove', mv); ruler.removeEventListener('pointerup', up);
+      if (mode === 'mk') { LM.status(''); if (mkMoved) { c.markers.sort((a, b) => a.t - b.t); LM.commit('Move Marker', false); } else LM.setTime(mk.t); }
+      else if (mode !== 'scrub') LM.commit('Work Area', false);
+    };
     ruler.addEventListener('pointermove', mv); ruler.addEventListener('pointerup', up);
   });
 
@@ -232,7 +256,23 @@
     bar.dataset.id = L.id; track.appendChild(bar);
     let wave = null;
     if (hasAud && LM.media.get(L.asset)?.peaks) { wave = el('canvas', 'wave'); track.appendChild(wave); }
+    const mks = (L.markers || []).map(m => {
+      const d = el('span', 'lmk' + (m.name ? ' named' : '')); d.style.setProperty('--mc', LM.LABELS[m.label ?? 1] || '#e0c040');
+      d.title = `${m.name ? m.name + ' — ' : ''}layer marker at ${LM.fmtTC(m.t + L.start, c.fps)} (drag to move, double-click to edit, right-click to delete)`;
+      if (m.name) { const nm = el('span', 'mkn'); nm.textContent = m.name; d.appendChild(nm); }
+      d.onpointerdown = e => {
+        if (e.button !== 0) return; e.stopPropagation(); if (L.locked) return;
+        const x0 = e.clientX, t0 = m.t; let moved = false;
+        const mv = ev => { const dt = LM.snap((ev.clientX - x0) / trackW() * (TL.v1 - TL.v0)); if (!moved && Math.abs(ev.clientX - x0) < 3) return; moved = true; m.t = t0 + dt; d.style.left = (TL.x(m.t + L.start) - 4) + 'px'; LM.status('Layer marker ' + LM.fmtTC(m.t + L.start, c.fps)); };
+        const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); LM.status(''); if (moved) { L.markers.sort((a, b) => a.t - b.t); LM.commit('Move Layer Marker'); } else LM.setTime(m.t + L.start); };
+        addEventListener('pointermove', mv); addEventListener('pointerup', up);
+      };
+      d.ondblclick = e => { e.stopPropagation(); LM.editMarker(m, L); };
+      d.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); W.menu(e.clientX, e.clientY, [`#Layer Marker${m.name ? ': ' + m.name : ''}`, ['Edit Marker…', () => LM.editMarker(m, L)], ['Delete Marker', () => LM.deleteMarker(m, L)]]); };
+      track.appendChild(d); return [d, m];
+    });
     r._layout = () => {
+      mks.forEach(([d, m]) => { d.style.left = (TL.x(m.t + L.start) - 4) + 'px'; });
       bar.style.left = TL.x(L.in) + 'px'; bar.style.width = Math.max(2, TL.x(L.out) - TL.x(L.in)) + 'px';
       if (wave) { const x0 = Math.max(0, TL.x(L.in) + 1), x1 = Math.min(trackW(), TL.x(L.out) - 1); if (x1 - x0 < 2) wave.style.display = 'none'; else { wave.style.display = ''; LM.audio.drawWave(wave, L, c, x0, x1, TL.t, 16); } }
     };
@@ -257,6 +297,8 @@
       const fx = n.ref, on = el('span', 'fxon' + (fx.on ? ' on' : ''), 'fx'); on.title = 'Effect on/off';
       on.onclick = e => { e.stopPropagation(); fx.on = !fx.on; LM.commit(fx.on ? 'Effect On' : 'Effect Off'); };
       left.querySelector('.twirl').after(on);
+      const gn = left.querySelector('.gname'); gn.title = 'Double-click to rename (expressions address effects by name)';
+      gn.ondblclick = e => { e.stopPropagation(); renameInline(e.target, fx.name || LM.FX[fx.type].name, v => { v = v.trim().slice(0, 100); if (!v) return; fx.name = v === LM.FX[fx.type].name ? undefined : v; if (!fx.name) delete fx.name; LM.commit('Rename Effect'); }); };
       left.appendChild(miniBtns(L, [['↑', 'Move effect up', () => moveIn(L.effects, fx, -1, 'Reorder Effects')], ['↓', 'Move effect down', () => moveIn(L.effects, fx, 1, 'Reorder Effects')], ['✕', 'Delete effect', () => { L.effects = L.effects.filter(f => f !== fx); LM.commit('Delete Effect'); }]]));
     }
     if (n.kind === 'mask') {
@@ -427,7 +469,9 @@
   }
   function propMenu(e, L, n) {
     W.menu(e.clientX, e.clientY, [`#${n.label}`, [LM.animated(n.p) ? 'Remove All Keyframes' : 'Add Keyframe', () => { LM.toggleStopwatch(n.p, st.time); LM.commit('Stopwatch'); }], [n.p.x != null ? 'Remove Expression' : 'Add Expression', () => { if (n.p.x != null) { delete n.p.x; LM.commit('Remove Expression'); } else LM.addExpression(L, n); }, { disabled: n.type === 'path' || n.type === 'drawing' }],
-      ['Select All Keyframes', () => { st.selKeys.clear(); (n.p.k || []).forEach(k => st.selKeys.add(k)); markKeys(); }, { disabled: !LM.animated(n.p) }], ['Paste Keyframes Here', () => { st.selProps.clear(); st.selProps.add(selKeyId(L, n)); LM.pasteKeys(); }, { disabled: !LM.hasKeyClip() }]]);
+      ['Select All Keyframes', () => { st.selKeys.clear(); (n.p.k || []).forEach(k => st.selKeys.add(k)); markKeys(); }, { disabled: !LM.animated(n.p) }], ['Paste Keyframes Here', () => { st.selProps.clear(); st.selProps.add(selKeyId(L, n)); LM.pasteKeys(); }, { disabled: !LM.hasKeyClip() }], '-',
+      ['Copy Expression Reference', () => LM.copyExprRef(L, n), { disabled: !LM.exprRef(L, n) }], [LM.exprLinkClip ? `Link to ${LM.exprLinkClip.label}` : 'Link to Copied Property', () => LM.linkToCopied(L, n), { disabled: !LM.exprLinkClip || n.type === 'path' || n.type === 'drawing' || n.type === 'color' }],
+      ['Convert Expression to Keyframes', () => LM.bakeExpressions([{ L, n }]), { disabled: !LM.hasExpr(n.p) || LM.exprBlocked(n.p) }]]);
   }
   LM.addExpression = (L, n) => {
     const def = n.type === 'vec2' || n.type === 'vec2pct' ? 'wiggle(2, 30)' : n.type === 'angle' ? 'time * 90' : n.type === 'color' ? '' : 'wiggle(2, 10)';

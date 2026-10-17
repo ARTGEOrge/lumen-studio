@@ -67,7 +67,7 @@
     for (int i = -16; i <= 16; i++) { float f = float(i); float k = exp(-f * f / 56.9); s += texture(T, st + dir * f) * k; w += k; }
     o = s / w; }`;
   const FS_COMP = `#version 300 es
-  precision highp float; in vec2 uv; uniform sampler2D T, B; uniform float op, p, feather; uniform int mode, blend; uniform vec2 off; uniform vec4 dip; out vec4 o;
+  precision highp float; in vec2 uv; uniform sampler2D T, B; uniform float op, p, feather, zm; uniform int mode, blend; uniform vec2 off; uniform vec4 dip; out vec4 o;
   float lum(vec3 c){ return dot(c, vec3(0.3, 0.59, 0.11)); }
   vec3 clipC(vec3 c){ float l = lum(c), n = min(c.r, min(c.g, c.b)), x = max(c.r, max(c.g, c.b));
     if (n < 0.0) c = l + (c - l) * l / max(1e-5, l - n); if (x > 1.0) c = l + (c - l) * (1.0 - l) / max(1e-5, x - l); return c; }
@@ -97,12 +97,23 @@
   }
   void main(){
     vec4 bd = texture(B, vec2(uv.x, 1.0 - uv.y));
-    vec2 sv = uv - off; vec4 c = vec4(0.0);
+    vec2 sv = (uv - off - 0.5) / zm + 0.5; vec4 c = vec4(0.0);
     if (sv.x >= 0.0 && sv.x <= 1.0 && sv.y >= 0.0 && sv.y <= 1.0) {
       c = texture(T, vec2(sv.x, 1.0 - sv.y));
       float m = 1.0;
       if (mode == 1) m = smoothstep(p + feather, p - feather, uv.x);      // reveal left→right
       if (mode == 2) m = smoothstep(p - feather, p + feather, uv.x);      // hide left→right
+      if (mode > 2) {                                                       // shaped masks: odd = reveal, even = hide
+        int shp = (mode + 1) / 2; bool hide = (mode - (mode / 2) * 2) == 0;
+        vec2 sz = vec2(textureSize(B, 0)); float ar = sz.x / max(1.0, sz.y); vec2 d = (uv - 0.5) * vec2(ar, 1.0);
+        float v = 0.0, f = feather;
+        if (shp == 2) v = length(d) / (0.5 * length(vec2(ar, 1.0)));       // iris: centre → corners
+        else if (shp == 3) { v = atan(d.x, -d.y) / 6.2831853; v = v < 0.0 ? v + 1.0 : v; f = 0.004; }   // clock: 12 o'clock, clockwise
+        else if (shp == 4) v = abs(uv.x - 0.5) * 2.0;                       // barn door: centre → sides
+        else if (shp == 5) v = uv.y;                                        // wipe down
+        float q = p * (1.0 + 2.0 * f) - f;                                  // fully hidden at p=0, fully shown at p=1
+        m = hide ? smoothstep(q - f, q + f, v) : smoothstep(q + f, q - f, v);
+      }
       c.rgb = mix(c.rgb, dip.rgb * c.a, dip.a);
       c *= op * m;
     }
@@ -123,6 +134,7 @@
   const hexRgb = h => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
   LC.hexRgb = hexRgb;
   const FULL = new Float32Array([2, 0, 0, 0, -2, 0, -1, 1, 1]);   // a∈[0,1]² → clip space, top-left origin
+  const SHAPES = { wipe: 1, iris: 2, clock: 3, barndoor: 4, wipedown: 5 };   // mask shapes for FS_COMP modes 2k-1 (reveal) / 2k (hide)
   const BLEND_IDX = Object.fromEntries(LC.BLEND_MODES.map((b, i) => [b[0], i]));
 
   class Compositor {
@@ -191,14 +203,18 @@
         const a = x.a && LC.clip(x.a), b = x.b && LC.clip(x.b);
         if (a && a.disabled || b && b.disabled) continue;
         const dipc = x.type === 'dipwhite' ? [1, 1, 1] : [0, 0, 0], isDip = x.type === 'dipblack' || x.type === 'dipwhite';
+        const shp = SHAPES[x.type], zp = p * p * (3 - 2 * p);
+        const inC = () => x.type === 'dissolve' ? { op: p } : shp ? { mode: shp * 2 - 1, p } : x.type === 'zoom' ? { op: zp, zm: 3 - 2 * zp } : { off: [1 - p, 0] };
+        const outC = () => x.type === 'dissolve' ? { op: 1 - p } : shp ? { mode: shp * 2, p } : x.type === 'zoom' ? { op: 1 - zp, zm: 1 + 2 * zp } : { off: [-p, 0] };
         if (a && b) {
           if (isDip) { if (p < .5) out.push({ clip: a, comp: { dip: [...dipc, p * 2] } }); else out.push({ clip: b, comp: { dip: [...dipc, 2 - p * 2] } }); }
           else if (x.type === 'push') { out.push({ clip: a, comp: { off: [-p, 0] } }, { clip: b, comp: { off: [1 - p, 0] } }); }
-          else { out.push({ clip: a, comp: {} }); out.push({ clip: b, comp: x.type === 'dissolve' ? { op: p } : x.type === 'wipe' ? { mode: 1, p } : { off: [1 - p, 0] } }); }
+          else if (x.type === 'zoom') { out.push({ clip: a, comp: { zm: 1 + 2 * zp } }, { clip: b, comp: inC() }); }
+          else { out.push({ clip: a, comp: {} }); out.push({ clip: b, comp: inC() }); }
         } else if (b) {
-          out.push({ clip: b, comp: isDip ? { dip: [...dipc, 1 - p] } : x.type === 'dissolve' ? { op: p } : x.type === 'wipe' ? { mode: 1, p } : { off: [1 - p, 0] } });
+          out.push({ clip: b, comp: isDip ? { dip: [...dipc, 1 - p] } : inC() });
         } else {
-          out.push({ clip: a, comp: isDip ? { dip: [...dipc, p] } : x.type === 'dissolve' ? { op: 1 - p } : x.type === 'wipe' ? { mode: 2, p } : { off: [-p, 0] } });
+          out.push({ clip: a, comp: isDip ? { dip: [...dipc, p] } : outC() });
         }
         return out;
       }
@@ -330,7 +346,7 @@
       const mat = this.view.matte === c.id || raw;
       gl.uniform1f(C.u.op, mat ? 1 : opacity * (comp.op ?? 1)); gl.uniform1i(C.u.mode, comp.mode || 0); gl.uniform1f(C.u.p, comp.p ?? 0); gl.uniform1f(C.u.feather, 0.012);
       gl.uniform1i(C.u.blend, mat ? 0 : (BLEND_IDX[pr.blend] || 0));
-      const off = comp.off || [0, 0]; gl.uniform2f(C.u.off, off[0], off[1]);
+      const off = comp.off || [0, 0]; gl.uniform2f(C.u.off, off[0], off[1]); gl.uniform1f(C.u.zm, comp.zm || 1);
       const d = comp.dip || [0, 0, 0, 0]; gl.uniform4f(C.u.dip, d[0], d[1], d[2], d[3]);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       Lv.cur = 1 - Lv.cur;

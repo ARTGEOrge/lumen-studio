@@ -16,10 +16,11 @@
 
   // Text attribute defaults (char + paragraph)
   const CHAR_KEYS = ['font', 'weight', 'italic', 'size', 'lead', 'track', 'color', 'shift', 'caps', 'under', 'strike', 'kern', 'liga', 'otf'];
-  const PARA_KEYS = ['align', 'indL', 'indR', 'indF', 'spB', 'spA', 'dropL', 'dropC', 'hyph', 'grid', 'composer', 'tabs', 'list', 'lchar', 'lfmt', 'lstart'];
+  const PARA_KEYS = ['align', 'indL', 'indR', 'indF', 'spB', 'spA', 'dropL', 'dropC', 'hyph', 'grid', 'composer', 'tabs', 'list', 'lchar', 'lfmt', 'lstart', 'keepNext', 'keepAll', 'keepStart', 'keepEnd', 'startOn', 'ruleA', 'ruleB'];
   const DEF = { font: 'Source Serif 4', weight: 400, italic: false, size: 11, lead: 0, track: 0, color: '#1a1a1a', shift: 0, caps: 'none', under: false, strike: false, kern: true, liga: true, otf: '',
-    align: 'left', indL: 0, indR: 0, indF: 0, spB: 0, spA: 0, dropL: 0, dropC: 1, hyph: true, grid: false, composer: 'single', tabs: [], list: '', lchar: '•', lfmt: '1.', lstart: 0 };
-  const FORMAT_VERSION = 2;
+    align: 'left', indL: 0, indR: 0, indF: 0, spB: 0, spA: 0, dropL: 0, dropC: 1, hyph: true, grid: false, composer: 'single', tabs: [], list: '', lchar: '•', lfmt: '1.', lstart: 0,
+    keepNext: 0, keepAll: false, keepStart: 0, keepEnd: 0, startOn: '', ruleA: null, ruleB: null };
+  const FORMAT_VERSION = 3;
 
   function newDoc(o = {}) {
     const d = {
@@ -236,7 +237,16 @@
     for (const k of ['kern', 'liga']) if (k in a) a[k] = a[k] !== false;
     if ('obj' in a && (typeof a.obj !== 'string' || !ID.test(a.obj))) delete a.obj;
     if ('fn' in a && (typeof a.fn !== 'string' || !ID.test(a.fn))) delete a.fn;
+    // v3: keep options and paragraph rules
+    for (const k of ['keepNext', 'keepStart', 'keepEnd']) if (k in a) a[k] = fin(a[k], 0, 0, 9) | 0;
+    if ('keepAll' in a) a.keepAll = a.keepAll === true;
+    if ('startOn' in a && !['', 'column', 'frame'].includes(a.startOn)) delete a.startOn;
+    for (const k of ['ruleA', 'ruleB']) if (k in a) a[k] = a[k] === false ? false : sanitizeRule(a[k]);   // false = explicitly no rule
     return a;
+  }
+  function sanitizeRule(r) {
+    if (!r || typeof r !== 'object') return null;
+    return { w: fin(r.w, 1, 0.1, 72), color: col(r.color, '#1a1a1a'), off: fin(r.off, 0, -500, 500), mode: r.mode === 'text' ? 'text' : 'column', indL: fin(r.indL, 0, -2000, 2000), indR: fin(r.indR, 0, -2000, 2000) };
   }
   function sanitizeTable(t, inline) {
     const nc = Math.max(1, Math.min(60, Array.isArray(t.colW) ? t.colW.length : 1)), nr = Math.max(1, Math.min(500, Array.isArray(t.rowH) ? t.rowH.length : 1));
@@ -294,5 +304,5 @@
 
   window.M = { uid, UNITS, UNIT_NAMES, toU, fromU, fmtU, PRESETS, DEF, CHAR_KEYS, PARA_KEYS, newDoc, newPage, newStory, attrIdx, paraIndexAt, paraStart, paraEnd,
     insertText, deleteRange, sliceRich, insertRich, paraStyleChain, paraEff, charEff, stripMeta, newItem, newTable, serialize, deserialize, walkItems, walkAll, rle, unrle,
-    plainAttr, pageLabels, sanitizeTable, sanitizeAttrs, FORMAT_VERSION };
+    plainAttr, pageLabels, sanitizeTable, sanitizeAttrs, sanitizeRule, FORMAT_VERSION };
 })();

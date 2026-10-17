@@ -21,7 +21,12 @@ LC.TRANSITIONS = [
   { id: 'dipwhite', name: 'Dip to White' },
   { id: 'wipe', name: 'Wipe' },
   { id: 'slide', name: 'Slide' },
-  { id: 'push', name: 'Push' }
+  { id: 'push', name: 'Push' },
+  { id: 'iris', name: 'Iris Round' },
+  { id: 'clock', name: 'Clock Wipe' },
+  { id: 'barndoor', name: 'Barn Door' },
+  { id: 'wipedown', name: 'Wipe Down' },
+  { id: 'zoom', name: 'Cross Zoom' }
 ];
 LC.ATRANSITIONS = [
   { id: 'cpower', name: 'Constant Power' },

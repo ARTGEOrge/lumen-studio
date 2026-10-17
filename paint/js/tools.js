@@ -79,19 +79,23 @@ function brushTool(kind) {
       const b = brushFor(kind), fb = fullBrush(b);
       let mode = kind === 'eraser' ? 'erase' : kind === 'smudge' ? 'smudge' : fb.mode === 'erase' ? 'erase' : fb.mode;
       if (L.isMask && (mode === 'water' || mode === 'oil')) mode = 'paint'; // masks take plain gray paint
-      this.S = new Stroke({ layer: L, brush: fb, color: paintColor(L, FG), mode, mats: symmetryMats(), zoom: view.zoom, constrain: strokeConstraint(pt), mouse: pt.mouse });
+      const constrain = strokeConstraint(pt);
+      this.S = new Stroke({ layer: L, brush: fb, color: paintColor(L, FG), mode, mats: symmetryMats(), zoom: view.zoom, constrain, mouse: pt.mouse });
+      this.sOpts = { layer: L, brush: { ...fb, smoothing: 0, velSize: 0 }, color: paintColor(L, FG), mode, zoom: view.zoom };
       this.label = (L.isMask ? 'Mask: ' : '') + (mode === 'erase' && kind === 'eraser' && fb.mode !== 'erase' ? 'Erase: ' : '') + b.name;
       this.S.add(pt);
+      if (!constrain) qsDown(this, pt); else qsCancel(this);
     },
-    move(pt) { this.S?.add(pt); },
+    move(pt) { if (this.S && !qsMove(this, pt)) this.S.add(pt); },
     up(pt) {
+      const qsLabel = qsUp(this);
       const S = this.S; if (!S) return; this.S = null;
-      S.add(pt); const bb = S.end();
+      if (!qsLabel) S.add(pt); const bb = S.end();
       if (S.mode === 'water' && S.wet) { pendingDryUI = true; }
-      if (bb || S.mode === 'water') commitPaint(this.label, S.L, S);
+      if (bb || S.mode === 'water') commitPaint(qsLabel || this.label, S.L, S);
       if (S.mode !== 'erase' && S.mode !== 'smudge') pushRecent(FG);
     },
-    cancel() { const S = this.S; this.S = null; if (S) cancelStroke(S); },
+    cancel() { qsCancel(this); const S = this.S; this.S = null; if (S) cancelStroke(S); },
     cursor(c, sp) { brushCursor(c, sp, brushFor(kind).size, brushFor(kind)); },
     options: bar => brushOptions(bar, kind)
   };
@@ -189,27 +193,9 @@ function floodFill(px, py, color = FG) {
   const x0 = px | 0, y0 = py | 0, w = doc.w, h = doc.h; if (x0 < 0 || y0 < 0 || x0 >= w || y0 >= h) return false;
   dryWet(L);
   const o = topts.fill;
-  if (o.sample === 'all' && doc.ver !== composedVer) { R.compose(); composedVer = doc.ver; }
-  const src = o.sample === 'all' ? R.readComposite() : layerRGBA(L);
-  const si = (y0 * w + x0) * 4, sr = src[si], sg = src[si + 1], sb = src[si + 2], sa = src[si + 3], tol = o.tol / 100 * 255;
-  const match = new Uint8Array(w * h);
-  for (let i = 0, j = 0; i < match.length; i++, j += 4) {
-    const a = src[j + 3]; let d;
-    if (sa < 8 && a < 8) d = 0; else d = Math.max(Math.abs(a - sa), Math.abs(src[j] - sr) * Math.min(a, sa) / 255, Math.abs(src[j + 1] - sg) * Math.min(a, sa) / 255, Math.abs(src[j + 2] - sb) * Math.min(a, sa) / 255);
-    match[i] = d <= tol ? 1 : 0;
-  }
-  let reg;
-  const gap = o.gap | 0;
-  if (gap > 0) {
-    const dist = distTransform(match, w, h, v => !v);
-    const closed = new Uint8Array(w * h); for (let i = 0; i < closed.length; i++) closed[i] = match[i] && dist[i] > gap ? 1 : 0;
-    if (closed[y0 * w + x0]) {
-      const core = floodRegion(closed, w, h, x0, y0);
-      const d2 = distTransform(core, w, h, v => v);
-      reg = new Uint8Array(w * h); for (let i = 0; i < reg.length; i++) reg[i] = match[i] && d2[i] <= gap + 1 ? 1 : 0;
-    }
-  }
-  if (!reg) reg = floodRegion(match, w, h, x0, y0);
+  const src = sampleSource(o.sample, L);
+  const match = colorMatchMask(src, w, h, x0, y0, o.tol);
+  const reg = regionFromMatch(match, w, h, x0, y0, o.gap | 0);
   // spread under anti-aliased edges
   const spread = o.spread | 0;
   if (spread > 0) { const d3 = distTransform(reg, w, h, v => v); for (let i = 0; i < reg.length; i++) if (!reg[i] && d3[i] <= spread + 0.5) reg[i] = 2; }
@@ -237,7 +223,7 @@ const fillTool = {
     cmdSlider(bar, 'Tolerance', 0, 100, 1, () => o.tol, v => o.tol = v, v => v + '%');
     cmdSlider(bar, 'Gap closing', 0, 12, 1, () => o.gap, v => o.gap = v, v => v ? v + ' px' : 'off');
     cmdSlider(bar, 'Spread', 0, 4, 1, () => o.spread, v => o.spread = v, v => v + ' px');
-    cmdSelect(bar, 'Sample', [['all', 'All layers'], ['layer', 'Current layer']], () => o.sample, v => o.sample = v);
+    cmdSelect(bar, 'Sample', SAMPLE_OPTS, () => o.sample, v => o.sample = v);
   }
 };
 

@@ -150,23 +150,37 @@ export async function extractPages(idx) {
 }
 export function splitDialog() {
   const d = App.doc; if (!d) return;
+  const size = d.state.bytes.length;
   Aero.dialog({
     title: 'Split document', instruction: `Split “${d.name}” (${d.numPages} pages) into several PDFs`,
     fields: [
-      { key: 'mode', label: 'Split', type: 'select', value: 'every', options: [['every', 'Every N pages'], ['ranges', 'By page ranges']] },
+      { key: 'mode', label: 'Split', type: 'select', value: 'every', options: [['every', 'Every N pages'], ['ranges', 'By page ranges'], ['bookmarks', 'At each top-level bookmark'], ['size', 'By maximum file size']] },
       { key: 'n', label: 'Pages per file (N)', type: 'number', value: Math.max(1, Math.ceil(d.numPages / 2)), min: 1, max: d.numPages },
       { key: 'ranges', label: 'Ranges (e.g. 1-2, 3-5)', type: 'text', value: d.numPages > 1 ? `1-${Math.ceil(d.numPages / 2)}, ${Math.ceil(d.numPages / 2) + 1}-${d.numPages}` : '1' },
+      { key: 'mb', label: 'Maximum size per file (MB)', type: 'number', value: Math.max(0.1, Math.round(size / 2 / 1048576 * 10) / 10 || 1), min: 0.05, max: 2000, step: 0.1 },
       { key: 'out', label: 'Output', type: 'select', value: 'tabs', options: [['tabs', 'Open each part in a new tab'], ['save', 'Save each part as a file']] }
     ],
     onOK: async v => {
-      let groups;
+      let parts;
       try {
-        if (v.mode === 'every') { const n = Math.max(1, v.n | 0); groups = []; for (let i = 0; i < d.numPages; i += n) groups.push([...Array(Math.min(n, d.numPages - i)).keys()].map(k => i + k)); }
-        else groups = parseRangeGroups(v.ranges, d.numPages);
+        if (v.mode === 'bookmarks') {
+          const sp = await bookmarkGroups(d);
+          if (!sp.groups.length) { Aero.alert('Split', 'This document has no top-level bookmarks that point to its pages. Add bookmarks first (Pages › Create Bookmarks from Headings can make them for you).'); return; }
+          parts = await splitDoc(d, sp.groups, sp.names);
+        } else if (v.mode === 'size') {
+          const mb = +v.mb; if (!(mb > 0)) throw new Error('Enter a size in MB.');
+          parts = await splitBySize(d, mb * 1048576);
+        } else {
+          let groups;
+          if (v.mode === 'every') { const n = Math.max(1, v.n | 0); groups = []; for (let i = 0; i < d.numPages; i += n) groups.push([...Array(Math.min(n, d.numPages - i)).keys()].map(k => i + k)); }
+          else groups = parseRangeGroups(v.ranges, d.numPages);
+          if (!groups.length) return;
+          if (groups.length > 50 && !(await Aero.confirm('Split', `This creates ${groups.length} files. Continue?`))) return;
+          parts = await splitDoc(d, groups);
+        }
       } catch (e) { Aero.alert('Split', e.message); return; }
-      if (!groups.length) return;
-      if (groups.length > 50 && !(await Aero.confirm('Split', `This creates ${groups.length} files. Continue?`))) return;
-      const parts = await splitDoc(d, groups);
+      if (!parts?.length) return;
+      if (parts.length > 50 && v.mode !== 'every' && v.mode !== 'ranges' && !(await Aero.confirm('Split', `This creates ${parts.length} files. Continue?`))) return;
       for (const p of parts) {
         if (v.out === 'tabs') emit('openBytes', p);
         else await Aero.saveFile({ name: p.name, data: p.bytes, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
@@ -175,13 +189,48 @@ export function splitDialog() {
     }
   });
 }
-export async function splitDoc(d, groups) {
+const safeName = s => String(s).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+// top-level bookmarks -> page groups (pages before the first bookmark join the first part)
+export async function bookmarkGroups(d) {
+  const items = (await d.getOutline()) || []; const starts = [];
+  for (const it of items) { const r = it.dest ? await d.resolveDest(it.dest) : null; if (r && r.page >= 0 && r.page < d.numPages) starts.push({ page: r.page, title: it.title }); }
+  starts.sort((a, b) => a.page - b.page);
+  const uniq = []; for (const s of starts) if (!uniq.length || uniq[uniq.length - 1].page !== s.page) uniq.push(s);
+  if (!uniq.length) return { groups: [], names: [] };
+  uniq[0] = { ...uniq[0], page: 0 };
+  const groups = uniq.map((s, k) => { const end = k + 1 < uniq.length ? uniq[k + 1].page : d.numPages; return [...Array(end - s.page).keys()].map(j => s.page + j); });
+  const names = uniq.map((s, k) => `${Aero.baseName(d.name)} - ${String(k + 1).padStart(2, '0')} ${safeName(s.title) || 'part'}.pdf`);
+  return { groups, names };
+}
+// greedy split: each part holds as many consecutive pages as fit under maxBytes (a single larger page gets its own part)
+export async function splitBySize(d, maxBytes) {
+  Aero.busy('Splitting…');
+  try {
+    const n = d.numPages, parts = []; const cache = new Map();
+    const build = async (i, len) => { const k = i + ':' + len; if (!cache.has(k)) cache.set(k, (await buildOutput(d.state, { pages: [...Array(len).keys()].map(j => i + j) })).bytes); return cache.get(k); };
+    let i = 0;
+    while (i < n) {
+      let good = 1, bad = null, tryLen = 2;
+      if ((await build(i, 1)).length <= maxBytes) {
+        while (i + good < n) { const len = Math.min(tryLen, n - i); if ((await build(i, len)).length <= maxBytes) { good = len; tryLen *= 2; } else { bad = len; break; } }
+        if (bad) while (bad - good > 1) { const mid = (good + bad) >> 1; if ((await build(i, mid)).length <= maxBytes) good = mid; else bad = mid; }
+      }
+      const g = [...Array(good).keys()].map(j => i + j);
+      parts.push({ bytes: await build(i, good), name: `${Aero.baseName(d.name)} - part ${parts.length + 1} (p${rangesText(g)}).pdf`, pages: g });
+      for (const k of [...cache.keys()]) if (+k.split(':')[0] === i) cache.delete(k);
+      i += good;
+      if (parts.length > 500) throw new Error('The size limit is too small: more than 500 parts.');
+    }
+    return parts;
+  } finally { Aero.busy(); }
+}
+export async function splitDoc(d, groups, names = null) {
   Aero.busy('Splitting…');
   try {
     const parts = [];
     for (const [k, g] of groups.entries()) {
       const { bytes } = await buildOutput(d.state, { pages: g });
-      parts.push({ bytes, name: `${Aero.baseName(d.name)} - part ${k + 1} (p${rangesText(g)}).pdf` });
+      parts.push({ bytes, name: names?.[k] || `${Aero.baseName(d.name)} - part ${k + 1} (p${rangesText(g)}).pdf`, pages: g });
     }
     return parts;
   } finally { Aero.busy(); }

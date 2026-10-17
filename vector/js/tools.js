@@ -294,6 +294,7 @@
       const hit = LV.hitTest(ev.pt);
       if (!hit) { if (LV.isoRoot()) LV.sym.finishEdit(); return; }
       if (LV.kind(hit) === 'symbol') { LV.sym.edit(hit); return; }
+      if (LV.kind(hit) === 'warp') { LV.setSel([hit]); LV.warp.dialog(); return; }
       if (LV.isTextLike(hit)) { LV.setTool('type'); LV.beginTextEdit(hit); return; }
       if (hit instanceof P.Group) { const leaf = LV.hitTest(ev.pt, { leaf: true }); let c = leaf; while (c && c.parent !== hit) c = c.parent; if (c) LV.setSel([c]); }
     }

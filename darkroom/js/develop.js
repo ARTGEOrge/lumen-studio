@@ -12,6 +12,7 @@ const Dev = (() => {
   let rq = false, lastHist = 0, histTimer = null, lastView = null;
   const sliders = [];
   let curveCh = 'rgb', hslTab = 'hue';
+  let clip = false;           // clipping warning overlay (J)
   const ASPECTS = [['original', 'Original'], ['free', 'Free'], ['1:1', '1 : 1'], ['4:5', '4 : 5 (8 × 10)'], ['5:7', '5 : 7'], ['2:3', '2 : 3 (4 × 6)'], ['3:4', '3 : 4'], ['9:16', '9 : 16'], ['16:9', '16 : 9'], ['3:2', '3 : 2'], ['4:3', '4 : 3'], ['5:4', '5 : 4']];
 
   const capture = (el, e) => { try { el.setPointerCapture(e.pointerId); } catch (err) { } };
@@ -60,10 +61,10 @@ const Dev = (() => {
     Engine.canvas.style.display = '';
     if (!$('#glwrap').contains(Engine.canvas)) $('#glwrap').appendChild(Engine.canvas);
     ensureSource(p); requestRender();
-    if (isDev()) { syncPanels(); renderHistory(); drawNav(); updateExifLine(); }
+    if (isDev()) { syncPanels(); renderHistory(); renderSnapshots(); drawNav(); updateExifLine(); }
     Local.photoChanged();
   }
-  function settingsChanged() { if (!live) { syncPanels(); requestRender(); } renderHistory(); }
+  function settingsChanged() { if (!live) { syncPanels(); requestRender(); } renderHistory(); renderSnapshots(); }
   function thumbChanged() { drawNav(); }
 
   function sourceFor(p) {
@@ -103,7 +104,8 @@ const Dev = (() => {
       Object.assign(bc.style, { width: cssW + 'px', height: cssH + 'px', left: g.margin + (g.areaW - cssW) / 2 + 'px', top: g.margin + (g.areaH - cssH) / 2 + 'px' });
       bc.hidden = false;
     } else bc.hidden = true;
-    Engine.render(g.key, st, { outW: g.outW, outH: g.outH, view: g.view, fullCrop: cropMode, split: isDev() && ba === 'split' && !cropMode ? splitPos : null, target: 'screen', overlay: isDev() ? Local.overlayId() : null, visSpots: isDev() && Local.visSpots() });
+    const clipOn = isDev() && clip && !cropMode;
+    Engine.render(g.key, st, { outW: g.outW, outH: g.outH, view: g.view, fullCrop: cropMode, split: isDev() && ba === 'split' && !cropMode ? splitPos : null, target: 'screen', overlay: isDev() ? Local.overlayId() : null, visSpots: isDev() && Local.visSpots(), clip: clipOn });
     const left = g.side ? g.margin * 2 + g.areaW + (g.areaW - cssW) / 2 : g.margin + (g.areaW - cssW) / 2;
     Object.assign(cv.style, { width: cssW + 'px', height: cssH + 'px', left: left + 'px', top: g.margin + (g.areaH - cssH) / 2 + 'px' });
     lastView = { ...g, st, left, top: g.margin + (g.areaH - cssH) / 2, cssW, cssH, pid: p.id };
@@ -123,7 +125,7 @@ const Dev = (() => {
     // histogram (throttled while dragging, exact when idle)
     if (isDev()) {
       const now = performance.now();
-      if (now - lastHist > 90) { lastHist = now; showHist(Engine.histogram('v')); }
+      if (now - lastHist > 90 && !clipOn) { lastHist = now; showHist(Engine.histogram('v')); }   // (the clipping overlay would pollute it)
       clearTimeout(histTimer); histTimer = setTimeout(() => { lastHist = performance.now(); if (lastView) { Engine.render(lastView.key, lastView.st, { outW: lastView.outW, outH: lastView.outH, view: lastView.view, fullCrop: cropMode, slot: 'v' }); showHist(Engine.histogram('v')); } }, 160);
     }
   }
@@ -495,6 +497,13 @@ const Dev = (() => {
       pr.onclick = e => { const t = e.target.closest('[data-cp]'); if (!t) return; const P = { lin: [[0, 0], [1, 1]], med: [[0, 0], [.25, .21], [.75, .8], [1, 1]], strong: [[0, 0], [.25, .16], [.75, .86], [1, 1]], fade: [[0, .1], [.3, .32], [.75, .76], [1, .95]] }[t.dataset.cp]; setSettings(s => { s.curve[curveCh] = P; }, 'Tone curve ' + t.textContent); };
       b.appendChild(pr);
       wireCurve($('#curvec', box) || box.querySelector('canvas'));
+      sub(b, 'Region (parametric)');
+      slider(b, 'Highlights', 'pcurve.hl', -100, 100, 1, fmtInt, null, 'Curve highlights'); slider(b, 'Lights', 'pcurve.lt', -100, 100, 1, fmtInt, null, 'Curve lights');
+      slider(b, 'Darks', 'pcurve.dk', -100, 100, 1, fmtInt, null, 'Curve darks'); slider(b, 'Shadows', 'pcurve.sh', -100, 100, 1, fmtInt, null, 'Curve shadows');
+      sub(b, 'Region split points');
+      slider(b, 'Shadows | Darks', 'pcurve.s1', 5, 85, 1, fmtPlain, null, 'Curve split 1'); slider(b, 'Darks | Lights', 'pcurve.s2', 10, 90, 1, fmtPlain, null, 'Curve split 2');
+      slider(b, 'Lights | Highl.', 'pcurve.s3', 15, 95, 1, fmtPlain, null, 'Curve split 3');
+      b.appendChild(el('div', 'dim', 'The region curve is applied first, then the point curve above (dashed orange = region curve).'));
     }, true);
     panel('hsl', 'Color Mixer (HSL)', 'linear-gradient(135deg,#f44,#fd3,#3c4,#36f)', ['hsl'], b => {
       const tabs = el('div', 'tabs-mini', ['hue', 'sat', 'lum'].map(t => `<button data-h="${t}" class="${t === hslTab ? 'on' : ''}">${{ hue: 'Hue', sat: 'Saturation', lum: 'Luminance' }[t]}</button>`).join(''));
@@ -563,6 +572,16 @@ const Dev = (() => {
       slider(b, 'Scale', 'upright.scale', 50, 150, 1, fmtPlain, null, 'Transform scale');
       slider(b, 'X offset', 'upright.x', -100, 100, .5, fmtInt, null, 'Transform X offset'); slider(b, 'Y offset', 'upright.y', -100, 100, .5, fmtInt, null, 'Transform Y offset');
     }, true);
+    panel('calib', 'Calibration', 'linear-gradient(90deg,#e8433a,#4cbb3a 50%,#3a6fe0)', ['calib'], b => {
+      sub(b, 'Shadows');
+      slider(b, 'Tint', 'calib.shTint', -100, 100, 1, fmtInt, 'linear-gradient(90deg,#3cb84a,#d9dde0 50%,#c84ad0)', 'Calibration shadows tint');
+      [['r', 'Red', '#e8433a', 'linear-gradient(90deg,#d63fae,#e8433a 50%,#f0a024)'], ['g', 'Green', '#4cbb3a', 'linear-gradient(90deg,#e9cf2a,#4cbb3a 50%,#2bbfc0)'], ['b', 'Blue', '#3a6fe0', 'linear-gradient(90deg,#2bbfc0,#3a6fe0 50%,#b04ad8)']].forEach(([k, n, c, hg]) => {
+        sub(b, n + ' primary');
+        slider(b, 'Hue', `calib.${k}H`, -100, 100, 1, fmtInt, hg, `${n} primary hue`);
+        slider(b, 'Saturation', `calib.${k}S`, -100, 100, 1, fmtInt, `linear-gradient(90deg,#9a9a9a,${c})`, `${n} primary saturation`);
+      });
+      b.appendChild(el('div', 'dim', 'Shifts the camera’s red, green and blue primaries before all other colour work — whites and greys stay neutral. Useful for skin tones and a consistent film look.'));
+    }, true);
     panel('crop', 'Crop & Geometry', 'linear-gradient(#b8f28a,#2a7f14)', ['crop'], b => {
       const r1 = el('div', 'btnrow', '<button class="aero-btn" data-c="edit" title="Crop overlay (R)">✂ Edit crop…</button><button class="aero-btn" data-c="rl" title="Rotate left">⟲ Left</button><button class="aero-btn" data-c="rr" title="Rotate right">⟳ Right</button><button class="aero-btn" data-c="fh">⇋ Flip H</button><button class="aero-btn" data-c="fv">⥮ Flip V</button>');
       r1.onclick = e => { const t = e.target.closest('[data-c]'); if (!t) return; ({ edit: toggleCrop, rl: () => rotate(-1), rr: () => rotate(1), fh: () => flip('h'), fv: () => flip('v') })[t.dataset.c](); };
@@ -595,7 +614,7 @@ const Dev = (() => {
     // mark panels that differ from defaults
     const d = Model.defaults();
     $$('#panels .dpanel').forEach(pn => {
-      const groups = { basic: ['wb', 'tone', 'presence', 'treatment'], masks: ['masks'], curve: ['curve'], hsl: ['hsl'], grade: ['grade'], detail: ['detail'], effects: ['effects'], lens: ['lens'], transform: ['transform'], crop: ['crop'] }[pn.dataset.p];
+      const groups = { basic: ['wb', 'tone', 'presence', 'treatment'], masks: ['masks'], curve: ['curve'], hsl: ['hsl'], grade: ['grade'], detail: ['detail'], effects: ['effects'], lens: ['lens'], transform: ['transform'], crop: ['crop'], calib: ['calib'] }[pn.dataset.p];
       const changed = groups.some(g => Model.GROUPS[g].keys.some(k => JSON.stringify(s[k]) !== JSON.stringify(d[k]) && !(k === 'crop' && Model.isCropDefault(s.crop))));
       pn.querySelector('.rst').style.visibility = changed ? 'visible' : 'hidden';
     });
@@ -624,6 +643,13 @@ const Dev = (() => {
       if (ch === curveCh) return; const pts = s.curve[ch]; if (pts.length === 2 && pts[0][0] === 0 && pts[0][1] === 0 && pts[1][0] === 1 && pts[1][1] === 1) return;
       const L = Engine.splineLUT(pts); x.strokeStyle = colors[ch] + '55'; x.lineWidth = 1.2 * dpr; x.beginPath(); for (let i = 0; i < 256; i++) i ? x.lineTo(tx(i / 255), ty(L[i])) : x.moveTo(tx(0), ty(L[0])); x.stroke();
     });
+    // region (parametric) curve: split markers, and the curve itself (dashed) when it is in use
+    if (curveCh === 'rgb' && s.pcurve) {
+      const pc = Tonal.sanitizePCurve(s.pcurve);
+      x.strokeStyle = 'rgba(227,115,26,.55)'; x.lineWidth = 1 * dpr;
+      [pc.s1, pc.s2, pc.s3].forEach(v => { x.beginPath(); x.moveTo(tx(v / 100), ty(0)); x.lineTo(tx(v / 100), ty(.06)); x.stroke(); });
+      if (!Tonal.isPCDefault(pc)) { const PL = Tonal.paramLUT(pc); x.setLineDash([5 * dpr, 3 * dpr]); x.lineWidth = 1.6 * dpr; x.strokeStyle = '#e3731a'; x.beginPath(); for (let i = 0; i < 256; i++) i ? x.lineTo(tx(i / 255), ty(PL[i])) : x.moveTo(tx(0), ty(PL[0])); x.stroke(); x.setLineDash([]); }
+    }
     const pts = s.curve[curveCh], L = Engine.splineLUT(pts);
     x.strokeStyle = colors[curveCh]; x.lineWidth = 2 * dpr; x.beginPath(); for (let i = 0; i < 256; i++) i ? x.lineTo(tx(i / 255), ty(L[i])) : x.moveTo(tx(0), ty(L[0])); x.stroke();
     pts.forEach((q, i) => { x.fillStyle = curveDrag?.i === i ? colors[curveCh] : '#fff'; x.strokeStyle = colors[curveCh]; x.lineWidth = 1.5 * dpr; x.beginPath(); x.arc(tx(q[0]), ty(q[1]), 4.5 * dpr, 0, Math.PI * 2); x.fill(); x.stroke(); });
@@ -733,6 +759,61 @@ const Dev = (() => {
       fields: [{ key: 'name', label: 'Preset name', type: 'text', value: 'My preset' }, ...groupChecks(def)],
       onOK: async v => { const groups = Object.keys(Model.GROUPS).filter(k => v[k]); if (!groups.length) return Aero.toast('Pick at least one setting group'); const pr = await Cat.savePreset((v.name || 'Preset').trim().slice(0, 80), groups, p.settings); Aero.toast(`Saved preset “${pr.name}”`); } });
   }
+
+  /* ---------- snapshots ---------- */
+  function renderSnapshots() {
+    const p = photo(), box = $('#snaplist'); if (!box || !isDev()) return;
+    const list = p?.snapshots || [];
+    $('#snapinfo').textContent = list.length ? String(list.length) : '';
+    if (!list.length) { box.innerHTML = '<div class="dim" style="padding:3px 10px 5px">Save the current look with “+”. Snapshots stay with the photo.</div>'; return; }
+    const curJ = JSON.stringify(p.settings);
+    box.innerHTML = list.map(n => `<div class="aero-item${JSON.stringify(n.s) === curJ ? ' sel' : ''}" data-sn="${esc(n.id)}" title="Click to apply · double-click to rename · hover to preview"><svg class="ic" viewBox="0 0 16 16"><rect x="1.5" y="4" width="13" height="9.5" rx="1.6" fill="url(#gBlue)" stroke="#24476e" stroke-width=".8"/><rect x="5" y="2.5" width="6" height="2.5" rx=".8" fill="#24476e"/><circle cx="8" cy="8.7" r="2.6" fill="#e8f4ff" stroke="#24476e" stroke-width=".8"/></svg><span class="grow"></span><button class="x up" title="Update with the current settings">⟳</button><button class="x del" title="Delete snapshot">✕</button></div>`).join('');
+    list.forEach(n => { box.querySelector(`[data-sn="${CSS.escape(n.id)}"] .grow`).textContent = n.name; });
+  }
+  function newSnapshot() {
+    const p = photo(); if (!p) return Aero.toast('Select a photo first');
+    if (!isDev()) setModule('develop');
+    const d = new Date(), pad = v => String(v).padStart(2, '0');
+    return Aero.prompt('New Snapshot', 'Snapshot name', `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`).then(name => {
+      if (name == null) return null; const sn = Cat.addSnapshot(p, String(name).trim() || 'Snapshot', p.settings); if (sn) Aero.toast(`Snapshot “${sn.name}” saved`); return sn;
+    });
+  }
+  function applySnapshot(p, id) {
+    const n = (p.snapshots || []).find(x => x.id === id); if (!n) return false;
+    preview = null; live = null; Cat.setSettings(p, Model.clone(n.s), 'Snapshot: ' + n.name.slice(0, 60)); return true;
+  }
+  function wireSnapshots() {
+    const box = $('#snaplist');
+    $('#sn-new').onclick = newSnapshot;
+    const item = e => { const it = e.target.closest('[data-sn]'), p = photo(); return it && p ? { it, p, n: (p.snapshots || []).find(x => x.id === it.dataset.sn) } : null; };
+    box.addEventListener('mouseover', e => { const r = item(e); if (!r?.n || live || e.target.closest('.x')) return; preview = Model.sanitizeSettings(r.n.s); requestRender(); });
+    box.addEventListener('mouseleave', () => { if (preview) { preview = null; requestRender(); } });
+    box.addEventListener('click', e => {
+      const r = item(e); if (!r?.n) return;
+      if (e.target.closest('.up')) { Cat.updateSnapshot(r.p, r.n.id); Aero.toast(`Snapshot “${r.n.name}” updated`); return; }
+      if (e.target.closest('.del')) { preview = null; Cat.deleteSnapshot(r.p, r.n.id); requestRender(); Aero.toast(`Deleted snapshot “${r.n.name}” (Ctrl+Z to undo)`); return; }
+      applySnapshot(r.p, r.n.id);
+    });
+    box.addEventListener('dblclick', async e => {
+      const r = item(e); if (!r?.n || e.target.closest('.x')) return;
+      const name = await Aero.prompt('Rename Snapshot', 'Snapshot name', r.n.name); if (name != null && String(name).trim()) Cat.renameSnapshot(r.p, r.n.id, name);
+    });
+  }
+
+  /* ---------- match total exposures (shutter x ISO / aperture^2) ---------- */
+  function matchExposures() {
+    const ref = photo(), ids = selectedIds().filter(id => id !== S.active);
+    if (!ref || !ids.length) { Aero.toast('Select two or more photos — the active one is the reference'); return 0; }
+    if (Tonal.totalExposure(ref.exif) == null) { Aero.alert('Match Total Exposures', `“${Cat.displayName(ref)}” has no shutter speed / aperture in its EXIF data, so it can’t be used as the reference.`); return 0; }
+    const ok = ids.filter(id => Tonal.matchExposure(ref.exif, ref.settings.exposure, Cat.photos.get(id)?.exif) != null), skipped = ids.length - ok.length;
+    if (!ok.length) { Aero.toast('None of the other selected photos has shutter speed / aperture EXIF data'); return 0; }
+    Cat.applyToMany(ok, q => ({ ...Model.clone(q.settings), exposure: Tonal.matchExposure(ref.exif, ref.settings.exposure, q.exif) }), 'Match total exposures');
+    Aero.toast(`Matched ${ok.length} photo${ok.length === 1 ? '' : 's'} to ${Cat.displayName(ref)}${skipped ? ` · ${skipped} skipped (no EXIF)` : ''}`);
+    return ok.length;
+  }
+
+  /* ---------- clipping warnings ---------- */
+  function toggleClip(v) { clip = v == null ? !clip : !!v; if (clip && !isDev()) setModule('develop'); $('#clipinfo').textContent = clip ? 'Clipping shown' : ''; requestRender(); }
 
   /* ---------- history ---------- */
   function renderHistory() {
@@ -858,11 +939,13 @@ const Dev = (() => {
   function setBA(m) { if (!isDev()) setModule('develop'); if (cropMode) closeCrop(true); ba = m; $('#d-ba').value = m; requestRender(); }
 
   /* ---------- module lifecycle ---------- */
-  function enter() { renderPresets(); photoChanged(); setTimeout(() => { drawCurve(); drawWheels(); requestRender(); }, 0); }
+  function enter() { renderPresets(); renderSnapshots(); photoChanged(); setTimeout(() => { drawCurve(); drawWheels(); requestRender(); }, 0); }
   function leave() { if (cropMode) closeCrop(true); if (wbPick) setWBPick(false); if (Local.tool) Local.setTool(null); preview = null; }
 
   function init() {
-    buildPanels(); wireViewer(); wirePresets(); renderPresets();
+    buildPanels(); wireViewer(); wirePresets(); renderPresets(); wireSnapshots();
+    $('#dhist').title = 'Click a corner triangle (or press J) to show clipped highlights in red and shadows in blue';
+    $('#dhist').addEventListener('click', e => { const r = e.currentTarget.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top; if (y < 26 && (x < 26 || x > r.width - 26)) toggleClip(); });
     $('#d-crop').onclick = toggleCrop; $('#d-wb').onclick = toggleWBPick;
     $('#d-ba').onchange = e => setBA(e.target.value);
     $('#d-fit').onclick = () => setZoom('fit'); $('#d-100').onclick = () => setZoom(1);
@@ -880,7 +963,8 @@ const Dev = (() => {
 
   async function exportSettingsRemember(v) { lastExport = v; }
   return {
-    init, enter, leave, photoChanged, settingsChanged, thumbChanged, requestRender, renderHistory, renderPresets, syncPanels,
+    init, enter, leave, photoChanged, settingsChanged, thumbChanged, requestRender, renderHistory, renderPresets, renderSnapshots, syncPanels,
+    newSnapshot, applySnapshot, matchExposures, toggleClip, get clip() { return clip; },
     setZoom, zoomStep, toggleCrop, toggleWBPick, toggleBW, autoTone, autoWB, copySettings, pasteSettings, syncSettings, resetAll, newPreset, applyPreset,
     setBA, undo, redo, rotatedSettings, rotate, flip, setAspect, setCropAngle, autoLevel, autoUpright, drawOverlay, closeTools, openPanel,
     cur, beginLive, commit, setSettings, cancelLive: () => { live = null; }, liveSettings: () => live,

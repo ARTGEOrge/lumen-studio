@@ -250,6 +250,15 @@
     find(detail, 'detBook').proto = [I('tap', 'overlay', sheet.id, 'slideUp', 320, 'ease-out', { overlayPos: 'bottom', dim: true })];
     find(sheet, 'sheetDone').proto = [I('tap', 'back', null, 'dissolve', 200)];
 
+    // effect styles (shared shadows) + layout guides (1.2)
+    doc.effectStyles = [
+      { id: 'fx_card', name: 'Elevation / Card', shadows: [shadow(10, 28, .08), shadow(1, 3, .05)], blur: null },
+      { id: 'fx_raised', name: 'Elevation / Raised', shadows: [shadow(16, 40, .18)], blur: null },
+      { id: 'fx_small', name: 'Elevation / Small', shadows: [shadow(4, 10, .15)], blur: null },
+      { id: 'fx_glow', name: 'Glow / Primary', shadows: [{ x: 0, y: 6, blur: 16, spread: -4, color: '#f2643d', a: .45, on: true }], blur: null }];
+    card.fxStyle = 'fx_card'; bDef.fxStyle = 'fx_glow';
+    [onb, login, home, detail, sheet, saved, ...comps].forEach(r => LP.walk(r, n => { if (n.name === 'Logo' && n.shadows?.length) n.fxStyle = 'fx_raised'; if (n.name === 'Avatar' && n.shadows?.length) n.fxStyle = 'fx_small'; }));
+    [home, saved].forEach(ab => { ab.guides = [{ axis: 'x', v: 24 }, { axis: 'x', v: ab.w - 24 }]; });
     // export marks (for dev handoff demo)
     onb.exports = [{ scale: 2, fmt: 'png' }]; card.exports = [{ scale: 1, fmt: 'png' }, { scale: 1, fmt: 'svg' }];
     // components label frame (a light backdrop behind main components)
@@ -258,6 +267,7 @@
     doc.comments = [
       { id: 'cm1', ab: home.id, x: 300, y: 196, author: 'Maya (PM)', text: 'Should search stay pinned while the feed scrolls?', ts: Date.UTC(2026, 9, 8, 9, 30), resolved: false, replies: [{ author: 'Alex (Design)', text: 'Trying a sticky variant next sprint.', ts: Date.UTC(2026, 9, 8, 10, 5) }] },
       { id: 'cm2', ab: saved.id, x: 330, y: 420, author: 'Sam (Eng)', text: 'Grid could go to 3 columns on tablet.', ts: Date.UTC(2026, 9, 9, 14, 0), resolved: false, replies: [] }];
+    if (LP.syncEffectStyles) LP.syncEffectStyles(doc);
     return doc;
   };
 })();

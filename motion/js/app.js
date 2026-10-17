@@ -167,6 +167,10 @@
     const fx = F.effect(type);
     if (type === 'rays') { const b = LM.layerBounds(L, LM.st.time); fx.p.center.v = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]; }
     if (type === 'ramp') { const [w, h] = LM.layerSize(L); fx.p.p0.v = [w / 2, 0]; fx.p.p1.v = [w / 2, h]; if (L.type === 'shape' || L.type === 'text') { const b = LM.layerBounds(L, LM.st.time); fx.p.p0.v = [(b[0] + b[2]) / 2, b[1]]; fx.p.p1.v = [(b[0] + b[2]) / 2, b[3]]; } }
+    if (type === 'pointCtl') { const c = L._c || LM.comp(); fx.p.point.v = [c.w / 2, c.h / 2]; }
+    // a second instance of the same effect gets a numbered name so expressions can address it ("Slider Control 2")
+    const fxName = f => f.name || LM.FX[f.type].name, base = LM.FX[type].name;
+    if (L.effects.some(f => fxName(f) === base)) { let i = 2; while (L.effects.some(f => fxName(f) === base + ' ' + i)) i++; fx.name = base + ' ' + i; }
     L.effects.push(fx); L.expanded = true; LM.ui.open.add(L.id + '|effects'); LM.ui.open.add(L.id + '|fx.' + fx.id);
     LM.commit('Add ' + LM.FX[type].name);
   };

@@ -8,8 +8,14 @@
   <div class="aero-body no-toolbox">
     <div class="aero-client">
       <div class="aero-cmdbar" id="cmd">
-        <button class="aero-btn" id="bRun" title="Run the script in the editor (F5)">▶ Run</button>
-        <button class="aero-btn" id="bSection" title="Run the section at the cursor (Ctrl+Enter)">▶ Section</button>
+        <button class="aero-btn run-btn" id="bRun" title="Run the script in the editor (F5)">▶ Run</button>
+        <button class="aero-btn run-btn" id="bSection" title="Run the section at the cursor (Ctrl+Enter)">▶ Section</button>
+        <button class="aero-btn dbg-btn" id="bCont" title="Continue to the next breakpoint (F5)">▶ Continue</button>
+        <button class="aero-btn dbg-btn" id="bStep" title="Run the current line (F10)">↷ Step</button>
+        <button class="aero-btn dbg-btn" id="bStepIn" title="Step into the function called on this line (F11)">↘ Step in</button>
+        <button class="aero-btn dbg-btn" id="bStepOut" title="Run to the end of this function (Shift+F11)">↗ Step out</button>
+        <button class="aero-btn dbg-btn" id="bQuit" title="Stop debugging (Shift+F5)">✕ Quit debugging</button>
+        <select class="dbg-btn" id="dbgStack" title="Function call stack — pick a frame to inspect its variables"></select>
         <button class="aero-btn" id="bStop" title="Stop the running code (Ctrl+Break, or Ctrl+C in the Command Window)" disabled>■ Stop</button>
         <span class="sep"></span>
         <button class="aero-btn" id="bNew" title="New script (Ctrl+N)">＋ Script</button>
@@ -77,6 +83,6 @@
 </div>
 <script src="../kit/aero.js"></script>
 <script src="js/mat.js"></script><script src="js/linalg.js"></script><script src="js/lang.js"></script><script src="js/interp.js"></script>
-<script src="js/lib.js"></script><script src="js/numerics.js"></script><script src="js/toolbox.js"></script><script src="js/graphics.js"></script><script src="js/help.js"></script><script src="js/engine.js"></script>
+<script src="js/lib.js"></script><script src="js/numerics.js"></script><script src="js/toolbox.js"></script><script src="js/debug.js"></script><script src="js/optim.js"></script><script src="js/spectral.js"></script><script src="js/graphics.js"></script><script src="js/help.js"></script><script src="js/engine.js"></script>
 <script src="js/plotview.js"></script><script src="js/samples.js"></script><script src="js/editor.js"></script><script src="js/app.js"></script>
 </body></html>

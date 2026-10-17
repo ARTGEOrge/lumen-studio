@@ -3,7 +3,8 @@
    Lays a story out through a chain of threaded frames (multi-column), honouring paragraph/character
    formatting, OpenType shaping (kerning, ligatures, features via fontkit), tab stops with leaders, bullets
    and numbering, text wrap (box / object shape / alpha contour / jump), drop caps, baseline grid,
-   hyphenation, single-line or Knuth–Plass paragraph composition, inline/above-line graphics, inline
+   hyphenation, single-line or Knuth–Plass paragraph composition, keep options (keep with next, keep lines
+   together, orphan/widow control, start in next column/frame), paragraph rules above/below, inline/above-line graphics, inline
    tables that break across frames with repeating header rows, and footnotes at the foot of the column.
    Output is pure geometry (lines with per-character x positions and drawing runs) shared by the screen
    renderer, hit-testing/caret code, the PDF exporter and the EPUB/TOC generators. */
@@ -340,7 +341,11 @@
     return { id: f.id, num: f.num, lines, h: lines.length * fst.lead + 2, ind };
   }
 
-  /* frames: [{item, label (page number string), excl:[exclusions in page coords], grid:{start,step}}] */
+  /* frames: [{item, label (page number string), excl:[exclusions in page coords], grid:{start,step}}]
+     Keep options (paragraph attributes keepNext / keepAll / keepStart / keepEnd / startOn) are honoured by
+     column checkpoints: the composer state is saved at the top of every column; when a column ends in a way
+     that breaks a keep rule (orphan, widow, heading left at the foot of a column, split "keep together"
+     paragraph) the column is re-set from its checkpoint with an earlier stop position. */
   function layoutStory(doc, story, frames, opts = {}) {
     const P = prepare(doc, story, opts.fnBase || 0);
     let fnCarry = [];                                           // footnote lines continued in the next column
@@ -350,16 +355,77 @@
     let pendingSp = 0, dropLeft = 0, dropW = 0;
     let tstate = null;                                        // inline table continued in the next column
     let fst = null;
-    for (let fi = 0; fi < frames.length; fi++) {
+    const cons = new Map(), snaps = new Map();                // keep-option stop positions / checkpoints per column
+    let prevCol = null, restores = 0, fi = 0, c = 0;
+    const KEY = (f, cc) => f * 1000 + cc;
+    const snap = (key, fo) => snaps.set(key, { i, pi, doneFinal, pendingSp, dropLeft, dropW, tstate: tstate ? { ...tstate } : null, fnCarry: fnCarry.slice(), fst, prevCol, nl: fo.lines.length, nn: fo.notes.length, a: fo.a, kp: P.kp[pi] ? { ...P.kp[pi] } : null });
+    const restore = key => {
+      const s = snaps.get(key), f = Math.floor(key / 1000);
+      ({ i, pi, doneFinal, pendingSp, dropLeft, dropW, fst, prevCol } = s);
+      tstate = s.tstate ? { ...s.tstate } : null; fnCarry = s.fnCarry.slice();
+      out[f].lines.length = s.nl; out[f].notes.length = s.nn; out[f].a = s.a;
+      for (let k = f + 1; k < out.length; k++) out[k] = { lines: [], a: n, b: n, notes: [] };
+      P.kp[pi] = s.kp ? { ...s.kp } : undefined;
+      for (const k of [...cons.keys()]) if (k > key) cons.delete(k);
+      fi = f; c = key % 1000;
+    };
+    const keepN = v => Math.max(0, Math.min(9, v | 0));
+    // a column ended before the end of the story: earliest legal stop that satisfies the keep rules (or null)
+    function keepStop(colLines, key) {
+      const tl = colLines.filter(l => !l.block || l.pi != null);
+      if (!tl.length) return null;
+      const first = tl[0].a;
+      const startsHere = p => tl.some(l => l.pi === p && l.a === P.pstart[p]);
+      let at = i, q = pi;
+      if (i > P.pstart[pi]) {                                  // the column ends inside paragraph pi
+        if (!startsHere(pi)) return null;
+        const e = P.pe[pi], m = tl.filter(l => l.pi === pi && !l.block).length;
+        const prevKeep = pi > 0 && startsHere(pi - 1) ? keepN(P.pe[pi - 1].keepNext) : 0;
+        if (!(e.keepAll || (keepN(e.keepStart) > m) || prevKeep > m)) return null;
+        at = P.pstart[pi];
+      }
+      // headings (keep with next) follow the paragraph they belong to into the next column
+      while (q > 0 && keepN(P.pe[q - 1].keepNext) > 0 && startsHere(q - 1)) { q--; at = P.pstart[q]; }
+      // a keep chain that fills the whole column cannot be honoured: break the rule instead (as InDesign does)
+      const best = at;
+      if (best <= first || best >= i) return null;
+      const old = cons.get(key); if (old != null && best >= old) return null;
+      return { key, pos: best };
+    }
+    // a paragraph ended in this column after continuing from the previous one: too few lines here = widow
+    function widowStop(fo, colStart, ln) {
+      const p = ln.pi, e = P.pe[p], need0 = keepN(e.keepEnd);
+      if (!need0 || !prevCol || fo.lines.length <= colStart) return null;
+      const l0 = fo.lines[colStart]; if (l0.pi !== p || l0.a <= P.pstart[p] || l0.block) return null;
+      const m2 = fo.lines.slice(colStart).filter(l => l.pi === p && !l.block).length;
+      if (m2 >= need0) return null;
+      const pl = prevCol.lines.filter(l => l.pi === p && !l.block); if (!pl.length) return null;
+      const startedPrev = pl[0].a === P.pstart[p] || (pl[0].drop && pl[0].drop.i0 === P.pstart[p]);
+      if (startedPrev && pl.some(l => l.drop)) return null;    // never split a drop cap from its lines
+      const need = need0 - m2, keep = pl.length - need;
+      let pos = null;
+      if (keep >= Math.max(1, keepN(e.keepStart))) pos = pl[keep].a;
+      else if (startedPrev) pos = P.pstart[p];
+      const first = prevCol.lines[0]?.a ?? 0;
+      if (pos == null || pos <= first) return null;
+      const old = cons.get(prevCol.key); if (old != null && pos >= old) return null;
+      return { key: prevCol.key, pos };
+    }
+    while (fi < frames.length) {
       const F = frames[fi], it = F.item, fo = out[fi];
-      fo.a = i;
       const inset = it.inset || 0, cols = Math.max(1, it.cols | 0 || 1), gut = it.gutter ?? 12;
+      if (c >= cols) { fo.b = i; fi++; c = 0; continue; }
+      if (c === 0) fo.a = i;
       const iw = Math.max(1, it.w - inset * 2), colW = Math.max(1, (iw - gut * (cols - 1)) / cols);
       const rotated = !!(it.rot % 360);
       const excl = rotated ? [] : localExcl(F.excl, it);
       const top = inset, bottom = it.h - inset;
       const label = F.label || '';
-      for (let c = 0; c < cols; c++) {
+      const key = KEY(fi, c);
+      snap(key, fo);
+      const stopAt = cons.get(key);
+      let viol = null, skipFrame = false;
+      {
         const colL = inset + c * (colW + gut), colR = colL + colW;
         let base = null, guard = 0, lastDesc = 0, fnH = 0;
         const colStart = fo.lines.length, colNotes = [];
@@ -377,10 +443,13 @@
           if (colNotes.length) fnH = FN_SEP + colNotes.reduce((a, x) => a + x.h, 0);
         }
         while ((i < n || (needFinal && !doneFinal)) && guard++ < 5000) {
+          if (stopAt != null && i >= stopAt && i < n) break;       // keep options: column ends here
           P.fill(i + 3000);
           const pe = P.pe[pi] || P.pe[P.pe.length - 1];
           const isPS = i === P.pstart[pi];
           const colBottom = bottom - fnH;
+          // start paragraph in next column / frame
+          if (isPS && i < n && pe.startOn && ((pe.startOn === 'column' && base !== null) || (pe.startOn === 'frame' && fo.lines.length > 0))) { if (pe.startOn === 'frame') skipFrame = true; break; }
           /* --- block objects: inline tables and above-line graphics --- */
           if (i < n && T[i] === '￼' && isBlock(P.obj[i])) {
             const o = P.obj[i], atTop = base === null;
@@ -438,6 +507,7 @@
           for (let si = 0; si < segs.length; si++) {
             if (!(i < n || (needFinal && !doneFinal))) break;
             if (i < n && T[i] === '￼' && isBlock(P.obj[i])) break;
+            if (si > 0 && stopAt != null && i >= stopAt && i < n) break;
             const [L, R] = segs[si];
             const ps = P.pstart[pi], pend = pi + 1 < P.pstart.length ? P.pstart[pi + 1] : n;
             const firstOfPara = i === ps;
@@ -521,6 +591,14 @@
             const ln = { a: drop ? drop.i0 : a, b: r.b, y, xs: fullXs, runs, lead: mLead, asc: mAsc, desc: mDesc, L, R, col: c, drop, para: !!r.para, pi, hy: !!r.hy };
             if (objs.length) ln.objs = objs;
             if (notes.length) ln.notes = notes;
+            // paragraph rules (above the first line / below the last line), y relative to the baseline
+            if ((pe.ruleA && firstOfPara) || (pe.ruleB && (r.para || r.end))) {
+              const rules = [], tx0 = runs.length ? Math.min(...runs.map(q => q.x)) : L + startX, tx1 = runs.length ? Math.max(...runs.map(q => q.end)) : tx0;
+              const mk = (ru, dy) => { const w = Math.max(0.1, +ru.w || 1), x0 = ru.mode === 'text' ? (drop ? drop.x : tx0) : colL + pe.indL, x1 = ru.mode === 'text' ? tx1 : colR - pe.indR; rules.push({ x0: x0 + (ru.indL || 0), x1: x1 - (ru.indR || 0), dy, w, color: ru.color || '#1a1a1a' }); };
+              if (pe.ruleA && firstOfPara) mk(pe.ruleA, -(+pe.ruleA.off || 0) - Math.max(0.1, +pe.ruleA.w || 1) / 2);
+              if (pe.ruleB && (r.para || r.end)) mk(pe.ruleB, (+pe.ruleB.off || 0) + Math.max(0.1, +pe.ruleB.w || 1) / 2);
+              ln.rules = rules;
+            }
             placed.push(ln);
             i = r.b;
             if (dropLeft > 0) dropLeft--;
@@ -558,7 +636,12 @@
           if (blocks.length) { colNotes.push(...blocks); fnH = needFn; }
           if (carryOut.length) fnCarry.push(...carryOut);
           base = ly; lastDesc = ldesc;
+          // widow control: a paragraph that ended here with too few lines pulls lines over from the previous column
+          if (restores < 200) for (const l of placed) if ((l.para || l.b >= n) && (viol = widowStop(fo, colStart, l))) break;
+          if (viol) break;
         }
+        if (!viol && i < n && restores < 200 && !skipFrame) viol = keepStop(fo.lines.slice(colStart), key);
+        if (viol) { restores++; cons.set(viol.key, viol.pos); restore(viol.key); continue; }
         // vertical alignment
         if (it.valign && it.valign !== 'top' && fo.lines.length > colStart) {
           const ls = fo.lines.slice(colStart), last = ls[ls.length - 1];
@@ -567,8 +650,10 @@
           if (d > 0) ls.forEach(l => { l.y += d; if (l.drop) l.drop.y += d; if (l.block) l.block.y += d; });
         }
         if (colNotes.length) fo.notes.push({ x: colL, w: colW, y: bottom - fnH, st: fst, notes: colNotes });
+        prevCol = { key, lines: fo.lines.slice(colStart) };
       }
-      fo.b = i;
+      c++;
+      if (c >= cols || skipFrame) { fo.b = i; fi++; c = 0; }
     }
     return { frames: out, overset: i < n || fnCarry.length > 0, notesOverset: fnCarry.length > 0, end: i, n, P };
   }

@@ -161,6 +161,16 @@
       tb.append(row);
     });
     if (!ED.doc.textStyles.length) tb.append(h('div', { class: 'dim small', text: 'Select a text layer and press + to create a style.' }));
+    // effect styles
+    const fxs = ED.doc.effectStyles || [];
+    const eb = sec(`Effects (${fxs.length})`, () => A.addEffectStyle(), 'New effect style from the selected layer\'s shadows / blur');
+    fxs.forEach(s => {
+      const row = h('div', { class: 'aero-item fxstyle', title: `${LP.effectSummary(s)}\nClick: apply to selection · Double-click: edit` },
+        h('span', { class: 'fxwrap' }, h('span', { class: 'fxsw', style: LP.effectCss(s) })), h('span', { class: 'grow', text: s.name }), h('span', { class: 'dim small', text: LP.effectSummary(s) }));
+      row.onclick = () => A.applyEffectStyle(s); row.ondblclick = () => A.editEffectStyle(s);
+      eb.append(row);
+    });
+    if (!fxs.length) eb.append(h('div', { class: 'dim small', text: 'Select a layer with shadows or blur and press + to share them as an effect style.' }));
     // components
     const comps = A.components();
     const kb = sec(`Components (${comps.length})`, () => A.createComponent(), 'Create component from selection (Ctrl+Alt+K)');
@@ -266,6 +276,8 @@
     sel().forEach(n => {
       if (!ED.canEdit(n, key)) return;
       ED.setProp(n, key, typeof fn === 'function' ? fn(n) : fn);
+      // hand-editing effects unlinks the layer from its effect style
+      if ((key === 'shadows' || key === 'blur') && ED.scene.view(n).fxStyle) { if (ED.isClone(n) || n.type === 'instance') ED.setProp(n, 'fxStyle', null); else delete n.fxStyle; }
       // a new layer fill on mixed-style text replaces the per-range colors
       if (key === 'fills' && n.type === 'text' && n.runs && !live && /color/i.test(label || '')) { const r = LP.applyRunStyle(n, 0, String(n.text || '').length, { color: null, a: null, cs: null }); ED.setProp(n, 'runs', r); if (!r) delete n.runs; }
     });
@@ -436,6 +448,9 @@
     const vars = A.variantsOf(main);
     if (vars.length > 1) s.append(row(h('span', { class: 'lbl', text: main.component.set || 'Variant' }), selectEl(vars.map(c => [c.id, c.component.variant || c.name]), main.id, id => A.setVariant(n, id))));
     else s.append(row(h('span', { class: 'lbl', text: 'Of' }), h('span', { class: 'grow', text: main.name })));
+    // swap to any other component (overrides carry over by layer name)
+    const others = A.components().filter(c => !vars.includes(c) && !ED.isAncestor(c, n) && c !== ED.scene.top(n));
+    if (others.length) s.append(row(h('span', { class: 'lbl', text: 'Swap' }), selectEl([['', 'Swap instance…'], ...others.map(c => [c.id, (c.component.set ? c.component.set + ' / ' : '') + (c.component.variant || c.name)])], '', id => id && A.swapInstance(n, id), { cls: 'wide' })));
     if (!clone) s.append(row(h('button', { class: 'aero-btn small', text: 'Go to main', onclick: A.goToMain }), h('button', { class: 'aero-btn small', text: 'Reset', title: 'Reset overrides', onclick: A.resetOverrides }), h('button', { class: 'aero-btn small', text: 'Detach', onclick: A.detach })));
   }
   function textInput(val, onSet, ph) { const i = h('input', { type: 'text', value: val, placeholder: ph || '' }); i.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') i.blur(); }; i.onchange = () => onSet(i.value.trim()); return i; }
@@ -664,7 +679,13 @@
   }
   function shadowSection(ns) {
     const n = ns[0]; const list = ED.scene.view(n).shadows || [];
-    const s = section('Shadows', iconBtn(ICON.plus, 'Add shadow', () => apply('shadows', x => (ED.scene.view(x).shadows || []).concat([{ x: 0, y: 4, blur: 12, spread: 0, color: '#000000', a: .18, on: true }]), 'Add shadow')));
+    const fxs = ED.doc.effectStyles || [];
+    const s = section('Shadows', ...(fxs.length ? [(() => { const p = h('select', { class: 'stylepick', title: 'Apply an effect style' }); p.add(new Option('◈', '')); fxs.forEach(c => p.add(new Option(c.name, c.id))); p.onchange = () => { const st = fxs.find(q => q.id === p.value); if (st) A.applyEffectStyle(st); }; return p; })()] : []),
+      iconBtn(ICON.plus, 'Add shadow', () => apply('shadows', x => (ED.scene.view(x).shadows || []).concat([{ x: 0, y: 4, blur: 12, spread: 0, color: '#000000', a: .18, on: true }]), 'Add shadow')));
+    const fst = A.effectStyleOf(n);
+    if (fst) s.append(row(h('span', { class: 'grow stylename', title: LP.effectSummary(fst), html: `<span class="chip fxchip" style="${LP.effectCss(fst)}"></span>${esc(fst.name)}` }),
+      iconBtn(ICON.unlinkStyle, 'Detach effect style (keep the look)', () => A.detachEffectStyle()),
+      iconBtn(svg('<path d="M10.5 2.5l3 3L6 13H3v-3z"/>'), 'Edit effect style', () => A.editEffectStyle(fst))));
     list.forEach((sh, i) => {
       const upd = (fn, label, live) => apply('shadows', x => { const arr = JSON.parse(JSON.stringify(ED.scene.view(x).shadows || [])); if (arr[i]) fn(arr[i]); return arr; }, label, live);
       s.append(row(selectEl([['drop', 'Drop shadow'], ['inner', 'Inner shadow']], sh.inner ? 'inner' : 'drop', val => upd(p => p.inner = val === 'inner', 'Shadow type')),
@@ -820,6 +841,18 @@
     return card;
   }
 
+  // WCAG contrast of a text layer against what is rendered behind it
+  function contrastSection(n) {
+    const s = section('Accessibility', iconBtn(svg('<circle cx="8" cy="8" r="6"/><path d="M8 2v12" /><path d="M8 2a6 6 0 0 1 0 12z" fill="currentColor"/>'), 'Check all text layers…', () => LP.A11Y.dialog()));
+    let r; try { r = LP.A11Y.checkNode(n); } catch (e) { r = { error: e.message }; }
+    if (r.error) { s.append(h('div', { class: 'dim small', text: 'Contrast: ' + r.error })); return; }
+    const hx = LP.A11Y.hex;
+    s.append(h('div', { class: 'a11y-res' }, h('span', { class: 'a11y-sample', style: `background:${hx(r.bg)};color:${hx(LP.A11Y.over(r.fg, r.a, r.bg))}`, text: 'Aa' }),
+      h('span', { class: 'a11y-big', text: LP.A11Y.fmt(r.ratio), title: r.varies ? `Background varies: median ${LP.A11Y.fmt(r.median)}, lowest ${LP.A11Y.fmt(r.min)}` : 'Contrast ratio against the background behind the text' }),
+      h('span', { class: 'a11y-badge' + (r.grade.aa ? '' : ' fail'), text: 'AA ' + (r.grade.aa ? '✓' : '✗') }), h('span', { class: 'a11y-badge' + (r.grade.aaa ? '' : ' fail'), text: 'AAA ' + (r.grade.aaa ? '✓' : '✗') })));
+    s.append(h('div', { class: 'dim small', text: `${r.large ? 'Large' : 'Normal'} text (${Math.round(r.size * 10) / 10}px ${r.weight}) needs ${r.grade.need}:1 for AA, ${r.grade.needAAA}:1 for AAA.${r.varies ? ' Background varies — the ratio is for its weakest 10%.' : ''}` }));
+  }
+
   /* ---------- inspect (dev handoff) ---------- */
   let codeLang = 'css';
   function devInspector() {
@@ -828,7 +861,7 @@
       inspEl.append(h('div', { class: 'ititle' }, h('span', { class: 'grow', text: 'Inspect' })));
       const s = section('Dev handoff');
       s.append(h('div', { class: 'dim small', html: 'Click a layer to see its CSS / SwiftUI / Compose code. Hover other layers to measure distances. Layers marked for export can be batch-exported as a ZIP.' }));
-      s.append(row(h('button', { class: 'aero-btn small', text: 'Export all marked (ZIP)', onclick: () => window.IO.batchExport() })));
+      s.append(row(h('button', { class: 'aero-btn small', text: 'Export all marked (ZIP)', onclick: () => window.IO.batchExport() }), h('button', { class: 'aero-btn small', text: 'Check text contrast…', title: 'WCAG contrast of every visible text layer', onclick: () => LP.A11Y.dialog() })));
       const marked = Object.values(ED.scene.byId).filter(n => n.exports?.length && !ED.isClone(n));
       s.append(h('div', { class: 'dim small', text: `${marked.length} layer(s) marked for export.` }));
       return;
@@ -844,6 +877,7 @@
     if (v.radius && v.radius.some(r => r)) kv('Radius', v.radius.join(' '));
     if (n.type === 'text') { const t = LP.textProps(v, ED.doc); kv('Font', `${t.font} ${t.weight}${t.italic ? ' italic' : ''}`); kv('Size / line', `${t.size}px / ${LP.lineHeight(t)}px`); if (t.ls) kv('Letter spacing', t.ls + 'px'); const st = v.textStyleId && ED.doc.textStyles.find(s => s.id === v.textStyleId); if (st) kv('Text style', st.name); }
     (v.fills || []).filter(f => f.on !== false).forEach(f => { const st = f.style && ED.doc.colorStyles.find(s => s.id === f.style); kv('Fill', f.type === 'solid' ? `${LP.rgba(LP.fillColor(f, ED.doc).color, LP.fillColor(f, ED.doc).a)}${st ? ' (' + st.name + ')' : ''}` : f.type); });
+    if ((v.mainType || n.type) === 'text') contrastSection(n);
     const tabs = h('div', { class: 'aero-tabs codetabs' });
     [['css', 'CSS'], ['swift', 'SwiftUI'], ['android', 'Compose']].forEach(([k, t]) => { const tb = h('div', { class: 'aero-tab' + (codeLang === k ? ' on' : ''), text: t }); tb.onclick = () => { codeLang = k; renderInspector(); }; tabs.append(tb); });
     const cs = section('Code', iconBtn(ICON.copy, 'Copy code', () => { navigator.clipboard?.writeText(code).then(() => Aero.toast('Code copied'), () => Aero.toast('Copy failed')); }));

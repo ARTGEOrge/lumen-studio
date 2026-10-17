@@ -22,7 +22,19 @@
         <div class="aero-side left" id="leftside">
           <div class="aero-tabs" id="lefttabs"><div class="aero-tab on" data-t="pages">Pages</div><div class="aero-tab" data-t="outline">Bookmarks</div></div>
           <div class="aero-list" id="thumbs"></div>
-          <div class="aero-list" id="outline" hidden></div>
+          <div class="aero-list" id="outline" tabindex="0" hidden></div>
+          <div class="aero-iconbar" id="olbar" hidden>
+            <button class="aero-iconbtn" data-ob="add" title="Add bookmark for the current view (Ctrl+B)"><svg viewBox="0 0 16 16"><path d="M4 1.5h6v12L7 11l-3 2.5z" fill="url(#gBlue)" stroke="#1c5fb4"/><path d="M12.5 9v6M9.5 12h6" stroke="#2a7f14" stroke-width="1.8"/></svg></button>
+            <button class="aero-iconbtn" data-ob="child" title="Add child bookmark"><svg viewBox="0 0 16 16"><path d="M2.5 2v6.5h5" fill="none" stroke="#5d7390"/><path d="M8 4h5v9l-2.5-2L8 13z" fill="url(#gBlue)" stroke="#1c5fb4"/></svg></button>
+            <button class="aero-iconbtn" data-ob="rename" title="Rename (F2)"><svg viewBox="0 0 16 16"><path d="M2 12.5 11 3.5l1.8 1.8-9 9H2z" fill="url(#gGold)" stroke="#8a5a0a"/></svg></button>
+            <button class="aero-iconbtn" data-ob="dest" title="Set destination to the current view"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="#1c5fb4"/><circle cx="8" cy="8" r="2" fill="#e0402c"/><path d="M8 .5v3M8 12.5v3M.5 8h3M12.5 8h3" stroke="#1c5fb4"/></svg></button>
+            <button class="aero-iconbtn" data-ob="up" title="Move up"><svg viewBox="0 0 16 16"><path d="m3.5 9.5 4.5-5 4.5 5" fill="none" stroke="#1c5fb4" stroke-width="1.8"/></svg></button>
+            <button class="aero-iconbtn" data-ob="down" title="Move down"><svg viewBox="0 0 16 16"><path d="m3.5 6.5 4.5 5 4.5-5" fill="none" stroke="#1c5fb4" stroke-width="1.8"/></svg></button>
+            <button class="aero-iconbtn" data-ob="out" title="Outdent (move up a level)"><svg viewBox="0 0 16 16"><path d="M7 4 3 8l4 4M3 8h10" fill="none" stroke="#1c5fb4" stroke-width="1.6"/></svg></button>
+            <button class="aero-iconbtn" data-ob="in" title="Indent (make child of the bookmark above)"><svg viewBox="0 0 16 16"><path d="m9 4 4 4-4 4M13 8H3" fill="none" stroke="#1c5fb4" stroke-width="1.6"/></svg></button>
+            <button class="aero-iconbtn" data-ob="props" title="Properties (title, style, colour)"><svg viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="url(#gPaper)" stroke="#5a7a9a"/><path d="M5 6h6M5 8.5h6M5 11h4" stroke="#3a8fe0"/></svg></button>
+            <button class="aero-iconbtn" data-ob="del" title="Delete bookmark"><svg viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8" stroke="#c62828" stroke-width="2"/></svg></button>
+          </div>
         </div>
         <div class="stagecol">
           <div class="aero-tabs doctabs" id="doctabs"></div>

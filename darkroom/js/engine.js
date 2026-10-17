@@ -176,6 +176,8 @@ uniform vec2 uNR;           // luminance, colour
 uniform vec4 uVig;          // amount, midpoint, roundness, feather
 uniform vec3 uGrain;        // amount, size, roughness
 uniform float uSplit, uBefore;
+uniform mat3 uCal; uniform float uShT;  // calibration: primaries matrix (linear RGB), shadows tint
+uniform float uClip;        // clipping warning overlay (screen only)
 const vec3 LW = vec3(.2126,.7152,.0722);
 float luma(vec3 c){ return dot(c, LW); }
 vec3 enc(vec3 x){ x = max(x, vec3(0.)); return mix(12.92*x, 1.055*pow(x, vec3(1./2.4)) - .055, step(.0031308, x)); }
@@ -246,6 +248,8 @@ void main(){
   // ---- white balance, exposure ----
   vec3 k = wbMul(uTT.x + L1.x, uTT.y + L1.y)*exp2(uExp + L0.x);
   c *= k; vec3 bB = texture(uB, tc).rgb*k; cA *= k;
+  // ---- calibration (camera primaries hue / saturation; neutrals are preserved by construction) ----
+  c = uCal*c; bB = uCal*bB; cA = uCal*cA;
 
   // ---- dehaze (dark-channel style, using the large blur as the haze map) ----
   float dz = clamp(uDehaze + L2.x, -1., 1.);
@@ -284,6 +288,8 @@ void main(){
   // ---- contrast ----
   float con = clamp(uCon + L0.y, -1., 1.5);
   p = vec3(contrastCurve(p.r, con), contrastCurve(p.g, con), contrastCurve(p.b, con));
+  // ---- calibration: shadows tint (green - / magenta +) ----
+  if (uShT != 0.) { float sw = pow(1. - smoothstep(0., .6, clamp(luma(p), 0., 1.)), 1.5); p += vec3(.5, -1., .5)*uShT*.07*sw; }
 
   // ---- vibrance / saturation ----
   float gy = luma(p);
@@ -349,6 +355,11 @@ void main(){
   }
   if (uOverlay > .5) p = mix(p, vec3(1., .16, .1), texture(uLM, tc).r*.6);
   if (uVis > .5) { float e = abs(Y - YA)*14. + abs(Y - YB)*2.; p = vec3(1. - clamp(e, 0., 1.)); }
+  if (uClip > .5) {                                // clipping warnings: highlights red, shadows blue
+    vec3 q = clamp(p, 0., 1.);
+    if (max(q.r, max(q.g, q.b)) >= .999) { o = vec4(1., 0., 0., g0.a); return; }
+    if (max(q.r, max(q.g, q.b)) <= .001) { o = vec4(0., .35, 1., g0.a); return; }
+  }
   p += (hash(gl_FragCoord.xy + .37) - .5)/255.;    // dither
   o = vec4(clamp(p, 0., 1.), g0.a);
 }`;
@@ -509,11 +520,19 @@ void main(){
     }
     return out;
   }
-  function updateCurve(curve) {
-    const key = JSON.stringify(curve || null);
+  // master LUT = point curve o parametric (region) curve
+  function masterLUT(curve, pcurve) {
+    const M = splineLUT(curve?.rgb); if (Tonal.isPCDefault(pcurve)) return M;
+    const P = Tonal.paramLUT(pcurve), out = new Float32Array(256);
+    for (let i = 0; i < 256; i++) out[i] = lookLUT(M, P[i]);
+    return out;
+  }
+  const lookLUT = (L, v) => { const x = Math.max(0, Math.min(1, v)) * 255, i = Math.min(254, Math.floor(x)), f = x - i; return L[i] * (1 - f) + L[i + 1] * f; };
+  function updateCurve(curve, pcurve) {
+    const key = JSON.stringify([curve || null, pcurve || null]);
     if (key === curveKey) return; curveKey = key;
-    const M = splineLUT(curve?.rgb), R = splineLUT(curve?.r), G = splineLUT(curve?.g), B = splineLUT(curve?.b);
-    const look = (L, v) => { const x = v * 255, i = Math.min(254, Math.floor(x)), f = x - i; return L[i] * (1 - f) + L[i + 1] * f; };
+    const M = masterLUT(curve, pcurve), R = splineLUT(curve?.r), G = splineLUT(curve?.g), B = splineLUT(curve?.b);
+    const look = lookLUT;
     const data = new Uint8Array(256 * 4);
     for (let i = 0; i < 256; i++) {
       const m = M[i];
@@ -714,7 +733,7 @@ void main(){
     }
 
     // 4. develop
-    updateCurve(st.curve);
+    updateCurve(st.curve, st.pcurve);
     const OUT = fbo(slot + 'OUT', outW, outH, 'b');
     P = progs.dev; gl.useProgram(P);
     ['uG', 'uA', 'uB', 'uCurve', 'uL0', 'uL1', 'uL2', 'uLM'].forEach((n, i) => gl.uniform1i(P.u(n), i));
@@ -744,6 +763,9 @@ void main(){
     gl.uniform4f(P.u('uVig'), f(vg.amount), .25 + vg.mid / 100 * .85, f(vg.round), vg.feather / 100 * .9);
     gl.uniform3f(P.u('uGrain'), st.grain.amount / 100, .5 + st.grain.size / 100 * 2.5, st.grain.rough / 100);
     gl.uniform1f(P.u('uSplit'), opt.split == null ? -1 : opt.split); gl.uniform1f(P.u('uBefore'), opt.before ? 1 : 0);
+    const cm = Tonal.calibMatrix(st.calib);   // row-major -> GLSL column-major
+    gl.uniformMatrix3fv(P.u('uCal'), false, [cm[0], cm[3], cm[6], cm[1], cm[4], cm[7], cm[2], cm[5], cm[8]]);
+    gl.uniform1f(P.u('uShT'), f(st.calib?.shTint || 0)); gl.uniform1f(P.u('uClip'), opt.clip ? 1 : 0);
     drawTo(OUT, outW, outH);
 
     if (opt.target === 'screen') {
@@ -797,7 +819,7 @@ void main(){
 
   return {
     init, setSource, dropSource, hasSource, sourceSize, sourceKeys: () => [...sources.keys()], render, readOut, histogram, sampleLinear, freeBig,
-    cropSize, orientedSize, constrainCrop, cropInside, mapper, splineLUT, solveWB, wbMult,
+    cropSize, orientedSize, constrainCrop, cropInside, mapper, splineLUT, masterLUT, solveWB, wbMult,
     get canvas() { init(); return canvas; }, get gl() { return gl; }, get maxTex() { init(); return maxTex; }, get hasFloat() { return hasFloat; }
   };
 })();

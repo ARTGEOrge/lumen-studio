@@ -161,6 +161,54 @@ yyaxis left;  plot(w, 20*log10(abs(h))); ylabel('Magnitude (dB)'); ylim([-80 5])
 yyaxis right; plot(w, unwrap(angle(h)) * 180/pi); ylabel('Phase (deg)')
 grid on; title('Filter response'); xlabel('Frequency (Hz)')
 `;
+  const spectrum = `%% Spectral analysis: a quadratic chirp buried in noise
+fs = 8000;  t = 0:1/fs:2;
+rng(3)
+x = chirp(t, 100, 2, 3000, 'quadratic') + 0.3*randn(size(t));
+
+[pxx, f] = pwelch(x, 512, 256, 1024, fs);      % Welch PSD, Hamming windows
+fprintf('Signal power from the PSD: %.3f (variance %.3f)\\n', sum(pxx)*(f(2) - f(1)), var(x));
+
+figure(8); clf
+subplot(2, 1, 1)
+spectrogram(x, 256, 200, 512, fs)               % time on x, frequency on y, dB colours
+colormap turbo
+subplot(2, 1, 2)
+plot(f, 10*log10(pxx)); grid on
+title('Welch PSD'); xlabel('Frequency (Hz)'); ylabel('dB/Hz')
+
+%% Find where the chirp is at t = 1 s
+[s, fr, tt, ps] = spectrogram(x, 256, 200, 512, fs);
+[~, k] = min(abs(tt - 1));
+[~, i] = max(ps(:, k));
+fprintf('At t = %.2f s the strongest frequency is %.0f Hz (expected %.0f Hz)\\n', tt(k), fr(i), 100 + 2900*tt(k)^2/4);
+`;
+  const optimize = `%% Constrained optimization: linprog, quadprog and fmincon
+% A workshop makes tables (profit 30) and chairs (profit 20).
+% Wood: 6 per table, 2 per chair, 120 available.  Labour: 2 and 2 hours, 48 available.
+f = -[30; 20];                     % linprog minimises, so negate the profit
+A = [6 2; 2 2];  b = [120; 48];
+[plan, fval] = linprog(f, A, b, [], [], [0; 0], []);
+fprintf('Make %.0f tables and %.0f chairs for a profit of %.0f\\n', plan, -fval);
+% one more hour of labour makes the LP answer fractional; intlinprog keeps it whole
+whole = intlinprog(-[30; 20], 1:2, A, [120; 49], [], [], [0; 0], []);
+fprintf('With 49 hours: %d tables and %d chairs (whole numbers)\\n', whole);
+
+%% fmincon: the Rosenbrock valley inside the unit disc
+fun = @(x) 100*(x(2) - x(1)^2)^2 + (1 - x(1))^2;
+disc = @(x) deal(x(1)^2 + x(2)^2 - 1, []);          % c(x) <= 0, no equalities
+[xopt, fopt, flag, out] = fmincon(fun, [-1 0.5], [], [], [], [], [], [], disc);
+fprintf('fmincon: x = [%.4f %.4f], f = %.5f after %d iterations\\n', xopt, fopt, out.iterations);
+
+[X, Y] = meshgrid(linspace(-1.5, 1.5, 121));
+Z = 100*(Y - X.^2).^2 + (1 - X).^2;
+figure(9); clf
+contourf(X, Y, log10(Z + 1e-3), 25); hold on
+th = linspace(0, 2*pi, 200);
+plot(cos(th), sin(th), 'w', 'LineWidth', 2)
+plot(xopt(1), xopt(2), 'rp', 'MarkerSize', 14, 'MarkerFaceColor', 'r'); hold off
+axis equal; colorbar; title('fmincon on Rosenbrock, constrained to the unit disc')
+`;
   // deterministic "noisy" data for the curve-fitting sample
   function measurements() {
     let s = 7; const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
@@ -169,7 +217,7 @@ grid on; title('Filter response'); xlabel('Frequency (Hz)')
     return rows.join('\n') + '\n';
   }
   window.LabSamples = {
-    files: () => ({ 'welcome.m': welcome, 'lorenz.m': lorenz, 'curvefit.m': curvefit, 'contours.m': contours, 'projectile.m': projectile, 'statistics.m': stats, 'signals.m': signals, 'measurements.csv': measurements() }),
+    files: () => ({ 'welcome.m': welcome, 'lorenz.m': lorenz, 'curvefit.m': curvefit, 'contours.m': contours, 'projectile.m': projectile, 'statistics.m': stats, 'signals.m': signals, 'spectrum.m': spectrum, 'optimize.m': optimize, 'measurements.csv': measurements() }),
     first: 'welcome.m',
   };
 })();

@@ -4,7 +4,7 @@
   const M = typeof module === 'object' && module.exports ? require('./mat.js') : root.LabMat;
   const KW = new Set(['if', 'elseif', 'else', 'end', 'for', 'parfor', 'while', 'break', 'continue', 'return', 'function', 'switch', 'case', 'otherwise', 'try', 'catch', 'global', 'persistent', 'do', 'until', 'endfunction', 'endif', 'endfor', 'endwhile']);
   // words that accept "command syntax" (hold on, format long, close all …)
-  const CMD = new Set(['hold', 'grid', 'axis', 'close', 'clc', 'clear', 'clearvars', 'format', 'figure', 'clf', 'box', 'colorbar', 'colormap', 'shading', 'legend', 'more', 'warning', 'who', 'whos', 'help', 'doc', 'rotate3d', 'disp', 'echo', 'load', 'save', 'type', 'edit', 'cd', 'pkg', 'tic', 'drawnow', 'syms', 'yyaxis', 'fclose']);
+  const CMD = new Set(['hold', 'grid', 'axis', 'close', 'clc', 'clear', 'clearvars', 'format', 'figure', 'clf', 'box', 'colorbar', 'colormap', 'shading', 'legend', 'more', 'warning', 'who', 'whos', 'help', 'doc', 'rotate3d', 'disp', 'echo', 'load', 'save', 'type', 'edit', 'cd', 'pkg', 'tic', 'drawnow', 'syms', 'yyaxis', 'fclose', 'dbstop', 'dbclear', 'dbstatus', 'dbstep', 'dbcont', 'dbquit', 'dbstack', 'dbup', 'dbdown', 'profile']);
   const synErr = (msg, line) => { const e = new M.LabError(msg, 'MATLAB:parse'); e.line = line; throw e; };
 
   // ---------- lexer ----------
@@ -50,6 +50,14 @@
       if (stmtStart && !stack.length && isIdStart(c)) {
         let j = i; while (j < n && isId(src[j])) j++;
         const word = src.slice(i, j);
+        if (word === 'dbstop') { // dbstop in f at 12 if x(k) >= 3 — the condition may hold any characters
+          const rest = src.slice(j).match(/^[ \t]+([^\n;%]*?)[ \t]*(?=[\n;%]|$)/);
+          if (rest && rest[1] && /^(in|if)\b/.test(rest[1].trim())) {
+            const m = rest[1].trim().match(/^(.*?)\s+if\s+(.+)$/), head = m && !/^if$/.test(m[1]) ? m[1] : rest[1].trim();
+            const args = head.split(/\s+/); if (m && head === m[1]) args.push('if', m[2].trim());
+            push('cmd', word, { args }); i = j + rest[0].length; continue;
+          }
+        }
         if (CMD.has(word)) {
           const rest = src.slice(j).match(/^[ \t]+([^\n;,%=(]*?)[ \t]*(?=[\n;,%]|$)/);
           if (rest && rest[1] && !/^[=(]/.test(rest[1]) && !/^[-+*/\\^&|<>~.:]\s/.test(rest[1]) && /^[A-Za-z0-9_\-.'"\s]+$/.test(rest[1])) {

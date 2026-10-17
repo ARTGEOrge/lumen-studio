@@ -4,6 +4,7 @@ import { V, goTo, makeVp, effRot } from './viewer.js';
 import { svgFor, displayLabel, annotRect, MARKUP } from './annots.js';
 import { esc, fmtDate, uid, f2 } from './util.js';
 import { select, patchAnnot, deleteAnnot, replaceAnnot } from './tools.js';
+import { B, samePath, addBookmark, renameDialog, setBookmarkDest, moveBookmark, indentBookmark, outdentBookmark, deleteBookmark, dropBookmark, propertiesDialog as bmProps } from './bookmarks.js';
 
 const $ = id => document.getElementById(id);
 const thumbsEl = $('thumbs'), outlineEl = $('outline'), cmtEl = $('comments');
@@ -73,39 +74,92 @@ on('page', i => {
   const t = thumbsEl.children[i]; if (t) { t.classList.add('sel'); t.scrollIntoView({ block: 'nearest' }); }
 });
 
-/* ---------- outline ---------- */
+/* ---------- outline (bookmarks) ---------- */
+const olbar = $('olbar');
+let olGen = 0;
 export async function renderOutline() {
-  const d = App.doc; outlineEl.innerHTML = '';
-  if (!d) return;
+  const d = App.doc; const my = ++olGen;
+  const scroll = outlineEl.scrollTop;
+  if (!d) { outlineEl.innerHTML = ''; return; }
   const items = await d.getOutline();
-  if (d !== App.doc) return;
-  if (!items || !items.length) { outlineEl.innerHTML = '<div class="empty-note">This document has no bookmarks.</div>'; return; }
-  const build = (list, parent) => {
-    for (const it of list) {
+  if (d !== App.doc || my !== olGen) return;
+  outlineEl.innerHTML = '';
+  if (B.doc !== d) { B.doc = d; B.sel = null; }
+  olbar.querySelectorAll('[data-ob]').forEach(b => { b.disabled = !!d.readOnly; });
+  if (!items || !items.length) { outlineEl.innerHTML = `<div class="empty-note">This document has no bookmarks.${d.readOnly ? '' : '<br>Click <b>+</b> below (Ctrl+B) to bookmark the current view, or use Pages › Create Bookmarks from Headings.'}</div>`; B.sel = null; return; }
+  if (B.sel && !pathExists(items, B.sel)) B.sel = null;
+  const build = (list, parent, prefix) => {
+    list.forEach((it, k) => {
+      const path = [...prefix, k];
       const wrap = document.createElement('div'); wrap.className = 'ol';
-      const row = document.createElement('div'); row.className = 'aero-item';
+      const row = document.createElement('div'); row.className = 'aero-item' + (samePath(path, B.sel) ? ' sel' : ''); row.dataset.path = path.join('.');
+      row.draggable = !d.readOnly;
       const has = it.items && it.items.length;
       row.innerHTML = `<span class="tw">${has ? '▾' : ''}</span><span class="grow"></span>`;
       row.querySelector('.grow').textContent = it.title; row.title = it.title;
       if (it.bold) row.style.fontWeight = '600'; if (it.italic) row.style.fontStyle = 'italic';
+      if (it.color && (it.color[0] || it.color[1] || it.color[2])) row.querySelector('.grow').style.color = `rgb(${it.color[0]},${it.color[1]},${it.color[2]})`;
       row.onclick = async ev => {
         if (ev.target.classList.contains('tw') && has) { kids.classList.toggle('closed'); ev.target.textContent = kids.classList.contains('closed') ? '▸' : '▾'; return; }
-        outlineEl.querySelectorAll('.aero-item.sel').forEach(x => x.classList.remove('sel')); row.classList.add('sel');
+        outlineEl.querySelectorAll('.aero-item.sel').forEach(x => x.classList.remove('sel')); row.classList.add('sel'); B.sel = path;
         if (it.url) { emit('openUrl', it.url); return; }
         const r = await d.resolveDest(it.dest); if (r) goTo(r.page, r.top);
       };
+      row.ondblclick = ev => { if (!d.readOnly && !ev.target.classList.contains('tw')) { B.sel = path; renameDialog(path); } };
       wrap.appendChild(row);
       const kids = document.createElement('div'); kids.className = 'kids';
-      if (has) build(it.items, kids);
+      if (has) build(it.items, kids, path);
       wrap.appendChild(kids); parent.appendChild(wrap);
-    }
+    });
   };
-  build(items, outlineEl);
+  build(items, outlineEl, []);
+  outlineEl.scrollTop = scroll;
+}
+function pathExists(items, p) { let list = items; for (const k of p) { const it = list?.[k]; if (!it) return false; list = it.items; } return true; }
+// drag & drop reordering
+let dragFrom = null;
+const dropWhere = (row, e) => { const r = row.getBoundingClientRect(); const f = (e.clientY - r.top) / r.height; return f < 0.3 ? 'before' : f > 0.7 ? 'after' : 'inside'; };
+outlineEl.addEventListener('dragstart', e => { const row = e.target.closest?.('.aero-item[data-path]'); if (!row) return; dragFrom = row.dataset.path.split('.').map(Number); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', row.title); });
+outlineEl.addEventListener('dragover', e => {
+  if (!dragFrom) return; const row = e.target.closest('.aero-item[data-path]'); if (!row) return;
+  e.preventDefault(); e.stopPropagation();
+  outlineEl.querySelectorAll('.dropb,.dropa,.dropi').forEach(x => x.classList.remove('dropb', 'dropa', 'dropi'));
+  row.classList.add({ before: 'dropb', after: 'dropa', inside: 'dropi' }[dropWhere(row, e)]);
+});
+outlineEl.addEventListener('dragleave', e => { if (!outlineEl.contains(e.relatedTarget)) outlineEl.querySelectorAll('.dropb,.dropa,.dropi').forEach(x => x.classList.remove('dropb', 'dropa', 'dropi')); });
+outlineEl.addEventListener('drop', e => {
+  if (!dragFrom) return; e.preventDefault(); e.stopPropagation();
+  const row = e.target.closest('.aero-item[data-path]'); const from = dragFrom; dragFrom = null;
+  outlineEl.querySelectorAll('.dropb,.dropa,.dropi').forEach(x => x.classList.remove('dropb', 'dropa', 'dropi'));
+  if (row) dropBookmark(from, row.dataset.path.split('.').map(Number), dropWhere(row, e));
+});
+outlineEl.addEventListener('dragend', () => { dragFrom = null; });
+export function bookmarkAction(a) {
+  const d = App.doc; if (!d || d.readOnly) return;
+  const s = B.sel;
+  switch (a) {
+    case 'add': return addBookmark({ title: selectedText() || undefined });
+    case 'child': return s ? addBookmark({ title: selectedText() || undefined, after: s, child: true }) : addBookmark({});
+    case 'rename': return s && renameDialog(s);
+    case 'dest': return s && setBookmarkDest(s);
+    case 'up': return s && moveBookmark(s, -1);
+    case 'down': return s && moveBookmark(s, 1);
+    case 'in': return s && indentBookmark(s);
+    case 'out': return s && outdentBookmark(s);
+    case 'props': return s && bmProps(s);
+    case 'del': return s && deleteBookmark(s);
+  }
+}
+function selectedText() { const t = String(getSelection?.() || '').replace(/\s+/g, ' ').trim(); return t.length > 0 && t.length < 160 ? t : ''; }
+olbar.addEventListener('click', e => { const b = e.target.closest('[data-ob]'); if (b) { if (!B.sel && !['add', 'child'].includes(b.dataset.ob)) { Aero.toast('Select a bookmark first'); return; } bookmarkAction(b.dataset.ob); } });
+on('outlineChanged', () => { showOutlineTab(); renderOutline(); });
+export function showOutlineTab() {
+  const t = $('lefttabs').querySelector('[data-t="outline"]'); if (t && !t.classList.contains('on')) t.click();
 }
 $('lefttabs').addEventListener('click', e => {
   const t = e.target.closest('.aero-tab'); if (!t) return;
   $('lefttabs').querySelectorAll('.aero-tab').forEach(x => x.classList.toggle('on', x === t));
-  thumbsEl.hidden = t.dataset.t !== 'pages'; outlineEl.hidden = t.dataset.t !== 'outline';
+  thumbsEl.hidden = t.dataset.t !== 'pages'; outlineEl.hidden = t.dataset.t !== 'outline'; olbar.hidden = t.dataset.t !== 'outline';
 });
 
 /* ---------- comments ---------- */

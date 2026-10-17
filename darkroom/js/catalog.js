@@ -204,6 +204,23 @@ const Cat = (() => {
       redo: () => before.forEach(([id]) => { const p = photos.get(id); if (p) historyGo(p, p.history.length - 1); }) });
   }
 
+  /* ---------- snapshots (named develop states, per photo; undoable as catalog steps) ---------- */
+  const topUndo = () => undoStack[undoStack.length - 1], topRedo = () => redoStack[redoStack.length - 1];
+  function snapOp(p, label, fn) {
+    const before = Model.clone(p.snapshots || []); fn(); const after = Model.clone(p.snapshots);
+    const set = v => { const q = photos.get(p.id); if (!q) return; q.snapshots = Model.clone(v); DB.savePhoto(q); emit('snapshots', q.id); };
+    DB.savePhoto(p); emit('snapshots', p.id);
+    pushUndo({ label, snap: p.id, t: Date.now(), undo: () => set(before), redo: () => set(after) });
+  }
+  function addSnapshot(p, name, settings) {
+    if ((p.snapshots || []).length >= Model.MAX_SNAPS) { Aero.toast(`A photo can have at most ${Model.MAX_SNAPS} snapshots`); return null; }
+    const sn = Model.sanitizeSnapshot({ id: Aero.uid(), name, s: settings || p.settings, t: Date.now() });
+    snapOp(p, 'New snapshot', () => { p.snapshots = [...(p.snapshots || []), sn]; }); return sn;
+  }
+  function renameSnapshot(p, id, name) { snapOp(p, 'Rename snapshot', () => { const n = p.snapshots.find(x => x.id === id); if (n) n.name = (String(name).trim().slice(0, 80)) || n.name; }); }
+  function updateSnapshot(p, id) { snapOp(p, 'Update snapshot', () => { const n = p.snapshots.find(x => x.id === id); if (n) { n.s = Model.clone(p.settings); n.t = Date.now(); } }); }
+  function deleteSnapshot(p, id) { snapOp(p, 'Delete snapshot', () => { p.snapshots = p.snapshots.filter(x => x.id !== id); }); }
+
   /* ---------- virtual copies ---------- */
   async function virtualCopy(ids) {
     const made = [];
@@ -211,7 +228,7 @@ const Cat = (() => {
       const src = photos.get(id); if (!src) continue;
       const n = [...photos.values()].filter(p => p.fileId === src.fileId).length;
       const p = Model.clone(src); p.id = Aero.uid() + Aero.uid().slice(0, 4); p.copyName = 'Copy ' + n; p.seq = ++seq; p.added = Date.now();
-      p.history = [{ label: 'Virtual copy', s: Model.clone(src.settings), t: Date.now() }]; p.hi = 0;
+      p.history = [{ label: 'Virtual copy', s: Model.clone(src.settings), t: Date.now() }]; p.hi = 0; p.snapshots = [];
       photos.set(p.id, p); await DB.put('photos', p); made.push(p.id);
       const tb = await DB.getBlob('thumb:' + src.id); if (tb) { await DB.putBlob('thumb:' + p.id, tb); thumbURL.set(p.id, URL.createObjectURL(tb)); } else queueThumb(p.id);
     }
@@ -290,7 +307,7 @@ const Cat = (() => {
   const api = {
     photos, thumbURL, thumb, newSmartCollection, updateSmartCollection, thumbPriority: null, get collections() { return collections; }, get userPresets() { return userPresets; }, on: fn => listeners.add(fn), emit,
     load, importFiles, workImage, smallImage, fullImage, fileBytes, renderPreviewCanvas, queueThumb, renderThumb,
-    pushUndo, undo, redo, canUndo, canRedo, undoLabel, redoLabel, changeMeta, setSettings, historyGo, applyToMany, virtualCopy, remove,
+    pushUndo, undo, redo, canUndo, canRedo, topUndo, topRedo, addSnapshot, renameSnapshot, updateSnapshot, deleteSnapshot, undoLabel, redoLabel, changeMeta, setSettings, historyGo, applyToMany, virtualCopy, remove,
     newCollection, renameCollection, deleteCollection, addToCollection, removeFromCollection, savePreset, deletePreset, clear, keywords, displayName,
     nextSeq: () => ++seq, setCollections(c) { collections = c; }, setPresets(p) { userPresets = p; }
   };

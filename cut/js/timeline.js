@@ -124,7 +124,9 @@
     if (tl.op) return;
     const p = pos(e), h = hit(p); let cur = 'default';
     if (tl.tool === 'razor') cur = 'crosshair'; else if (tl.tool === 'hand') cur = 'grab'; else if (tl.tool === 'zoom') cur = e.altKey ? 'zoom-out' : 'zoom-in';
-    else if (tl.tool === 'text') cur = 'text'; else if (tl.tool === 'slip' && h.clip) cur = 'ew-resize';
+    else if (tl.tool === 'text') cur = 'text'; else if ((tl.tool === 'slip' || tl.tool === 'slide') && h.clip) cur = 'ew-resize';
+    else if (tl.tool === 'roll' && h.clip && h.edge) cur = 'col-resize';
+    else if (tl.tool === 'stretch' && h.clip && h.edge) cur = LC.canStretch(h.clip) ? 'ew-resize' : 'not-allowed';
     else if (h.tr && h.trEdge || h.clip && h.edge) cur = (tl.tool === 'ripple' || tl.ripple) ? 'col-resize' : 'ew-resize';
     if (tl.tool === 'select' || tl.tool === 'ripple') { if (kfHit(p)) cur = 'ew-resize'; else { const eh = envHit(p); if (eh?.k) cur = 'move'; else if (eh?.line && e.ctrlKey) cur = 'copy'; } }
     can.style.cursor = cur;
@@ -182,6 +184,13 @@
         else { if (e.altKey) { tl.sel = new Set([c.id]); tl.selTr = null; LC.onSelection(); } else tl.select([c.id]); }
       }
       if (tl.tool === 'slip' && LC.isTimeBased(c)) return startSlip(e, p, c);
+      if (tl.tool === 'roll') { if (h.edge) return startEdit(e, p, c, 'roll', h.edge); tl.draw(); return; }
+      if (tl.tool === 'slide') return startEdit(e, p, c, 'slide');
+      if (tl.tool === 'stretch') {
+        if (!h.edge) { tl.draw(); return; }
+        if (!LC.canStretch(c)) { Aero.toast(LC.ramped(c) ? 'Remove the speed keyframes before rate-stretching' : 'Rate stretch works on video and audio clips'); return; }
+        return startEdit(e, p, c, 'stretch', h.edge);
+      }
       if (h.edge) return startTrim(e, p, c, h.edge, tl.tool === 'ripple' || tl.ripple);
       return startMove(e, p, c);
     }
@@ -230,6 +239,35 @@
     const snap = JSON.parse(JSON.stringify(LC.project.clips));
     tl.op = { kind: 'trim', x0: p.x, c, edge, ripple, ids, snap, moved: false };
   }
+  // roll / slide / stretch: recompute from a snapshot of the clips on every pointer move
+  function startEdit(e, p, c, kind, edge) {
+    tl.op = { kind, x0: p.x, cid: c.id, edge, linked: !e.altKey, snap: JSON.parse(JSON.stringify(LC.project.clips)), dur0: c.dur, moved: false };
+  }
+  function doEdit(op, dx) {
+    LC.project.clips = JSON.parse(JSON.stringify(op.snap));
+    const c = LC.clip(op.cid); let d = dx / tl.pps;
+    if (op.kind === 'roll') {
+      const pairs = LC.rollPairs(c, op.edge, op.linked), excl = new Set(); pairs.forEach(q => { if (q.a) excl.add(q.a.id); if (q.b) excl.add(q.b.id); });
+      const cut = op.edge === 'r' ? c.start + c.dur : c.start;
+      d = LC.rollEdit(pairs, snapTime(cut + d, excl, true) - cut);
+      const q = pairs[0];
+      LC.statusMsg(`Rolling edit ${d >= 0 ? '+' : '-'}${LC.tc(Math.abs(d))}` + (q.a ? `  ·  out ${LC.tc(LC.srcTime(q.a, q.a.start + q.a.dur))}` : '') + (q.b ? `  ·  in ${LC.tc(q.b.in)}` : ''));
+      LC.previewAt?.(cut + d - (d < 0 ? 0 : 1 / LC.fps()));
+    } else if (op.kind === 'slide') {
+      const g = LC.slideGroup(c, op.linked), excl = new Set(g.map(x => x.c.id));
+      g.forEach(x => { if (x.prev) excl.add(x.prev.id); if (x.next) excl.add(x.next.id); });
+      d = LC.slideClip(g, snapDelta(d, [c.start, c.start + c.dur], excl));
+      LC.statusMsg(`Slide ${d >= 0 ? '+' : '-'}${LC.tc(Math.abs(d))}  ·  start ${LC.tc(c.start)}`);
+      LC.previewAt?.(c.start);
+    } else if (op.kind === 'stretch') {
+      const g = LC.stretchGroup(c, op.linked), excl = new Set(g.map(x => x.id));
+      const edgeT = op.edge === 'r' ? c.start + c.dur : c.start, nt = snapTime(edgeT + d, excl, true);
+      const sp = LC.rateStretch(g, op.edge, op.edge === 'r' ? c.dur + (nt - edgeT) : c.dur - (nt - edgeT));
+      LC.statusMsg(`Rate stretch  ·  speed ${Math.round(sp * 100)}%  ·  duration ${LC.tc(c.dur)}`);
+      LC.previewAt?.(op.edge === 'r' ? c.start + c.dur - 1 / LC.fps() : c.start);
+    }
+    LC.props?.update?.();
+  }
   function startSlip(e, p, c) { tl.op = { kind: 'slip', x0: p.x, c, in0: c.in, ids: [c.id, ...LC.linked(c).map(l => l.id)].map(id => [id, LC.clip(id).in]), moved: false }; }
 
   document.addEventListener('pointermove', e => {
@@ -248,6 +286,7 @@
     op.moved = true;
     if (op.kind === 'move') doMove(op, p, e);
     else if (op.kind === 'trim') doTrim(op, dx, e);
+    else if (op.kind === 'roll' || op.kind === 'slide' || op.kind === 'stretch') doEdit(op, dx);
     else if (op.kind === 'slip') {
       const c = op.c, m = LC.mediaOf(c); const d = -dx / tl.pps;
       for (const [id, in0] of op.ids) { const x = LC.clip(id), sd = LC.srcDur(x); if (sd == null || x.hold != null) continue; x.in = Math.max(0, Math.min(in0 + d * LC.avgSpeed(x), sd - LC.srcOffset(x, x.dur))); }
@@ -282,6 +321,7 @@
     if (op.kind === 'move') finishMove(op, e);
     else if (op.kind === 'trim') { LC.cleanTransitions(); LC.commit(op.ripple ? 'Ripple trim' : 'Trim clip'); }
     else if (op.kind === 'slip') LC.commit('Slip clip');
+    else if (op.kind === 'roll' || op.kind === 'slide' || op.kind === 'stretch') { LC.cleanTransitions(); LC.commit({ roll: 'Rolling edit', slide: 'Slide clip', stretch: 'Rate stretch' }[op.kind]); }
     else if (op.kind === 'trdur') LC.commit('Transition duration');
     LC.refresh();
   });
@@ -289,7 +329,7 @@
   function cancelOp() {
     const op = tl.op; tl.op = null; tl.marquee = null; tl.snapT = null;
     if (op?.kind === 'move') for (const [id, o] of op.orig) { const c = LC.clip(id); if (c) { c.start = o.start; c.track = o.track; } }
-    if (op?.kind === 'trim') LC.project.clips = op.snap;
+    if (op?.kind === 'trim' || op?.kind === 'roll' || op?.kind === 'slide' || op?.kind === 'stretch') LC.project.clips = op.snap;
     if (op?.kind === 'slip') for (const [id, in0] of op.ids) LC.clip(id).in = in0;
     if (op?.kind === 'trdur') op.tr.dur = op.d0;
     if (op?.kind === 'kf') { op.keys.forEach((k, i) => k.t = op.orig[i]); Object.values(op.c.kf).forEach(a => a.sort((p, q) => p.t - q.t)); }

@@ -5,7 +5,7 @@ import { V, rebuild, layout, setZoom, zoomBy, setMode, rotateView, goTo, drawAll
 import { initTools, setTool, select, deleteAnnot, addAnnot, markupFromSelection, finishEdit, TOOLS, replaceAnnot } from './tools.js';
 import { renderCmdbar } from './cmdbar.js';
 import { renderThumbs, renderOutline, renderComments, renderHistory, refreshThumbAnnots } from './panels.js';
-import { openOrganizer, closeOrganizer, O, rotatePages, deletePages, duplicatePages, insertBlank, insertFromPdf, extractPages, splitDialog, cropDialog, orgSelectAll, renderOrganizer, splitDoc, applyNewBytes, movePages } from './organize.js';
+import { openOrganizer, closeOrganizer, O, rotatePages, deletePages, duplicatePages, insertBlank, insertFromPdf, extractPages, splitDialog, cropDialog, orgSelectAll, renderOrganizer, splitDoc, applyNewBytes, movePages, splitBySize, bookmarkGroups } from './organize.js';
 import { applyRedactionsDialog, applyRedactions, watermarkDialog, addWatermark, headerFooterDialog, addHeaderFooter, propertiesDialog, optimizeDialog, optimize, flatten } from './ops.js';
 import { buildOutput } from './writer.js';
 import { signatureManager, typedSignature } from './sign.js';
@@ -23,6 +23,10 @@ import { describe as secDescribe, decryptPdf, encryptPdf, newSecurity } from './
 import { exportWordDialog, exportImagesDialog, exportTextDialog, exportWord, exportText as exportTextNew, exportImages } from './export.js';
 import { signDialog, digitalIdDialog, signaturesDialog, validateSignatures, signBytes, createIdentity, getIdentity, signCurrent, unlockIdentity, migrateIdentity, importP12, exportP12, changePassphrase, removeIdentity, ensureProtected, importDialog } from './digsig.js';
 import { beginEdit, applyTextEdit, applyParagraphEdit, analyzePage, lineAt, commitEdit } from './textedit.js';
+import { findRedactDialog, findForRedaction, markMatches, pageText as redactPageText } from './redact.js';
+import { B as BM, addBookmark, renameDialog as renameBookmarkDialog, deleteBookmark, setBookmarkDest, propertiesDialog as bookmarkProps, headingsDialog, bookmarksFromHeadings, readTree, renameBookmark, moveBookmark, indentBookmark, outdentBookmark, dropBookmark, styleBookmark, headingsOutline } from './bookmarks.js';
+import { removeHiddenDialog, removeHidden, scan as scanHidden } from './sanitize.js';
+import { bookmarkAction } from './panels.js';
 
 const $ = id => document.getElementById(id);
 const ICON = '../kit/icons/pdf.png';
@@ -233,7 +237,7 @@ on('needSignature', () => { signatureManager(); });
 on('signatureReady', () => { if (App.tool !== 'sign') setTool('sign'); renderCmdbar(); Aero.toast('Click on the page to place your signature'); });
 on('needImage', () => pickImage());
 on('cropRect', r => cropDialog(r));
-on('action', act => ({ signatures: () => signatureManager(), pickimage: () => pickImage(), applyredact: () => applyRedactionsDialog(), cropdialog: () => cropDialog(null) })[act]?.());
+on('action', act => ({ signatures: () => signatureManager(), pickimage: () => pickImage(), applyredact: () => applyRedactionsDialog(), findredact: () => findRedactDialog(), hiddeninfo: () => removeHiddenDialog(), cropdialog: () => cropDialog(null) })[act]?.());
 async function pickImage() {
   const f = await Aero.openFile({ accept: 'image/*', filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }] });
   if (!f[0]) { if (App.tool === 'image') setTool('select'); return; }
@@ -315,7 +319,8 @@ function shortcutsDialog() {
   const rows = [['#', 'File'], ['Ctrl+O', 'Open'], ['Ctrl+S / Ctrl+Shift+S', 'Save / Save As'], ['Ctrl+P', 'Print'], ['Ctrl+W', 'Close tab'], ['Ctrl+D', 'Document properties'],
     ['#', 'View'], ['Ctrl+= / Ctrl+-', 'Zoom in / out (or Ctrl+wheel)'], ['Ctrl+0 / 1 / 2', 'Fit page / actual size / fit width'], ['Ctrl+L', 'Read mode (full screen)'], ['Ctrl+Shift+R / L', 'Rotate view'], ['PgUp / PgDn, Home / End', 'Previous / next, first / last page'], ['Ctrl+G', 'Go to page'], ['Ctrl+F, F3, Shift+F3', 'Find, next, previous'], ['Ctrl+Shift+O', 'Organize pages'], ['Ctrl+Shift+T', 'Recognize text (OCR)'], ['Ctrl+Shift+C', 'Compare files (F7 / F8 or ↑ / ↓: previous / next change)'],
     ['#', 'Tools'], ...TOOLS.filter(t => t && t.key).map(t => [t.key, t.title]),
-    ['#', 'Editing'], ['Ctrl+Z / Ctrl+Y', 'Undo / redo'], ['Delete', 'Delete selected annotation (or pages in Organize)'], ['Arrows (+Shift)', 'Nudge selected annotation'], ['Double-click', 'Edit text box / stamp / comment'], ['Esc', 'Deselect, close find, leave read mode or compare'], ['#', 'Edit text & forms'], ['Enter / Esc', 'Apply / cancel a text edit (Edit Text tool)'], ['Shift+Enter', 'New line while editing a paragraph (Edit Text tool)'], ['Enter', 'Field properties (Prepare Form tool)'], ['Delete', 'Delete the selected form field (Prepare Form tool)']];
+    ['#', 'Editing'], ['Ctrl+Z / Ctrl+Y', 'Undo / redo'], ['Delete', 'Delete selected annotation (or pages in Organize)'], ['Arrows (+Shift)', 'Nudge selected annotation'], ['Double-click', 'Edit text box / stamp / comment'], ['Esc', 'Deselect, close find, leave read mode or compare'], ['#', 'Edit text & forms'], ['Enter / Esc', 'Apply / cancel a text edit (Edit Text tool)'], ['Shift+Enter', 'New line while editing a paragraph (Edit Text tool)'], ['Enter', 'Field properties (Prepare Form tool)'], ['Delete', 'Delete the selected form field (Prepare Form tool)'],
+    ['#', 'Bookmarks & redaction'], ['Ctrl+B', 'Add a bookmark for the current view'], ['F2', 'Rename the selected bookmark'], ['Delete', 'Delete the selected bookmark (Bookmarks panel focused)'], ['Drag', 'Reorder bookmarks (drop on the middle of a row to nest)'], ['Ctrl+Shift+F', 'Find & Redact (words, phrases, emails, phone numbers…)']];
   const html = `<div class="kbd">${rows.map(([k, v]) => k === '#' ? `<h4>${v}</h4>` : `<b>${esc(k)}</b><span>${esc(v)}</span>`).join('')}</div>`;
   Aero.dialog({ title: 'Keyboard shortcuts', html, noCancel: true, width: 560 });
 }
@@ -332,6 +337,7 @@ const need = () => !App.doc;
 const ro = () => !App.doc || App.doc.readOnly;
 const tool = id => () => { if (App.doc) { if (App.organize) closeOrganizer(); setTool(id); } };
 const cur = () => [V.cur];
+const outlineFocused = () => !!(BM.sel && App.doc && !App.doc.readOnly && document.activeElement?.closest?.('#outline'));
 const M = {
   File: [
     ['New Blank Document', 'Ctrl+N', newBlank], ['Open…', 'Ctrl+O', openDialog], ['Open Sample', '', openSample], { label: 'Close Tab', key: 'Ctrl+W', fn: () => closeDoc(), disabled: need }, '-',
@@ -343,7 +349,7 @@ const M = {
   ],
   Edit: [
     { label: 'Undo', key: 'Ctrl+Z', fn: undo, disabled: () => !App.doc || App.doc.hist.index <= 0 }, { label: 'Redo', key: 'Ctrl+Y/Ctrl+Shift+Z', fn: redo, disabled: () => !App.doc || App.doc.hist.index >= App.doc.hist.items.length - 1 }, '-',
-    { label: 'Delete', key: 'Delete', fn: () => { if (App.organize && O.sel.size) deletePages([...O.sel].sort((a, b) => a - b)); else if (App.sel) deleteAnnot(); }, disabled: () => !App.sel && !(App.organize && O.sel.size) },
+    { label: 'Delete', key: 'Delete', fn: () => { if (outlineFocused()) deleteBookmark(BM.sel); else if (App.organize && O.sel.size) deletePages([...O.sel].sort((a, b) => a - b)); else if (App.sel) deleteAnnot(); }, disabled: () => !App.sel && !(App.organize && O.sel.size) && !outlineFocused() },
     { label: 'Select All Pages', key: 'Ctrl+Shift+A', fn: () => { if (!App.organize) openOrganizer(); orgSelectAll(); }, disabled: need }, '-',
     { label: 'Find…', key: 'Ctrl+F', fn: openFind, disabled: need }, { label: 'Find Next', key: 'F3', fn: () => findStep(1), disabled: need }, { label: 'Find Previous', key: 'Shift+F3', fn: () => findStep(-1), disabled: need }, '-',
     ['Preferences…', '', preferences]
@@ -379,12 +385,16 @@ const M = {
     { label: 'Duplicate Page', fn: () => duplicatePages(App.organize ? [...O.sel] : cur()), disabled: ro }, { label: 'Delete Page', fn: () => deletePages(App.organize ? [...O.sel] : cur()), disabled: ro }, '-',
     { label: 'Insert Blank Page', fn: () => insertBlank((App.organize && O.sel.size ? Math.max(...O.sel) : V.cur) + 1), disabled: ro }, { label: 'Insert Pages from PDF…', fn: () => insertFromPdf((App.organize && O.sel.size ? Math.max(...O.sel) : V.cur) + 1), disabled: ro }, '-',
     { label: 'Extract Pages…', fn: () => extractPages(App.organize && O.sel.size ? [...O.sel].sort((a, b) => a - b) : cur()), disabled: ro }, { label: 'Split Document…', fn: splitDialog, disabled: ro }, ['Merge / Combine Files…', '', combineFilesUI], '-',
-    { label: 'Crop Pages…', fn: () => cropDialog(null), disabled: ro }, { label: 'Crop Tool', key: 'O', fn: tool('crop'), noShortcut: true, disabled: ro }
+    { label: 'Crop Pages…', fn: () => cropDialog(null), disabled: ro }, { label: 'Crop Tool', key: 'O', fn: tool('crop'), noShortcut: true, disabled: ro }, '-',
+    '#Bookmarks', { label: 'Add Bookmark', key: 'Ctrl+B', fn: () => bookmarkAction('add'), disabled: ro }, { label: 'Add Child Bookmark', fn: () => bookmarkAction('child'), disabled: () => ro() || !BM.sel },
+    { label: 'Rename Bookmark…', key: 'F2', fn: () => bookmarkAction('rename'), disabled: () => ro() || !BM.sel }, { label: 'Set Destination to Current View', fn: () => bookmarkAction('dest'), disabled: () => ro() || !BM.sel },
+    { label: 'Bookmark Properties…', fn: () => bookmarkAction('props'), disabled: () => ro() || !BM.sel }, { label: 'Delete Bookmark', fn: () => bookmarkAction('del'), disabled: () => ro() || !BM.sel },
+    { label: 'Create Bookmarks from Headings…', fn: headingsDialog, disabled: ro }
   ],
   Tools: [
     '#Edit page content', { label: 'Edit Existing Text', key: 'M', fn: tool('retext'), noShortcut: true, checked: () => App.tool === 'retext', disabled: ro }, { label: 'Add Text to Page', fn: tool('edittext'), disabled: ro }, { label: 'Add Image to Page…', fn: () => { if (App.doc) pickImage(); }, disabled: ro },
     { label: 'Draw Shapes as Page Content', fn: () => { App.contentMode = !App.contentMode; renderCmdbar(); }, checked: () => App.contentMode }, '-',
-    '#Redact', { label: 'Mark Area for Redaction', key: 'D', fn: tool('redact'), noShortcut: true, disabled: ro }, { label: 'Mark Selected Text for Redaction', fn: () => App.doc && markupFromSelection('redact'), disabled: ro }, { label: 'Apply Redactions…', fn: applyRedactionsDialog, disabled: ro }, '-',
+    '#Redact', { label: 'Mark Area for Redaction', key: 'D', fn: tool('redact'), noShortcut: true, disabled: ro }, { label: 'Mark Selected Text for Redaction', fn: () => App.doc && markupFromSelection('redact'), disabled: ro }, { label: 'Find & Redact…', key: 'Ctrl+Shift+F', fn: () => findRedactDialog(), disabled: ro }, { label: 'Apply Redactions…', fn: applyRedactionsDialog, disabled: ro }, { label: 'Remove Hidden Information…', fn: removeHiddenDialog, disabled: ro }, '-',
     '#Scan & OCR', { label: 'Recognize Text (OCR)…', key: 'Ctrl+Shift+T', fn: ocrDialog, disabled: ro }, '-',
     '#Compare', { label: 'Compare Files…', key: 'Ctrl+Shift+C', fn: compareDialog }, '-',
     '#Document', { label: 'Watermark…', fn: watermarkDialog, disabled: ro }, { label: 'Header & Footer / Bates…', fn: headerFooterDialog, disabled: ro }, { label: 'Reduce File Size…', fn: optimizeDialog, disabled: ro }
@@ -432,7 +442,7 @@ renderCmdbar();
 // Test / automation hooks
 window.LumenPDF = {
   App, V, openBytes, openSample, save, buildOutput, undo, redo, setTool, addAnnot, select, deleteAnnot, markupFromSelection, search, findStep, goTo, setZoom, setMode, rotateView,
-  runOcr, applyParagraphEdit, signDialog, signBytes, createIdentity, getIdentity, signCurrent, ensureProtected, unlockIdentity, migrateIdentity, importP12, exportP12, changePassphrase, removeIdentity, validateSignatures, exportWord, exportTextNew, exportImages, decryptPdf, encryptPdf, newSecurity, applyProtection, removeSecurity, unlockOwner, secureOutput, compareBytes, runCompare, closeCompare, annotatedReport, FF, detectFields, addField, addFields, updateField, moveWidget, deleteField, pageWidgets, applyTextEdit, analyzePage, lineAt, commitEdit, beginEdit, rotatePages, deletePages, duplicatePages, insertBlank, movePages, extractPages, splitDoc, applyRedactions, addWatermark, addHeaderFooter, optimize, flatten, combineFiles, pdfFromImages,
+  runOcr, applyParagraphEdit, signDialog, signBytes, createIdentity, getIdentity, signCurrent, ensureProtected, unlockIdentity, migrateIdentity, importP12, exportP12, changePassphrase, removeIdentity, validateSignatures, exportWord, exportTextNew, exportImages, decryptPdf, encryptPdf, newSecurity, applyProtection, removeSecurity, unlockOwner, secureOutput, compareBytes, runCompare, closeCompare, annotatedReport, FF, detectFields, addField, addFields, updateField, moveWidget, deleteField, pageWidgets, applyTextEdit, analyzePage, lineAt, commitEdit, beginEdit, rotatePages, deletePages, duplicatePages, insertBlank, movePages, extractPages, splitDoc, applyRedactions, addWatermark, addHeaderFooter, optimize, flatten, combineFiles, pdfFromImages, findForRedaction, markMatches, redactPageText, BM, addBookmark, renameBookmark, deleteBookmark, moveBookmark, indentBookmark, outdentBookmark, dropBookmark, setBookmarkDest, styleBookmark, bookmarksFromHeadings, headingsOutline, readTree, removeHidden, scanHidden, splitBySize, bookmarkGroups, bookmarkAction,
   preparePrint, typedSignature, whenRendered, vp, clientToPdf, openOrganizer, closeOrganizer, applyNewBytes, loadPdf, closeDoc, toggleRead, replaceAnnot, annotRect, drawAllAnnots, syncForms
 };
 const q = new URLSearchParams(location.search);

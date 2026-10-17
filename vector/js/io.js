@@ -18,9 +18,9 @@
     walkJSON(layers, (cls, props) => { if (cls === 'Raster' && props.source && LV.images.has(props.source)) images[props.source] = LV.images.get(props.source); });
     const symbols = LV.doc.symbols || [];
     symbols.forEach(s => walkJSON(s.art, (cls, props) => { if (cls === 'Raster' && props.source && LV.images.has(props.source)) images[props.source] = LV.images.get(props.source); }));
-    return JSON.stringify({ format: 'lumen-vector', version: 2, app: 'Lumen Vector', name: LV.doc.name, artboards: LV.doc.artboards, active: LV.doc.active, guides: LV.doc.guides, swatches: LV.doc.swatches, symbols, layers, images });
+    return JSON.stringify({ format: 'lumen-vector', version: 3, app: 'Lumen Vector', name: LV.doc.name, artboards: LV.doc.artboards, active: LV.doc.active, guides: LV.doc.guides, swatches: LV.doc.swatches, symbols, layers, images });
   };
-  const KINDS = ['areatext', 'pathtext', 'trace', 'symbol', 'blend'];
+  const KINDS = ['areatext', 'pathtext', 'trace', 'symbol', 'blend', 'repeat', 'warp'];
   // item data from an opened file is untrusted: keep only known, validated fields for the newer features
   function sanitizeData(d) {
     if (!d || typeof d !== 'object') return;
@@ -30,6 +30,8 @@
     if ('kind' in d && !KINDS.includes(d.kind)) delete d.kind;
     if (d.kind === 'trace') d.trace = LV.trace.sanitize(d.trace); else delete d.trace;
     if (d.kind === 'blend') d.blend = LV.blend.sanitize(d.blend); else delete d.blend;
+    if (d.kind === 'repeat') d.repeat = LV.repeat.sanitize(d.repeat); else delete d.repeat;
+    if (d.kind === 'warp') d.warp = LV.warp.sanitize(d.warp); else delete d.warp;
     delete d.symEdit; delete d.tfill;
     ['uid', 'sym', 'next', 'prev', 'role', 'text'].forEach(k => { if (k in d && typeof d[k] !== 'string') delete d[k]; });
   }
@@ -62,6 +64,7 @@
     LV.sym.instances().forEach(i => { if (!LV.sym.find(i.data.sym) || !LV.sym.fill(i)) { i.applyMatrix = true; delete i.data.kind; delete i.data.sym; } });
     P.project.getItems({ match: it => it.data && it.data.kind === 'blend' }).forEach(g => LV.blend.regen(g, true));
     P.project.getItems({ match: it => it.data && it.data.kind === 'trace' }).forEach(g => LV.trace.applyView(g));
+    LV.regenLive(); // sanitized options carry no signature -> repeats and warps are rebuilt from their sources
     LV.hist.reset('Open', LV.snapshot()); Aero.setDoc(LV.doc.name, false); LV.fitBoard();
   };
   LV.save = async (as) => {

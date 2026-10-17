@@ -40,7 +40,7 @@
     root.innerHTML = '<div class="gutter"></div><div class="code-wrap"><div class="hl"><div class="hl-in"></div></div><textarea spellcheck="false" autocomplete="off" autocapitalize="off" wrap="off" aria-label="Script editor"></textarea></div>';
     host.appendChild(root);
     const ta = root.querySelector('textarea'), hlIn = root.querySelector('.hl-in'), gutter = root.querySelector('.gutter');
-    let errLine = null, raf = 0, lastLines = -1;
+    let errLine = null, raf = 0, lastLines = -1, bps = new Map(), dbgLine = null, prevN = 1;
     const ed = { root, ta };
     const lines = () => ta.value.split('\n');
     function cursorLine() { return ta.value.slice(0, ta.selectionStart).split('\n').length; }
@@ -59,12 +59,12 @@
         const n = i + 1, cls = ['ln'];
         if (/^\s*%%(\s|$)/.test(L[i]) && i > 0) cls.push('sec');
         if (sec && secs.length > 1 && n >= sec.start && n <= sec.end) cls.push('insec');
-        if (n === errLine) cls.push('errl');
+        if (n === errLine) cls.push('errl'); if (n === dbgLine) cls.push('dbgl');
         h += `<div class="${cls.join(' ')}">${hlLine(L[i], st) || ' '}</div>`;
       }
       hlIn.innerHTML = h;
       if (L.length !== lastLines || true) {
-        let g = ''; for (let i = 1; i <= L.length; i++) g += `<div class="${i === errLine ? 'err' : i === cur ? 'cur' : ''}">${i}</div>`;
+        let g = ''; for (let i = 1; i <= L.length; i++) { const b = bps.get(i), c = [i === errLine ? 'err' : i === cur ? 'cur' : '']; if (b !== undefined) c.push(b ? 'bp bpc' : 'bp'); if (i === dbgLine) c.push('dbg'); g += `<div class="${c.join(' ')}" data-ln="${i}"${b ? ` title="Stops if ${esc(b).replace(/"/g, '&quot;')}"` : ''}>${i}</div>`; }
         gutter.innerHTML = g + '<div style="height:40px"></div>'; lastLines = L.length;
       }
       sync();
@@ -112,16 +112,21 @@
           ta.setSelectionRange(s, s + m[1].length); document.execCommand('insertText', false, want); ta.setSelectionRange(s + want.length + m[2].length, s + want.length + m[2].length);
         }
       }
+      const n = lines().length; if (n !== prevN) { const d = n - prevN, cur = cursorLine(); prevN = n; if (opts.onLineShift) opts.onLineShift(d > 0 ? cur - d : cur, d); }
       errLine = null; schedule(); opts.onChange && opts.onChange(ta.value);
     });
     ta.addEventListener('scroll', sync);
+    // click the line numbers to set or clear a breakpoint
+    gutter.addEventListener('mousedown', e => { const d = e.target.closest('[data-ln]'); if (!d || !opts.onGutter) return; e.preventDefault(); opts.onGutter(+d.dataset.ln, e); });
     const caret = () => { schedule(); opts.onCursor && opts.onCursor(cursorLine(), ta.selectionStart - ta.value.lastIndexOf('\n', ta.selectionStart - 1)); };
     ta.addEventListener('keyup', caret); ta.addEventListener('click', caret); ta.addEventListener('focus', caret);
     Object.assign(ed, {
       get: () => ta.value,
-      set(text) { const keep = ta.value && document.activeElement === ta ? ta.selectionStart : 0; ta.value = text; errLine = null; ta.setSelectionRange(Math.min(keep, text.length), Math.min(keep, text.length)); if (!keep) ta.scrollTop = 0; render(); },
+      set(text) { prevN = text.split(/\n/).length; const keep = ta.value && document.activeElement === ta ? ta.selectionStart : 0; ta.value = text; errLine = null; ta.setSelectionRange(Math.min(keep, text.length), Math.min(keep, text.length)); if (!keep) ta.scrollTop = 0; render(); },
       show(on) { root.style.display = on ? '' : 'none'; if (on) { render(); } },
       focus() { ta.focus(); },
+      setBreakpoints(m) { bps = new Map(m || []); render(); },
+      setDebugLine(n) { dbgLine = n || null; render(); if (n) ed.gotoLine(n, true); },
       setError(n) { errLine = n; render(); if (n) ed.gotoLine(n, true); },
       gotoLine(n, keepFocus) { const L = lines(); n = Math.max(1, Math.min(L.length, n)); const pos = L.slice(0, n - 1).reduce((s, l) => s + l.length + 1, 0); ta.focus(); ta.setSelectionRange(pos, pos + (keepFocus ? 0 : L[n - 1].length)); const lh = parseFloat(getComputedStyle(ta).lineHeight) || 19; ta.scrollTop = Math.max(0, (n - 4) * lh); sync(); caret(); },
       section() { const cur = cursorLine(), secs = sections(), sec = secs.find(s => cur >= s.start && cur <= s.end) || { start: 1, end: lines().length }; return { ...sec, text: lines().slice(sec.start - 1, sec.end).join('\n'), next: secs[secs.indexOf(sec) + 1] }; },

@@ -75,6 +75,45 @@
     if (points.length === 2) { const g = new T.BufferGeometry().setFromPoints(points.map(p => new T.Vector3(...p))); const l = new T.Line(g, new T.LineBasicMaterial({ color: 0xd0202a, depthTest: false })); l.renderOrder = 5; markers.add(l); }
     need = true;
   }
+  // face picking: point + outward normal of the clicked triangle
+  function pickHit(ev) {
+    if (!body) return null; const r = cv.getBoundingClientRect();
+    const m = new T.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+    const rc = new T.Raycaster(); rc.setFromCamera(m, camera); const hit = rc.intersectObject(body, false)[0];
+    if (!hit || !hit.face) return null; const n = hit.face.normal.clone(); if (n.dot(rc.ray.direction) > 0) n.negate();
+    return { p: [hit.point.x, hit.point.y, hit.point.z], n: [n.x, n.y, n.z] };
+  }
+  // nearest edge to the cursor in screen space (px), or -1
+  function nearestEdge(ev, segs, maxPx = 10) {
+    const r = cv.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
+    const scr = p => { const v = new T.Vector3(...p).project(camera); return [(v.x + 1) / 2 * r.width, (1 - v.y) / 2 * r.height, v.z]; };
+    let best = -1, bd = maxPx;
+    segs.forEach((s, i) => {
+      const a = scr(s[0]), b = scr(s[1]); if (a[2] > 1 || b[2] > 1) return;
+      const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, ((mx - a[0]) * dx + (my - a[1]) * dy) / L2)) : 0;
+      const d = Math.hypot(mx - a[0] - t * dx, my - a[1] - t * dy); if (d < bd) { bd = d; best = i; }
+    });
+    return best;
+  }
+  // highlighted edges as thin tubes: [{a, b, color}]
+  let overlay = null;
+  function setOverlay(list) {
+    if (overlay) { overlay.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); scene.remove(overlay); overlay = null; }
+    if (list && list.length) {
+      overlay = new T.Group(); const rad = (body && body.geometry.boundingSphere ? body.geometry.boundingSphere.radius : 50) / 160;
+      list.forEach(({ a, b, color }) => {
+        const A = new T.Vector3(...a), B = new T.Vector3(...b), L = A.distanceTo(B); if (L < 1e-9) return;
+        // 8-sided tube built by hand (the vendored three.js subset has no CylinderGeometry)
+        const d = B.clone().sub(A).normalize(), u = new T.Vector3(1, 0, 0).cross(d); if (u.length() < 0.1) u.set(0, 1, 0).cross(d); u.normalize(); const w = d.clone().cross(u), pos = [];
+        const ring = (C, k) => C.clone().add(u.clone().multiplyScalar(Math.cos(k * Math.PI / 4) * rad)).add(w.clone().multiplyScalar(Math.sin(k * Math.PI / 4) * rad));
+        for (let k = 0; k < 8; k++) { const a0 = ring(A, k), a1 = ring(A, k + 1), b0 = ring(B, k), b1 = ring(B, k + 1); [a0, a1, b1, a0, b1, b0].forEach(q => pos.push(q.x, q.y, q.z)); }
+        const geo = new T.BufferGeometry(); geo.setAttribute('position', new T.BufferAttribute(new Float32Array(pos), 3));
+        const m = new T.Mesh(geo, new T.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9, side: T.DoubleSide })); m.renderOrder = 6; overlay.add(m);
+      });
+      scene.add(overlay);
+    }
+    need = true;
+  }
   function snapshot() { renderer.render(scene, camera); return cv; }
-  window.CadView = { init, setBody, setGhost, setEdges, setSection, view, pick, mark, snapshot, redraw: () => need = true };
+  window.CadView = { init, setBody, setGhost, setEdges, setSection, view, pick, pickHit, nearestEdge, setOverlay, mark, snapshot, redraw: () => need = true };
 })();

@@ -144,7 +144,7 @@ function cmdNewGroup() { if (!prepEdit()) return; const G = new Layer('group', '
 function cmdGroupActive() { if (!prepEdit() || !doc.active) return; const L = doc.active, list = parentList(L), i = list.indexOf(L); const G = new Layer('group', 'Group ' + (allLayers().filter(l => l.type === 'group').length + 1), doc.w, doc.h); list.splice(i, 1, G); G.children.push(L); L.clip = false; doc.active = L; doc.ver++; histPush('Group Layers'); }
 function cmdUngroup() { if (!prepEdit()) return; const G = doc.active?.type === 'group' ? doc.active : parentOf(doc.active); if (!G) { Aero.toast('Select a group (or a layer inside one) to ungroup'); return; } const list = parentList(G), i = list.indexOf(G); list.splice(i, 1, ...G.children); doc.active = G.children[G.children.length - 1] || list[0]; doc.ver++; histPush('Ungroup'); }
 function cmdNewFill() { if (!prepEdit()) return; const L = new Layer('fill', 'Fill', doc.w, doc.h); L.color = FG.slice(); insertLayer(L, doc.active); doc.ver++; histPush('New Fill Layer'); }
-function cloneLayer(L) { const C = new Layer(L.type, L.name + ' copy', doc.w, doc.h); Object.assign(C, { visible: L.visible, opacity: L.opacity, blend: L.blend, lockAlpha: L.lockAlpha, clip: L.clip, color: L.color.slice(), open: L.open, maskOn: L.maskOn, maskLinked: L.maskLinked, text: L.text }); if (L.tiles) C.tiles = L.tiles.slice(); if (L.mask) { C.mask = newMask(C); C.mask.tiles = L.mask.tiles.slice(); } if (L.children) C.children = L.children.map(cloneLayer).map(x => (x.name = x.name.replace(/ copy$/, ''), x)); return C; }
+function cloneLayer(L) { const C = new Layer(L.type, L.name + ' copy', doc.w, doc.h); Object.assign(C, { visible: L.visible, opacity: L.opacity, blend: L.blend, lockAlpha: L.lockAlpha, clip: L.clip, ref: L.ref, color: L.color.slice(), open: L.open, maskOn: L.maskOn, maskLinked: L.maskLinked, text: L.text }); if (L.tiles) C.tiles = L.tiles.slice(); if (L.mask) { C.mask = newMask(C); C.mask.tiles = L.mask.tiles.slice(); } if (L.children) C.children = L.children.map(cloneLayer).map(x => (x.name = x.name.replace(/ copy$/, ''), x)); return C; }
 function cmdDuplicate() { if (!prepEdit() || !doc.active) return; freezeAll(); const C = cloneLayer(doc.active); insertLayer(C, doc.active); doc.ver++; histPush('Duplicate Layer'); }
 function cmdDeleteLayer() {
   if (!prepEdit() || !doc.active) return; const L = doc.active, list = parentList(L), i = list.indexOf(L);
@@ -315,19 +315,21 @@ function dlgPrefs() {
     { key: 'mt', label: 'Taper mouse strokes', type: 'checkbox', value: prefs.mouseTaper },
     { key: 'tilt', label: 'Use pen tilt', type: 'checkbox', value: prefs.tiltEnabled },
     { key: 'touch', label: 'Paint with finger (until a pen is used)', type: 'checkbox', value: prefs.touchPaint },
-    { key: 'tl', label: 'Record time-lapse', type: 'checkbox', value: TL.on }],
+    { key: 'tl', label: 'Record time-lapse', type: 'checkbox', value: TL.on },
+    { key: 'qs', label: 'QuickShape (hold to snap)', type: 'checkbox', value: QS.on }, { key: 'qsd', label: 'QuickShape hold time', type: 'range', min: 250, max: 1500, step: 50, value: QS.delay, fmt: v => (v / 1000).toFixed(2) + ' s' }],
     html: '<div class="dnote">Edit › Pressure Curve… draws a custom curve and calibrates it to your pen. Moving the slider here replaces a custom curve.</div>',
-    onOK: v => { if (v.g !== prefs.pressureGamma) { prefs.pressureCurve = null; rebuildPressureLUT(); } prefs.pressureGamma = v.g; prefs.mouseTaper = v.mt; prefs.tiltEnabled = v.tilt; prefs.touchPaint = v.touch; TL.on = prefs.tl = v.tl; tlStatus(); try { localStorage.setItem('lumenpaint.prefs', JSON.stringify(prefs)); } catch (e) { } } });
+    onOK: v => { if (v.g !== prefs.pressureGamma) { prefs.pressureCurve = null; rebuildPressureLUT(); } prefs.pressureGamma = v.g; prefs.mouseTaper = v.mt; prefs.tiltEnabled = v.tilt; prefs.touchPaint = v.touch; TL.on = prefs.tl = v.tl; tlStatus(); QS.on = prefs.quickShape = v.qs; QS.delay = prefs.qsDelay = +v.qsd; savePrefs(); } });
 }
+function savePrefs() { try { localStorage.setItem('lumenpaint.prefs', JSON.stringify(prefs)); } catch (e) { } }
 function dlgShortcuts() {
-  const rows = [['B / E / S', 'Brush / Eraser / Blend'], ['W', 'Liquify'], ['G / Shift+G', 'Paint bucket / Gradient'], ['U', 'Shapes & lines'], ['L / M', 'Lasso / Marquee select'], ['V', 'Transform'], ['I', 'Eyedropper'], ['K', 'Guides (symmetry, perspective, ruler)'],
+  const rows = [['B / E / S', 'Brush / Eraser / Blend'], ['W', 'Liquify'], ['G / Shift+G', 'Paint bucket / Gradient'], ['U', 'Shapes & lines'], ['L / M / Q', 'Lasso / Marquee / Magic Wand select'], ['Hold still at stroke end', 'QuickShape: snap to line / ellipse / polygon (keep holding and move to adjust; Shift snaps angle)'], ['V', 'Transform'], ['I', 'Eyedropper'], ['K', 'Guides (symmetry, perspective, ruler)'],
     ['Alt-click / right-click', 'Pick color while painting'], ['[ / ]', 'Brush size smaller / larger'], ['1 … 0', 'Brush opacity 10% … 100%'], ['X', 'Swap foreground / background'],
     ['Space + drag', 'Pan'], ['R + drag', 'Rotate the view (Shift snaps 15°)'], ['Shift+R', 'Reset rotation'], ['H', 'Flip view horizontally'], ['Wheel / Ctrl+wheel', 'Zoom at cursor'], ['Ctrl+0 / Ctrl+1', 'Fit / 100%'],
     ['Two-finger pinch', 'Zoom + rotate + pan'], ['Two-finger / three-finger tap', 'Undo / Redo'], ['Tab', 'Zen mode (hide panels)'], ['F11', 'Full screen'],
     ['Ctrl+Z / Ctrl+Y', 'Undo / Redo'], ['Ctrl+Shift+N / Ctrl+J / Ctrl+E', 'New / Duplicate / Merge down'], ['/', 'Lock transparency'], ['Ctrl+Alt+G', 'Clipping mask'], ['Ctrl+G', 'Group layer'],
     ['Ctrl+A / Ctrl+D / Ctrl+Shift+I', 'Select all / Deselect / Invert'], ['Enter / Esc', 'Apply / cancel transform'],
     ['T', 'Text tool (click to type, drag a text box to move)'], [String.fromCharCode(92), 'Paint on layer / layer mask'], ['Alt-click mask thumbnail', 'View the mask · Shift-click: disable it'],
-    ['Ctrl+U / Ctrl+B', 'Hue/Saturation / Color Balance'], ['Ctrl+M / Ctrl+L', 'Curves / Levels'], ['Ctrl+I', 'Invert layer colors'],
+    ['Ctrl+U / Ctrl+B', 'Hue/Saturation / Color Balance'], ['Ctrl+M / Ctrl+L', 'Curves / Levels'], ['Ctrl+I', 'Invert layer colors'], ['Ctrl+Shift+B', 'Gaussian Blur'],
     ['Ctrl+Shift+Space', 'Play / pause animation'], [', / .', 'Previous / next frame'], ['Ctrl+Alt+N', 'New animation frame']];
   Aero.dialog({ title: 'Keyboard Shortcuts', noCancel: true, width: 560, html: `<table class="kbd">${rows.map(r => `<tr><td><b>${esc(r[0])}</b></td><td>${esc(r[1])}</td></tr>`).join('')}</table>` });
 }
@@ -349,10 +351,12 @@ function buildMenus() {
       ['Cut', 'Ctrl+X', () => cmdCopy(true)], ['Copy', 'Ctrl+C', () => cmdCopy(false)], { label: 'Paste', key: 'Ctrl+V', fn: pasteMenu, noShortcut: true }, '-',
       ['Fill with Foreground', 'Alt+Backspace', cmdFillFG], ['Clear', 'Delete', cmdClearLayer], '-', ['Preferences…', 'Ctrl+K', dlgPrefs], ['Pressure Curve…', '', dlgPressure]],
     Select: [['All', 'Ctrl+A', () => setSelection(new Uint8Array(doc.w * doc.h).fill(255), 'Select All')], ['Deselect', 'Ctrl+D', () => doc.sel && setSelection(null, 'Deselect')], ['Invert', 'Ctrl+Shift+I', invertSelection], '-',
-      ['Layer Pixels', '', cmdSelectAlpha], ['Feather…', 'Shift+F6', cmdFeather], '-', ['Lasso', 'L', () => setTool('lasso')], ['Rectangle / Ellipse', 'M', () => setTool('marquee')]],
+      ['Layer Pixels', '', cmdSelectAlpha], ['Feather…', 'Shift+F6', cmdFeather], '-',
+      '#Modify', { label: 'Expand…', fn: () => dlgSelModify('expand'), disabled: () => !doc?.sel }, { label: 'Contract…', fn: () => dlgSelModify('contract'), disabled: () => !doc?.sel }, { label: 'Smooth…', fn: () => dlgSelModify('smooth'), disabled: () => !doc?.sel }, { label: 'Border…', fn: () => dlgSelModify('border'), disabled: () => !doc?.sel }, '-',
+      ['Lasso', 'L', () => setTool('lasso')], ['Rectangle / Ellipse', 'M', () => setTool('marquee')], ['Magic Wand', 'Q', () => setTool('wand')]],
     Layer: [['New Layer', 'Ctrl+Shift+N', cmdNewLayer], ['New Group', '', cmdNewGroup], ['New Fill Layer', '', cmdNewFill], ['Duplicate Layer', 'Ctrl+J', cmdDuplicate], ['Delete Layer', '', cmdDeleteLayer], '-',
       ['Group Layer', 'Ctrl+G', cmdGroupActive], ['Ungroup', 'Ctrl+Shift+G', cmdUngroup], ['Merge Down', 'Ctrl+E', cmdMergeDown], ['Merge Group', '', cmdMergeGroup], ['Flatten Image', 'Ctrl+Shift+F', cmdFlatten], '-',
-      { label: 'Lock Transparency', key: '/', fn: toggleLockAlpha, checked: () => !!doc?.active?.lockAlpha }, { label: 'Clipping Mask', key: 'Ctrl+Alt+G', fn: toggleClip, checked: () => !!doc?.active?.clip }, '-',
+      { label: 'Lock Transparency', key: '/', fn: toggleLockAlpha, checked: () => !!doc?.active?.lockAlpha }, { label: 'Clipping Mask', key: 'Ctrl+Alt+G', fn: toggleClip, checked: () => !!doc?.active?.clip }, { label: 'Reference Layer (for fills & wand)', fn: toggleRefLayer, checked: () => !!doc?.active?.ref, disabled: () => !doc?.active || doc.active.type === 'fill' }, '-',
       '#Layer mask', ['Add Mask (Reveal All)', '', () => cmdAddMask('reveal')], ['Add Mask (Hide All)', '', () => cmdAddMask('hide')], { label: 'Add Mask from Selection', fn: () => cmdAddMask('selection'), disabled: () => !doc?.sel },
       { label: 'Paint on Mask', key: String.fromCharCode(92), fn: toggleEditMask, checked: () => !!(doc?.editMask && doc.active?.mask), disabled: () => !doc?.active?.mask },
       { label: 'Enable Mask', fn: cmdToggleMaskOn, checked: () => !!(doc?.active?.mask && doc.active.maskOn), disabled: () => !doc?.active?.mask }, { label: 'Link Mask to Layer', fn: cmdToggleMaskLink, checked: () => !!(doc?.active?.mask && doc.active.maskLinked), disabled: () => !doc?.active?.mask },
@@ -360,6 +364,7 @@ function buildMenus() {
       { label: 'Edit Text…', fn: () => editTextLayer(doc.active), disabled: () => !doc?.active?.text }, { label: 'Rasterize Text', fn: () => cmdRasterizeText(), disabled: () => !doc?.active?.text }, '-',
       ['Move Up', 'Ctrl+]', () => cmdMoveLayer(1)], ['Move Down', 'Ctrl+[', () => cmdMoveLayer(-1)], ['Flip Layer Horizontal', '', () => cmdFlipLayer(true)], ['Flip Layer Vertical', '', () => cmdFlipLayer(false)], ['Transform…', 'Ctrl+T', () => setTool('transform')], '-', ['Layer Properties…', '', () => doc.active && layerProps(doc.active)]],
     Image: ['#Adjustments (current layer, inside the selection)', ['Hue / Saturation…', 'Ctrl+U', adjHSL], ['Brightness / Contrast…', '', adjBrightnessContrast], ['Curves…', 'Ctrl+M', adjCurves], ['Levels…', 'Ctrl+L', adjLevels], ['Color Balance…', 'Ctrl+B', adjColorBalance], ['Invert', 'Ctrl+I', adjInvert], ['Gradient Map…', '', adjGradientMap], '-', ['Extract Palette from Canvas', '', cmdCanvasPalette]],
+    Filter: ['#Current layer, inside the selection', ['Gaussian Blur…', 'Ctrl+Shift+B', fltGaussian], ['Motion Blur…', '', fltMotion], '-', ['Unsharp Mask…', '', fltUnsharp], ['Add Noise…', '', fltNoise]],
     Canvas: [['Canvas Size…', 'Ctrl+Alt+C', dlgCanvasSize], ['Resize Image…', 'Ctrl+Alt+I', dlgResize], '-', ['Rotate 90° Clockwise', '', () => cmdRotateCanvas(true)], ['Rotate 90° Counter-clockwise', '', () => cmdRotateCanvas(false)], ['Flip Canvas Horizontal', '', cmdFlipCanvas], '-', ['Paper Texture…', '', dlgPaper]],
     View: [['Zoom In', 'Ctrl+=', () => zoomAt(1.25)], ['Zoom Out', 'Ctrl+-', () => zoomAt(0.8)], ['Fit on Screen', 'Ctrl+0', () => fitView()], ['Actual Pixels (100%)', 'Ctrl+1', () => setZoom(1)], '-',
       ['Reset Rotation', 'Shift+R', () => rotateView(0)], { label: 'Flip View Horizontal', key: 'H', fn: flipView, checked: () => view.flip }, '-',
@@ -368,7 +373,8 @@ function buildMenus() {
       ...[['off', 'Symmetry Off'], ['v', 'Vertical Symmetry'], ['h', 'Horizontal Symmetry'], ['quad', 'Quadrant Symmetry'], ['radial', 'Radial Symmetry'], ['kaleido', 'Kaleidoscope']].map(([v, t]) => ({ label: t, fn: () => { guides.sym = v; renderCmd(); requestOverlay(); }, checked: () => guides.sym === v })),
       ...[['off', 'Perspective Off'], ['1', '1-Point Perspective'], ['2', '2-Point Perspective']].map(([v, t]) => ({ label: t, fn: () => { guides.persp = v; renderCmd(); requestOverlay(); }, checked: () => guides.persp === v })),
       { label: 'Ruler', key: '', fn: () => { guides.ruler.on = !guides.ruler.on; renderCmd(); requestOverlay(); }, checked: () => guides.ruler.on }, { label: 'Show Guides', key: ';', fn: () => { guides.show = !guides.show; requestOverlay(); }, checked: () => guides.show }],
-    Brush: [['Brush Settings…', 'F5', () => openBrushEditor(currentBrush())], ['Larger', ']', () => brushSizeStep(1)], ['Smaller', '[', () => brushSizeStep(-1)], '-', ['Import Brushes (.lpbrush, .abr)…', '', cmdImportBrushes], ['Import Photoshop Brushes (.abr)…', '', () => cmdImportAbr()], ['New Brush Tip from Selection', '', cmdTipFromSelection], ['Export Custom Brushes…', '', cmdExportBrushes]],
+    Brush: [['Brush Settings…', 'F5', () => openBrushEditor(currentBrush())], ['Larger', ']', () => brushSizeStep(1)], ['Smaller', '[', () => brushSizeStep(-1)], '-',
+      { label: 'QuickShape (hold at stroke end to snap)', fn: () => { QS.on = prefs.quickShape = !QS.on; savePrefs(); Aero.toast(QS.on ? 'QuickShape on — hold still at the end of a stroke to snap it to a line, ellipse or polygon' : 'QuickShape off'); }, checked: () => QS.on }, '-', ['Import Brushes (.lpbrush, .abr)…', '', cmdImportBrushes], ['Import Photoshop Brushes (.abr)…', '', () => cmdImportAbr()], ['New Brush Tip from Selection', '', cmdTipFromSelection], ['Export Custom Brushes…', '', cmdExportBrushes]],
     Animation: [{ label: 'Animation Mode', fn: () => toggleAnimMode(), checked: () => animOn() }, { label: 'Play / Pause', key: 'Ctrl+Shift+Space', fn: animPlay }, { label: 'Previous Frame', key: ',', fn: () => animStep(-1), disabled: () => !animOn() }, { label: 'Next Frame', key: '.', fn: () => animStep(1), disabled: () => !animOn() }, '-',
       ['New Frame', 'Ctrl+Alt+N', () => animNewFrame(false)], ['Duplicate Frame', '', () => animNewFrame(true)], { label: 'Delete Frame', fn: animDeleteFrame, disabled: () => !animOn() }, '-', ['Onion Skin…', '', dlgOnion], { label: 'Export Animation (GIF / MP4)…', fn: dlgAnimExport, disabled: () => !animOn() }],
     'Time-lapse': [{ label: 'Record Time-lapse', fn: () => { TL.on = !TL.on; tlStatus(); Aero.toast(TL.on ? 'Time-lapse recording on' : 'Time-lapse recording paused'); }, checked: () => TL.on }, ['Export Time-lapse Video…', '', dlgTimelapse], ['Clear Recording', '', async () => { if (await Aero.confirm('Clear recording', 'Delete all recorded time-lapse frames for this canvas?', 'Delete')) { tlReset(); Aero.toast('Recording cleared'); } }]],
@@ -393,7 +399,7 @@ function cmdExportBrushes() { const list = BRUSHES.filter(b => b.custom); if (!l
 /* ---------- boot ---------- */
 async function boot() {
   try { Object.assign(prefs, JSON.parse(localStorage.getItem('lumenpaint.prefs') || '{}')); } catch (e) { }
-  TL.on = prefs.tl !== false;
+  TL.on = prefs.tl !== false; QS.on = prefs.quickShape !== false; QS.delay = clamp(+prefs.qsDelay || 550, 250, 1500);
   prefs.pressureCurve = validCurve(prefs.pressureCurve); rebuildPressureLUT();
   snapshotBrushDefaults(); loadCustomTips(); loadCustomBrushes(); loadBrushState();
   hist = new Aero.History({ max: 100, onChange: () => renderHistoryPanel() });
@@ -418,6 +424,6 @@ async function boot() {
   if (TL.supported) tlPickCodec(1280, 854).catch(() => { });
   // start with the sample painting so the app is never empty
   if (/[?&]nosample/.test(location.search)) newDocument(3000, 2000, 'white', 'cold'); else await openSample(true);
-  window.LumenPaint = { get doc() { return doc; }, hist, importAbr, extractPalette, animExport, animRenderFrame, renderTextLayer, maskValues, pressureMap, R: () => R, TL, BRUSHES, paintPath, setTool, frameStats, prefs, guides, newDocument, buildLpaint, loadLpaint, exportPSD, loadPSD, exportImage, tlExport, floodFill, view };
+  window.LumenPaint = { qsFit, wandMask, selModify, refComposite, gaussianBlur, motionBlur, get doc() { return doc; }, hist, importAbr, extractPalette, animExport, animRenderFrame, renderTextLayer, maskValues, pressureMap, R: () => R, TL, BRUSHES, paintPath, setTool, frameStats, prefs, guides, newDocument, buildLpaint, loadLpaint, exportPSD, loadPSD, exportImage, tlExport, floodFill, view };
 }
 addEventListener('DOMContentLoaded', () => { boot().catch(e => { console.error(e); Aero.alert('Lumen Paint failed to start', String(e.message || e)); }); });

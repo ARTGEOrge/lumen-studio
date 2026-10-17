@@ -175,7 +175,7 @@ const IO = (() => {
   async function buildBackup() {
     await DB.flush();
     const photos = [...Cat.photos.values()];
-    const manifest = { app: 'lumen-darkroom', version: 2, created: Date.now(), photos, collections: Cat.collections, presets: Cat.userPresets, exportPresets: userExport };
+    const manifest = { app: 'lumen-darkroom', version: 3, created: Date.now(), photos, collections: Cat.collections, presets: Cat.userPresets, exportPresets: userExport };
     const entries = { 'manifest.json': [new TextEncoder().encode(JSON.stringify(manifest)), { level: 6 }] };
     const fileIds = [...new Set(photos.map(p => p.fileId))];
     for (let i = 0; i < fileIds.length; i++) {
@@ -210,7 +210,7 @@ const IO = (() => {
     let man;
     try { man = JSON.parse(new TextDecoder().decode(files['manifest.json'] || new Uint8Array())); } catch (e) { man = null; }
     if (!man || man.app !== 'lumen-darkroom' || !Array.isArray(man.photos)) return Aero.alert('Cannot open backup', 'The file has no Lumen Darkroom catalog manifest.');
-    if (man.version > 2) Aero.toast('This backup was made by a newer version; some settings may be ignored');
+    if (man.version > 3) Aero.toast('This backup was made by a newer version; some settings may be ignored');
     const photos = man.photos.slice(0, 100000).map(Model.sanitizePhoto).filter(p => p && files['files/' + p.fileId]);
     const dropped = man.photos.length - photos.length;
     let mode = 'replace';

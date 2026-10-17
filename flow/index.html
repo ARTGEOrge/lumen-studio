@@ -15,7 +15,7 @@
         <label>Show <select id="field"><option value="speed">Speed</option><option value="p">Pressure</option><option value="vort">Vorticity</option><option value="dye">Dye streaks</option><option value="T">Temperature</option><option value="u">u (x-velocity)</option><option value="v">v (y-velocity)</option></select></label>
         <label><input type="checkbox" id="stream" checked> Streamlines</label><label><input type="checkbox" id="vecs"> Arrows</label>
         <span class="sep"></span>
-        <button class="aero-btn" id="bPaint" title="Paint obstacles with the mouse">✎ Draw</button><button class="aero-btn" id="bErase" title="Erase obstacles">⌫ Erase</button>
+        <button class="aero-btn" id="bPaint" title="Paint obstacles with the mouse">✎ Draw</button><button class="aero-btn" id="bErase" title="Erase obstacles">⌫ Erase</button><button class="aero-btn" id="bPoly" title="Draw a polygon obstacle: click the corners, double-click or Enter to finish (P)">⬠ Polygon</button>
         <span class="hint" id="hint"></span>
       </div>
       <div class="aero-work" style="grid-template-columns:1fr 300px">
@@ -25,7 +25,8 @@
           <div class="aero-pane setup" id="setup"></div>
           <div class="aero-ph"><span class="phi"></span>Results<span class="right" id="clock"></span></div>
           <div class="aero-pane" id="results"></div>
-          <div class="aero-tabs" id="ctabs"><span class="aero-tab on" data-c="forces">Forces</span><span class="aero-tab" data-c="conv">Convergence</span><span class="aero-tab" data-c="valid">Validation</span></div>
+          <div class="aero-tabs" id="ctabs"><span class="aero-tab on" data-c="forces">Forces</span><span class="aero-tab" data-c="mon">Monitors</span><span class="aero-tab" data-c="cp">Cp</span><span class="aero-tab" data-c="conv">Residuals</span><span class="aero-tab" data-c="valid">Validation</span></div>
+          <div class="chartbar" id="chartBar"></div>
           <canvas id="chart" class="chart"></canvas>
         </div>
       </div>
@@ -34,5 +35,5 @@
   </div>
 </div>
 <script src="../kit/aero.js"></script>
-<script src="js/solver.js"></script><script src="js/cases.js"></script><script src="js/app.js"></script>
+<script src="vendor/omggif.js"></script><script src="js/solver.js"></script><script src="js/analysis.js"></script><script src="js/gif.js"></script><script src="js/cases.js"></script><script src="js/app.js"></script>
 </body></html>

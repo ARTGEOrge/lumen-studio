@@ -523,7 +523,7 @@
   LM.applyEffect = applyEffect; LM.fxv = fxv; LM.blurInto = blurInto; LM.matOf = matOf;
 
   /* ---------- layer rendering ---------- */
-  function needsBuffer(L) { return L.masks.some(m => m.mode !== 'none') || L.effects.some(f => f.on && f.type !== 'mblur') || L.matte || L.type === 'draw' || LM.is3D(L); }
+  function needsBuffer(L) { return L.masks.some(m => m.mode !== 'none') || L.effects.some(f => f.on && f.type !== 'mblur' && !LM.FX[f.type].ctrl) || L.matte || L.type === 'draw' || LM.is3D(L); }
   // render layer (content + masks + effects) into a fresh buffer of R's size; includes opacity if withOpacity.
   // stopAt: index of the effect to stop before (used by Echo to render earlier/later frames of the layer)
   function layerBuffer(L, t, comp, R, withOpacity, stopAt = -1) {
@@ -535,7 +535,7 @@
     if (mc) { x.globalCompositeOperation = 'destination-in'; x.drawImage(mc, 0, 0); x.globalCompositeOperation = 'source-over'; release(mc); }
     for (let k = 0; k < L.effects.length; k++) {
       if (k === stopAt) break;
-      const fx = L.effects[k]; if (!fx.on || fx.type === 'mblur') continue;
+      const fx = L.effects[k]; if (!fx.on || fx.type === 'mblur' || LM.FX[fx.type].ctrl) continue;
       x.save();
       if (fx.type === 'echo') applyEcho(fx, k, buf, L, t, comp, R); else applyEffect(fx, buf, L, t, comp, s, R);
       x.restore(); x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.globalCompositeOperation = 'source-over';
@@ -653,7 +653,7 @@
     release(buf);
   }
   function renderAdjustment(out, comp, L, t, R) {
-    const fxs = L.effects.filter(f => f.on && f.type !== 'mblur' && f.type !== 'echo'); if (!fxs.length) return;
+    const fxs = L.effects.filter(f => f.on && f.type !== 'mblur' && f.type !== 'echo' && !LM.FX[f.type].ctrl); if (!fxs.length) return;
     const op = Math.max(0, Math.min(1, val(L.tr.opacity, t) / 100)); if (op <= 0) return;
     const ctx = out.getContext ? out.getContext('2d') : out._ctx;
     const copy = acquire(R.W, R.H); copy._ctx.drawImage(out, 0, 0);

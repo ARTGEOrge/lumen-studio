@@ -158,7 +158,7 @@
     function effects(L) {
       const out = [];
       L.effects.forEach((fx, idx) => {
-        if (!fx.on) return;
+        if (!fx.on || LM.FX[fx.type].ctrl) return;   // expression controls only feed expressions, which are baked
         const P = k => fx.p[k], pv = (k, conv) => prop(P(k), L, conv);
         let e = null;
         switch (fx.type) {
@@ -194,7 +194,7 @@
     }
     let is3d = false, usedFx = false;
     const range = opts.range === 'work' ? [comp.workIn, Math.min(comp.workOut, comp.duration)] : [0, comp.duration];
-    const json = { v: '5.7.4', fr: fps, ip: r3(range[0] * fps), op: r3(range[1] * fps), w: comp.w, h: comp.h, nm: comp.name, ddd: 0, assets, layers: layers(comp), markers: [], meta: { g: 'Lumen Motion' } };
+    const json = { v: '5.7.4', fr: fps, ip: r3(range[0] * fps), op: r3(range[1] * fps), w: comp.w, h: comp.h, nm: comp.name, ddd: 0, assets, layers: layers(comp), markers: (comp.markers || []).filter(m => m.t >= range[0] - 1e-6 && m.t <= range[1] + 1e-6).map(m => ({ tm: r3(m.t * fps), cm: m.name || '', dr: r3((m.dur || 0) * fps) })), meta: { g: 'Lumen Motion' } };
     if (fonts.size) json.fonts = { list: [...fonts.values()] };
     if (is3d) { json.ddd = 1; warn('3D layers and cameras are exported as Lottie 3D (ddd) layers; lottie-web shows perspective only with its HTML renderer — the SVG and canvas renderers flatten them'); }
     if (usedFx) warn('Effects were exported as Lottie effects (Fill, Tint, Gaussian Blur, Drop Shadow, Stroke); lottie-web renders them only with its SVG renderer');

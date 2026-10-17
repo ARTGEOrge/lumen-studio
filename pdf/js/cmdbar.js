@@ -77,7 +77,7 @@ function controlsFor(t, o) {
       break;
     case 'sign': h += `<button class="aero-btn" data-act="signatures">Signatures…</button>` + (App.signature ? `<img src="${App.signature.dataUrl}" style="height:26px;background:#fff;border-radius:3px;padding:1px 4px">` : ''); break;
     case 'image': if (App.sel) h += range('opacity', 'Opacity', o.opacity ?? 1, 0.1, 1, 0.05, pct); else h += `<button class="aero-btn" data-act="pickimage">Choose image…</button>`; break;
-    case 'redact': h += `<button class="aero-btn" data-act="applyredact">Apply Redactions…</button>`; break;
+    case 'redact': h += `<button class="aero-btn" data-act="findredact">Find &amp; Redact…</button><button class="aero-btn" data-act="applyredact">Apply Redactions…</button><button class="aero-btn" data-act="hiddeninfo">Remove Hidden Information…</button>`; break;
     case 'crop': h += `<button class="aero-btn" data-act="cropdialog">Crop Margins…</button>`; break;
   }
   return h;

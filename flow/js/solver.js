@@ -8,8 +8,11 @@
   class Flow {
     constructor({ nx, ny, Lx, Ly, nu, rho = 1, sides, tau = 0.5, maxCG = 400, tolCG = 1e-5, heat = null }) {
       Object.assign(this, { nx, ny, Lx, Ly, nu, rho, tau, maxCG, tolCG });
-      // heat = { Pr, Tin, Tbody, cp } — temperature is carried by the flow and diffuses with α = ν / Pr; sides may set { T }
+      // heat = { Pr, Tin, Tbody, cp, beta?, g?, Tref? } — temperature is carried by the flow and diffuses with α = ν / Pr;
+      // sides may set { T }. With beta (1/K) and g (m/s², acting in −y) the Boussinesq buoyancy force
+      // f_y = g·β·(T − Tref) is added to the vertical momentum equation (natural / mixed convection).
       this.heat = heat; this.alpha = heat ? nu / heat.Pr : 0;
+      this.buoy = heat && heat.beta > 0 && heat.g > 0 ? heat.g * heat.beta : 0; this.Tref = heat ? (heat.Tref != null && isFinite(heat.Tref) ? +heat.Tref : heat.Tin) : 0;
       this.dx = Lx / nx; this.dy = Ly / ny; this.W = nx + 2; this.H = ny + 2; const N = this.W * this.H;
       this.u = new Float64Array(N); this.v = new Float64Array(N); this.p = new Float64Array(N); this.F = new Float64Array(N); this.G = new Float64Array(N);
       this.solid = new Uint8Array(N); this.dye = new Float32Array(N); this.dye2 = new Float32Array(N);
@@ -131,6 +134,7 @@
         const duv = (ue * (vc + ve) - uw * (vw + vc)) / (4 * dx) + gam * (Math.abs(ue) * (vc - ve) - Math.abs(uw) * (vw - vc)) / (4 * dx);
         const dv2 = ((vc + vn) ** 2 - (vs + vc) ** 2) / (4 * dy) + gam * (Math.abs(vc + vn) * (vc - vn) - Math.abs(vs + vc) * (vs - vc)) / (4 * dy);
         G[k] = vc + dt * (nu * lap - duv - dv2);
+        if (this.buoy) G[k] += dt * this.buoy * ((this.T[k] + this.T[k + W]) / 2 - this.Tref);
       }
     }
     // A·x for −∇² over fluid cells (Neumann at walls/obstacles, Dirichlet 0 at outlets)
@@ -191,8 +195,23 @@
       this.dye.set(dye2);
     }
     step() {
+      const uo = this.uOld || (this.uOld = new Float64Array(this.u.length)), vo = this.vOld || (this.vOld = new Float64Array(this.v.length)), To = this.TOld || (this.TOld = new Float64Array(this.T.length));
+      uo.set(this.u); vo.set(this.v); if (this.heat) To.set(this.T);
       this.computeDt(); this.applyBC(); this.computeFG(); this.solveP(); this.correct(); this.applyBC(); this.advectDye(); if (this.heat) this.stepT();
+      this.residuals(uo, vo, To);
       this.t += this.dt; this.steps++;
+    }
+    // unscaled residuals of this step: RMS rate of change of u, v (m/s²) and T (K/s) over the fluid, plus the
+    // RMS continuity defect left by the pressure solve (1/s). Steady state ⇔ all of them fall by orders of magnitude.
+    residuals(uo, vo, To) {
+      const { nx, ny, W, u, v, T, dt, dx, dy } = this, s = this.solid; let su = 0, sv = 0, sT = 0, sc = 0, n = 0;
+      for (let j = 1; j <= ny; j++) for (let i = 1; i <= nx; i++) {
+        const k = j * W + i; if (s[k]) continue; n++;
+        const a = u[k] - uo[k], b = v[k] - vo[k]; su += a * a; sv += b * b;
+        if (this.heat) { const c = T[k] - To[k]; sT += c * c; }
+        const d = (u[k] - u[k - 1]) / dx + (v[k] - v[k - W]) / dy; sc += d * d;
+      }
+      n = Math.max(1, n); this.res = { u: Math.sqrt(su / n) / dt, v: Math.sqrt(sv / n) / dt, T: this.heat ? Math.sqrt(sT / n) / dt : NaN, cont: Math.sqrt(sc / n) };
     }
 
     // ---------- heat ----------
@@ -231,6 +250,18 @@
         if (this.isFluid(i, j - 1)) { Q += k * (Tb - T[c - W]) / (dy / 2) * dx; per += dx; }
       }
       return { Q, per, k };
+    }
+    // mean wall heat flux divided by conductivity, −∂T/∂n into the fluid (K/m), on one side wall held at a fixed T.
+    // Uses the second-order one-sided gradient through the wall value and the first two cell centres.
+    wallGradient(side) {
+      const { nx, ny, W, dx, dy, T } = this, s = this.solid, Tw = this.sides[side].T; if (Tw == null || !this.heat) return NaN;
+      const vert = side === 'left' || side === 'right', n = vert ? ny : nx, h = vert ? dx : dy; let sum = 0, cnt = 0;
+      for (let m = 1; m <= n; m++) {
+        const k1 = side === 'left' ? m * W + 1 : side === 'right' ? m * W + nx : side === 'bottom' ? W + m : ny * W + m;
+        const st = side === 'left' ? 1 : side === 'right' ? -1 : side === 'bottom' ? W : -W, k2 = k1 + st; if (s[k1]) continue;
+        const T1 = T[k1], T2 = s[k2] ? T1 : T[k2]; sum += (8 * Tw - 9 * T1 + T2) / (3 * h); cnt++;
+      }
+      return cnt ? sum / cnt : NaN;
     }
     // ---------- outputs ----------
     cellVel(i, j) { const k = j * this.W + i; return [(this.u[k] + this.u[k - 1]) / 2, (this.v[k] + this.v[k - this.W]) / 2]; }

@@ -8,8 +8,9 @@
   <div class="aero-body no-toolbox">
     <div class="aero-client">
       <div class="aero-cmdbar" id="cmd">
-        <button class="aero-btn" data-add="box" title="Box">▣ Box</button><button class="aero-btn" data-add="cylinder">◉ Cylinder</button><button class="aero-btn" data-add="sphere">● Sphere</button><button class="aero-btn" data-add="cone">▲ Cone</button><button class="aero-btn" data-add="torus">◎ Torus</button>
-        <span class="sep"></span><button class="aero-btn" data-add="extrude" title="Extrude a sketch">⬆ Extrude</button><button class="aero-btn" data-add="revolve" title="Revolve a sketch">↻ Revolve</button>
+        <button class="aero-btn prim" data-add="box" title="Box">▣</button><button class="aero-btn prim" data-add="cylinder" title="Cylinder">◉</button><button class="aero-btn prim" data-add="sphere" title="Sphere">●</button><button class="aero-btn prim" data-add="cone" title="Cone">▲</button><button class="aero-btn prim" data-add="torus" title="Torus">◎</button>
+        <span class="sep"></span><button class="aero-btn" data-add="extrude" title="Extrude a sketch">⬆ Extrude</button><button class="aero-btn" data-add="revolve" title="Revolve a sketch">↻ Revolve</button><button class="aero-btn" data-cmd="sketch" title="Draw a constrained sketch and extrude it (K)">✎ Sketch</button>
+        <span class="sep"></span><button class="aero-btn" data-cmd="hole" title="Hole wizard — click faces to place holes (H)">⌀ Hole</button><button class="aero-btn" data-cmd="fillet" title="Round edges — click edges in the view (F)">◜ Fillet</button><button class="aero-btn" data-cmd="chamfer" title="Bevel edges — click edges in the view (C)">◩ Chamfer</button>
         <span class="sep"></span>
         <label>View <select id="viewSel"><option value="iso">Isometric</option><option value="front">Front</option><option value="top">Top</option><option value="right">Right</option></select></label>
         <label><input type="checkbox" id="edges" checked> Edges</label>
@@ -39,5 +40,5 @@
 </div>
 <script src="../kit/aero.js"></script>
 <script src="vendor/three-cad.min.js"></script>
-<script src="js/kernel.js"></script><script src="js/sample.js"></script><script src="js/viewport.js"></script><script src="js/app.js"></script>
+<script src="js/kernel.js"></script><script src="js/sample.js"></script><script src="js/viewport.js"></script><script src="js/sketcher.js"></script><script src="js/app.js"></script>
 </body></html>

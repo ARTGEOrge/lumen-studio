@@ -143,6 +143,7 @@
         comp: { width: C.w, height: C.h, duration: C.duration, numLayers: C.layers ? C.layers.length : 0 },
         valueAtTime: (tt, rawOnly) => rawOnly ? rawValue(p, tt - (L ? L.start : 0)) : val(p, tt, depth + 1),
         loop: (type, dir, n) => loopValue(p, lt, type, dir, n),
+        layer: L && C.layers ? L : null, compObj: C.layers ? C : null, depth,
       };
       const r = LM.expr.evaluate(p.x, ctx);
       if (r.err) { exprErrors.set(p, r.err); return v; }
@@ -254,7 +255,7 @@
   function transform(cx, cy, ax = 0, ay = 0) { return { anchor: P([ax, ay]), position: P([cx, cy]), scale: P([100, 100]), rotation: P(0), opacity: P(100), posZ: P(0), rotX: P(0), rotY: P(0) }; }
   function baseLayer(comp, type, name, extra) {
     const L = { id: uid(), name, type, label: TYPE_LABEL[type] ?? 2, start: 0, in: 0, out: comp.duration, visible: true, solo: false, locked: false, mb: false, blend: 'normal', matte: null, parent: null, expanded: false, masks: [], effects: [], tr: transform(comp.w / 2, comp.h / 2),
-      threeD: false, fb: false, tm: { on: false, p: P(0) }, au: { on: true, level: P(0) } };
+      threeD: false, fb: false, tm: { on: false, p: P(0) }, au: { on: true, level: P(0) }, markers: [] };
     return Object.assign(L, extra);
   }
   // fill / stroke style with an optional gradient (gtype: solid | linear | radial; gradient points are in shape space)
@@ -271,7 +272,7 @@
     };
   }
   const F = LM.factory = {
-    comp: (o = {}) => ({ id: uid(), name: o.name || 'Comp 1', w: o.w || 1920, h: o.h || 1080, fps: o.fps || 30, duration: o.duration || 10, bg: o.bg || '#000000', workIn: 0, workOut: o.duration || 10, layers: [], mb: { angle: 180, phase: -90, samples: 8 } }),
+    comp: (o = {}) => ({ id: uid(), name: o.name || 'Comp 1', w: o.w || 1920, h: o.h || 1080, fps: o.fps || 30, duration: o.duration || 10, bg: o.bg || '#000000', workIn: 0, workOut: o.duration || 10, layers: [], markers: [], mb: { angle: 180, phase: -90, samples: 8 } }),
     solid(comp, color = '#3a7bd5', name = 'Solid', w = comp.w, h = comp.h) { const L = baseLayer(comp, 'solid', name, { solid: { color: P(color), w, h } }); L.tr.anchor.v = [w / 2, h / 2]; return L; },
     shape(comp, kind = 'rect', o = {}) {
       const L = baseLayer(comp, 'shape', o.name || ({ rect: 'Rectangle', ellipse: 'Ellipse', polygon: 'Polygon', star: 'Star', path: 'Shape' })[kind], {
@@ -328,6 +329,10 @@
     turb: { name: 'Turbulent Displace', cat: 'Distort', params: [{ k: 'amount', label: 'Amount', type: 'num', v: 50, min: 0, max: 1000 }, { k: 'size', label: 'Size', type: 'num', v: 100, min: 2, max: 2000 }, { k: 'offset', label: 'Offset (Turbulence)', type: 'vec2', v: [0, 0] }, { k: 'complexity', label: 'Complexity', type: 'num', v: 2, min: 1, max: 6, step: 1 }, { k: 'evolution', label: 'Evolution', type: 'angle', v: 0 }] },
     wave: { name: 'Wave Warp', cat: 'Distort', params: [{ k: 'type', label: 'Wave Type', static: true, v: 'sine', options: [['sine', 'Sine'], ['square', 'Square'], ['triangle', 'Triangle'], ['saw', 'Sawtooth']] }, { k: 'height', label: 'Wave Height', type: 'num', v: 10, min: -1000, max: 1000 }, { k: 'width', label: 'Wave Width', type: 'num', v: 40, min: 1, max: 4000 }, { k: 'direction', label: 'Direction', type: 'angle', v: 90 }, { k: 'speed', label: 'Wave Speed', type: 'num', v: 1, min: -100, max: 100, step: .05 }, { k: 'phase', label: 'Phase', type: 'angle', v: 0 }] },
     rays: { name: 'Light Rays', cat: 'Generate', params: [{ k: 'intensity', label: 'Intensity', type: 'num', v: 100, min: 0, max: 600 }, { k: 'center', label: 'Center', type: 'vec2', v: [960, 540] }, { k: 'radius', label: 'Ray Length', type: 'num', v: 40, min: 0, max: 300 }, { k: 'mode', label: 'Ray Color', static: true, v: 'source', options: [['source', 'From Source'], ['color', 'Color']] }, { k: 'color', label: 'Color', type: 'color', v: '#ffd890' }] },
+    ckey: { name: 'Color Key', cat: 'Keying', params: [{ k: 'color', label: 'Key Color', type: 'color', v: '#00b140' }, { k: 'tolerance', label: 'Tolerance', type: 'pct', v: 25, min: 0, max: 100 }, { k: 'softness', label: 'Edge Softness', type: 'pct', v: 10, min: 0, max: 100 }, { k: 'spill', label: 'Spill Suppression', type: 'pct', v: 50, min: 0, max: 100 }, { k: 'view', label: 'View', static: true, v: 'final', options: [['final', 'Final Result'], ['matte', 'Matte (alpha as gray)']] }] },
+    slider: { name: 'Slider Control', cat: 'Expression Controls', ctrl: true, params: [{ k: 'slider', label: 'Slider', type: 'num', v: 0 }] },
+    angleCtl: { name: 'Angle Control', cat: 'Expression Controls', ctrl: true, params: [{ k: 'angle', label: 'Angle', type: 'angle', v: 0 }] },
+    pointCtl: { name: 'Point Control', cat: 'Expression Controls', ctrl: true, params: [{ k: 'point', label: 'Point', type: 'vec2', v: [960, 540] }] },
     echo: { name: 'Echo', cat: 'Time', params: [{ k: 'time', label: 'Echo Time (seconds)', type: 'num', v: -0.05, min: -10, max: 10, step: .001 }, { k: 'count', label: 'Number Of Echoes', type: 'num', v: 4, min: 0, max: 60, step: 1 }, { k: 'start', label: 'Starting Intensity', type: 'num', v: 1, min: 0, max: 1, step: .01 }, { k: 'decay', label: 'Decay', type: 'num', v: .6, min: 0, max: 1, step: .01 }, { k: 'op', label: 'Echo Operator', static: true, v: 'add', options: [['add', 'Add'], ['max', 'Maximum'], ['screen', 'Screen'], ['back', 'Composite In Back'], ['front', 'Composite In Front']] }] },
   };
   // validation for static params whose options are not a simple list
@@ -426,7 +431,7 @@
       set(`mask.${m.id}.mode`, 'Mode', () => m.mode, v => m.mode = v, [['add', 'Add'], ['subtract', 'Subtract'], ['intersect', 'Intersect'], ['none', 'None']]),
       set(`mask.${m.id}.inv`, 'Inverted', () => m.inv, v => m.inv = v, 'bool'),
       n(`mask.${m.id}.path`, 'Mask Path', m.path, 'path'), n(`mask.${m.id}.feather`, 'Mask Feather', m.feather, 'num', { min: 0 }), n(`mask.${m.id}.opacity`, 'Mask Opacity', m.opacity, 'pct', { min: 0, max: 100 }), n(`mask.${m.id}.expansion`, 'Mask Expansion', m.expansion, 'num')] })) });
-    if (L.effects.length) out.push({ group: true, id: 'effects', label: 'Effects', items: L.effects.map(fx => { const d = LM.FX[fx.type]; return { group: true, id: 'fx.' + fx.id, label: d.name, kind: 'effect', ref: fx, items: d.params.map(q => q.static ? set(`fx.${fx.id}.${q.k}`, q.label, () => fx.p[q.k].v, v => fx.p[q.k].v = v, q.options) : n(`fx.${fx.id}.${q.k}`, q.label, fx.p[q.k], q.type, { min: q.min, max: q.max, step: q.step, spatial: false })) }; }) });
+    if (L.effects.length) out.push({ group: true, id: 'effects', label: 'Effects', items: L.effects.map(fx => { const d = LM.FX[fx.type]; return { group: true, id: 'fx.' + fx.id, label: fx.name || d.name, kind: 'effect', ref: fx, items: d.params.map(q => q.static ? set(`fx.${fx.id}.${q.k}`, q.label, () => fx.p[q.k].v, v => fx.p[q.k].v = v, q.options) : n(`fx.${fx.id}.${q.k}`, q.label, fx.p[q.k], q.type, { min: q.min, max: q.max, step: q.step, spatial: false })) }; }) });
     const T = L.tr, d3 = LM.is3D(L);
     const tri = [];
     if (L.type !== 'camera' && (all || L.type !== 'audio')) tri.push(n('tr.anchor', 'Anchor Point', T.anchor, 'vec2'));

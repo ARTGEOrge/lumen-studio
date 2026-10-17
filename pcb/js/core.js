@@ -125,24 +125,44 @@
   const bbox = it => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; it.core.forEach(([x, y]) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }); return [x0 - it.r, y0 - it.r, x1 + it.r, y1 + it.r]; };
 
 
+  // ---------- net classes ----------
+  // board.netClasses = [{ name, nets:[netName…], width, clearance, viaDia, viaDrill }]; nets in no class use the board rules.
+  function defaultClass(board) { const R = board.rules || {}; return { name: 'Default', nets: [], width: R.track || 0.2, clearance: R.clearance || 0.2, viaDia: R.viaDia || 0.8, viaDrill: R.viaDrill || 0.4 }; }
+  function classOf(board, net) {
+    const d = defaultClass(board); if (!net) return d;
+    const c = (board.netClasses || []).find(k => Array.isArray(k.nets) && k.nets.includes(net));
+    return c ? { ...d, ...Object.fromEntries(Object.entries(c).filter(([, v]) => v != null && v !== '')) } : d;
+  }
+  // clean up classes read from a file (untrusted): names, finite positive numbers, each net in at most one class
+  function sanitizeClasses(list) {
+    if (!Array.isArray(list)) return [];
+    const seen = new Set(), num = (v, lo, hi) => { v = +v; return v > 0 && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : undefined; };
+    return list.filter(c => c && typeof c === 'object' && typeof c.name === 'string' && c.name.trim() && c.name.trim() !== 'Default').slice(0, 50).map(c => ({
+      name: c.name.trim().slice(0, 40),
+      nets: (Array.isArray(c.nets) ? c.nets : []).filter(n => typeof n === 'string' && n && !seen.has(n) && seen.add(n)).slice(0, 2000),
+      width: num(c.width, 0.05, 10), clearance: num(c.clearance, 0.05, 10), viaDia: num(c.viaDia, 0.2, 5), viaDrill: num(c.viaDrill, 0.1, 4),
+    }));
+  }
+  const maxClearance = board => Math.max(defaultClass(board).clearance, ...(board.netClasses || []).map(c => +c.clearance || 0));
+
   // ---------- copper pours (zones) ----------
   // zone = { net, layer, clearance } fills the whole board (minus the edge clearance) on one layer, keeps `clearance`
   // from copper of every other net, joins same-net copper solidly, and drops islands that touch none of its net.
   const fillCache = new Map();
   function fillZone(board, zone, pinNet, res = 0.1) {
-    const key = JSON.stringify([board.w, board.h, board.parts, board.tracks, board.vias, board.rules && board.rules.edge, zone, res]) + (pinNet ? [...pinNet].join() : '');
+    const key = JSON.stringify([board.w, board.h, board.parts, board.tracks, board.vias, board.rules, board.netClasses, zone, res]) + (pinNet ? [...pinNet].join() : '');
     if (fillCache.has(key)) return fillCache.get(key);
     const nx = Math.ceil(board.w / res), ny = Math.ceil(board.h / res), grid = new Int32Array(nx * ny);   // 0 empty, -1 blocked, >0 island id
     const edge = Math.max(zone.clearance, (board.rules && board.rules.edge) || 0.3), cl = zone.clearance + res * 0.71;
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const x = (i + 0.5) * res, y = (j + 0.5) * res; if (x < edge || y < edge || x > board.w - edge || y > board.h - edge) grid[j * nx + i] = -1; }
     const items = copper(board, pinNet).filter(it => it.layers.includes(zone.layer)), seeds = [];
     items.forEach(it => {
-      const same = it.net === zone.net, b = bbox(it), m = same ? 0 : cl;
+      const same = it.net === zone.net, b = bbox(it), icl = same ? 0 : Math.max(cl, classOf(board, it.net).clearance + res * 0.71), m = icl;
       const i0 = Math.max(0, Math.floor((b[0] - m) / res)), i1 = Math.min(nx - 1, Math.ceil((b[2] + m) / res)), j0 = Math.max(0, Math.floor((b[1] - m) / res)), j1 = Math.min(ny - 1, Math.ceil((b[3] + m) / res));
       for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
         const k = j * nx + i; if (grid[k] === -1) continue;
         const g = gap(it, { core: [[(i + 0.5) * res, (j + 0.5) * res]], r: 0 });
-        if (!same && g < cl) grid[k] = -1; else if (same && g <= 0) seeds.push(k);
+        if (!same && g < icl) grid[k] = -1; else if (same && g <= 0) seeds.push(k);
       }
     });
     // flood fill from same-net copper; everything else is an isolated island and is removed
@@ -197,7 +217,7 @@
       while (rest.length) {
         let best = null;
         rest.forEach((g, gi) => inTree.forEach(t => g.forEach(p => t.forEach(q => { const d = Math.hypot(p.x - q.x, p.y - q.y); if (!best || d < best.d) best = { d, gi, a: q, b: p }; }))));
-        lines.push({ net, x1: best.a.x, y1: best.a.y, x2: best.b.x, y2: best.b.y, d: best.d }); inTree.push(rest.splice(best.gi, 1)[0]);
+        lines.push({ net, x1: best.a.x, y1: best.a.y, x2: best.b.x, y2: best.b.y, d: best.d, a: best.a.ref + '.' + best.a.n, b: best.b.ref + '.' + best.b.n }); inTree.push(rest.splice(best.gi, 1)[0]);
       }
     });
     return { lines, unroutedNets, totalNets: byNet.size };
@@ -218,16 +238,19 @@
     // shorts: one copper island touching pads of two nets
     net.forEach((set, r) => { if (set.size > 1) { const i = items.findIndex((it, k) => dsu.find(k) === r && it.kind === 'pad'); const [x, y] = where(items[i]); out.push({ type: 'Short', msg: `Nets ${[...set].join(' and ')} are shorted together`, x, y }); } });
     const netOf = i => { const s = net.get(dsu.find(i)); return items[i].net || (s && s.size === 1 ? [...s][0] : null); };
-    const bb = items.map(bbox);
+    const bb = items.map(bbox), nets = items.map((_, i) => netOf(i)), clr = nets.map(n => classOf(board, n).clearance), CM = Math.max(R.clearance, maxClearance(board));
     for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
       const a = items[i], b = items[j]; if (!shareLayer(a, b)) continue;
       if (dsu.find(i) === dsu.find(j)) continue;                    // same copper island
-      const na = netOf(i), nb = netOf(j); if (na && na === nb) continue;  // same net, not yet joined — that's the ratsnest's job
-      const A = bb[i], B = bb[j]; if (A[2] + R.clearance < B[0] || B[2] + R.clearance < A[0] || A[3] + R.clearance < B[1] || B[3] + R.clearance < A[1]) continue;
-      const g = gap(a, b);
-      if (g < R.clearance - 1e-6) { const [x1, y1] = where(a), [x2, y2] = where(b); out.push({ type: 'Clearance', msg: `${label(a)} to ${label(b)}: ${Math.max(0, g).toFixed(3)} mm (min ${R.clearance})`, x: (x1 + x2) / 2, y: (y1 + y2) / 2 }); }
+      const na = nets[i], nb = nets[j]; if (na && na === nb) continue;  // same net, not yet joined — that's the ratsnest's job
+      const A = bb[i], B = bb[j]; if (A[2] + CM < B[0] || B[2] + CM < A[0] || A[3] + CM < B[1] || B[3] + CM < A[1]) continue;
+      const g = gap(a, b), need = Math.max(clr[i], clr[j]);          // the stricter of the two net classes wins
+      if (g < need - 1e-6) { const [x1, y1] = where(a), [x2, y2] = where(b); out.push({ type: 'Clearance', msg: `${label(a)} to ${label(b)}: ${Math.max(0, g).toFixed(3)} mm (min ${+need.toFixed(3)})`, x: (x1 + x2) / 2, y: (y1 + y2) / 2 }); }
     }
-    (board.tracks || []).forEach(t => { if (t.w < R.track - 1e-9) out.push({ type: 'Track width', msg: `${t.layer} track ${t.w} mm is under ${R.track} mm`, x: t.pts[0][0], y: t.pts[0][1] }); });
+    (board.tracks || []).forEach(t => {
+      const c = classOf(board, t.net), min = c.name === 'Default' ? R.track : Math.max(R.track, c.width);
+      if (t.w < min - 1e-9) out.push({ type: 'Track width', msg: `${t.net ? t.net + ' ' : ''}${t.layer} track ${t.w} mm is under ${+min.toFixed(3)} mm${c.name === 'Default' ? '' : ' (class ' + c.name + ')'}`, x: t.pts[0][0], y: t.pts[0][1] });
+    });
     (board.vias || []).forEach(v => { if (v.drill < R.drill - 1e-9) out.push({ type: 'Drill', msg: `via drill ${v.drill} mm is under ${R.drill} mm`, x: v.x, y: v.y }); });
     items.forEach(it => { const b = bbox(it); if (b[0] < R.edge || b[1] < R.edge || b[2] > board.w - R.edge || b[3] > board.h - R.edge) { const [x, y] = where(it); out.push({ type: 'Board edge', msg: `${label(it)} is closer than ${R.edge} mm to the board edge`, x, y }); } });
     const rn = ratsnest(board, pinNet);
@@ -282,6 +305,61 @@
     return out.map(r => r.map(c => /[",]/.test(String(c)) ? `"${String(c).replace(/"/g, '""')}"` : c).join(',')).join('\r\n') + '\r\n';
   }
 
+  // ---------- net lengths (length matching report) ----------
+  // routed length per net: track centre-line length on each layer plus via count; `pads` = pad count, `open` = unrouted connections
+  function netLengths(board, pinNet) {
+    const rows = new Map(), row = net => { if (!rows.has(net)) rows.set(net, { net, cls: classOf(board, net).name, top: 0, bottom: 0, length: 0, vias: 0, tracks: 0, pads: 0, open: 0 }); return rows.get(net); };
+    if (pinNet) pinNet.forEach(net => { row(net).pads++; });
+    const { items, dsu, net: inet } = islandNets(board, pinNet);
+    const trackNet = new Map(); items.forEach((it, i) => { if (it.kind === 'track' && !trackNet.has(it.ti)) { const s = inet.get(dsu.find(i)); trackNet.set(it.ti, it.net || (s && s.size === 1 ? [...s][0] : null)); } });
+    (board.tracks || []).forEach((t, ti) => {
+      const n = trackNet.get(ti) || t.net; if (!n) return; const r = row(n); let L = 0;
+      for (let i = 1; i < t.pts.length; i++) L += Math.hypot(t.pts[i][0] - t.pts[i - 1][0], t.pts[i][1] - t.pts[i - 1][1]);
+      r[t.layer === 'bottom' ? 'bottom' : 'top'] += L; r.length += L; r.tracks++;
+    });
+    (board.vias || []).forEach(v => { if (v.net) row(v.net).vias++; });
+    ratsnest(board, pinNet).lines.forEach(l => row(l.net).open++);
+    const out = [...rows.values()].filter(r => r.pads > 1 || r.length > 0);
+    // length matching: difference to the longest net of the same class
+    const longest = new Map(); out.forEach(r => longest.set(r.cls, Math.max(longest.get(r.cls) || 0, r.length)));
+    out.forEach(r => { r.delta = longest.get(r.cls) - r.length; });
+    return out.sort((a, b) => a.cls.localeCompare(b.cls) || b.length - a.length || a.net.localeCompare(b.net));
+  }
+
+  // ---------- pick-and-place (centroid) file ----------
+  // centroid = centre of the pad extents; coordinates in mm from the board's lower-left corner; rotation counter-clockwise seen from the top
+  function placement(sch, board) {
+    const val = new Map(((sch && sch.parts) || []).map(p => [p.ref, p]));
+    const rows = [['Designator', 'Value', 'Package', 'Mid X', 'Mid Y', 'Rotation', 'Layer']];
+    [...(board.parts || [])].sort((a, b) => a.ref.localeCompare(b.ref, undefined, { numeric: true })).forEach(fp => {
+      const pads = padsOf(fp); if (!pads.length) return;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; pads.forEach(p => { x0 = Math.min(x0, p.x - p.w / 2); x1 = Math.max(x1, p.x + p.w / 2); y0 = Math.min(y0, p.y - p.h / 2); y1 = Math.max(y1, p.y + p.h / 2); });
+      const rot = ((360 - (fp.rot || 0)) % 360 + 360) % 360, sp = val.get(fp.ref);
+      rows.push([fp.ref, sp ? sp.value : '', fp.fp, ((x0 + x1) / 2).toFixed(4), (board.h - (y0 + y1) / 2).toFixed(4), rot.toFixed(1), fp.side === 'bottom' ? 'Bottom' : 'Top']);
+    });
+    return rows.map(r => r.map(c => /[",]/.test(String(c)) ? `"${String(c).replace(/"/g, '""')}"` : c).join(',')).join('\r\n') + '\r\n';
+  }
+
+  // ---------- IPC-D-356A netlist (bare-board electrical test) ----------
+  // fixed-column records, inch units (UNITS CUST 0: 0.0001 in), the flavour KiCad writes
+  function ipc356(board, pinNet, name = 'board') {
+    const U = mm => Math.round(mm / 0.00254), pad = (s, n) => String(s).slice(0, n).padEnd(n), ascii = s => String(s).replace(/[^\x20-\x7e]/g, '?').slice(0, 60);
+    const sgn = v => (v < 0 ? '-' : '+') + String(Math.abs(v)).padStart(6, '0');
+    const head = ['C  IPC-D-356A netlist generated by Lumen PCB', 'P  JOB   ' + ascii(name), 'P  CODE  00', 'P  UNITS CUST 0', 'P  DIM   N', 'P  VER   IPC-D-356A', 'P  IMAGE PRIMARY'];
+    const alias = new Map(); let na = 0;
+    const netName = n => { if (!n) return 'N/C'; const clean = n.replace(/\s+/g, '_').replace(/[^\x21-\x7e]/g, '?'); if (clean.length <= 14) return clean; if (!alias.has(n)) { alias.set(n, 'NNAME' + ++na); head.push(`P  ${'NNAME' + na} ${clean.slice(0, 60)}`); } return alias.get(n); };
+    const recs = [];
+    (board.parts || []).forEach(fp => padsOf(fp).forEach(p => {
+      const tht = p.drill > 0, net = pinNet ? pinNet.get(p.ref + '.' + p.n) || null : null;
+      const acc = tht ? 0 : (p.layers[0] === 'bottom' ? 2 : 1), mask = tht ? 0 : acc === 1 ? 2 : 1;
+      recs.push((tht ? '317' : '327') + pad(netName(net), 14) + '   ' + pad(p.ref, 6) + '-' + pad(p.n, 4) + ' ' + (tht ? 'D' + String(U(p.drill)).padStart(4, '0') + 'P' : '      ') +
+        'A' + String(acc).padStart(2, '0') + 'X' + sgn(U(p.x)) + 'Y' + sgn(U(board.h - p.y)) + 'X' + String(U(p.w)).padStart(4, '0') + 'Y' + String(U(p.h)).padStart(4, '0') + 'R000' + 'S' + mask);
+    }));
+    (board.vias || []).forEach(v => recs.push('317' + pad(netName(v.net), 14) + '   ' + pad('VIA', 6) + '-' + pad('', 4) + 'M' + 'D' + String(U(v.drill)).padStart(4, '0') + 'P' +
+      'A00X' + sgn(U(v.x)) + 'Y' + sgn(U(board.h - v.y)) + 'X' + String(U(v.dia)).padStart(4, '0') + 'Y0000R000S3'));
+    return [...head, ...recs, '999'].join('\n') + '\n';
+  }
+
   // ---------- store-only ZIP ----------
   const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
   const crc32 = b => { let c = 0xffffffff; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
@@ -301,9 +379,10 @@
     const all = [...parts, ...central, new Uint8Array(e.buffer)], out = new Uint8Array(all.reduce((s, b) => s + b.length, 0)); let p = 0; all.forEach(b => { out.set(b, p); p += b.length; });
     return out;
   }
-  function fabFiles(board, name = 'board', pinNet = null) {
+  function fabFiles(board, name = 'board', pinNet = null, sch = null) {
+    const extra = [{ name: name + '-netlist.ipc', data: ipc356(board, pinNet, name) }, { name: name + '-pos.csv', data: placement(sch, board) }];
     return [['top', '-F_Cu.gtl'], ['bottom', '-B_Cu.gbl'], ['mask_top', '-F_Mask.gts'], ['mask_bottom', '-B_Mask.gbs'], ['silk_top', '-F_Silkscreen.gto'], ['outline', '-Edge_Cuts.gm1']]
-      .map(([l, ext]) => ({ name: name + ext, data: gerber(board, l, pinNet) })).concat([{ name: name + '.drl', data: drill(board) }]);
+      .map(([l, ext]) => ({ name: name + ext, data: gerber(board, l, pinNet) })).concat([{ name: name + '.drl', data: drill(board) }], pinNet ? extra : []);
   }
 
   // place footprints that aren't on the board yet, in a grid inside the outline
@@ -325,6 +404,6 @@
     return added;
   }
 
-  const api = { fillZone, zoneRects, xform, pinsOf, netlist, annotate, erc, padsOf, silkOf, padShape, copper, coreDist, gap, connectivity, ratsnest, drc, gerber, drill, bom, zip, crc32, fabFiles, syncBoard, rot2 };
+  const api = { classOf, defaultClass, sanitizeClasses, maxClearance, netLengths, placement, ipc356, bbox, islandNets, fillZone, zoneRects, xform, pinsOf, netlist, annotate, erc, padsOf, silkOf, padShape, copper, coreDist, gap, connectivity, ratsnest, drc, gerber, drill, bom, zip, crc32, fabFiles, syncBoard, rot2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.PcbCore = api;
 })(typeof self !== 'undefined' ? self : this);

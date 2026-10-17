@@ -16,7 +16,7 @@ function nextLayerName() { // "Layer n" with n one above the highest existing nu
 class Layer {
   constructor(type, name, w, h) {
     this.id = uid(); this.type = type; this.name = name || (type === 'group' ? 'Group' : nextLayerName());
-    this.visible = true; this.opacity = 1; this.blend = type === 'group' ? 'pass-through' : 'normal'; this.lockAlpha = false; this.clip = false; this.open = true;
+    this.visible = true; this.opacity = 1; this.blend = type === 'group' ? 'pass-through' : 'normal'; this.lockAlpha = false; this.clip = false; this.ref = false; this.open = true;
     this.color = [1, 1, 1];
     this.mask = null; this.maskOn = true; this.maskLinked = true; // layer mask: a tile layer outside the tree (transparent = reveal)
     this.text = null;    // text layer props (pixel layer whose tiles are the rendered text) — replaced, never mutated
@@ -94,7 +94,7 @@ function layerBounds(L) { // tight bbox of non-transparent pixels or null
 function tileEmpty(t) { for (let i = 3; i < TSZ; i += 4) if (t[i]) return false; return true; }
 
 /* ---------- history (snapshot of structure + tile reference arrays) ---------- */
-function snapTree(list) { return list.map(L => ({ L, p: { name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, lockAlpha: L.lockAlpha, clip: L.clip, color: L.color.slice(), open: L.open, mask: L.mask, maskOn: L.maskOn, maskLinked: L.maskLinked, text: L.text }, tiles: L.tiles ? L.tiles.slice() : null, mtiles: L.mask ? L.mask.tiles.slice() : null, children: L.children ? snapTree(L.children) : null })); }
+function snapTree(list) { return list.map(L => ({ L, p: { name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, lockAlpha: L.lockAlpha, clip: L.clip, ref: !!L.ref, color: L.color.slice(), open: L.open, mask: L.mask, maskOn: L.maskOn, maskLinked: L.maskLinked, text: L.text }, tiles: L.tiles ? L.tiles.slice() : null, mtiles: L.mask ? L.mask.tiles.slice() : null, children: L.children ? snapTree(L.children) : null })); }
 function snapshot() { return { w: doc.w, h: doc.h, tree: snapTree(doc.root), active: doc.active?.id, sel: doc.sel }; }
 function restoreTree(s) { return s.map(n => { const L = n.L; Object.assign(L, n.p); L.color = n.p.color.slice(); if (n.tiles) L.tiles = n.tiles.slice(); if (n.children) L.children = restoreTree(n.children); L.owned.clear(); L.ver++; if (L.mask && n.mtiles) { L.mask.tiles = n.mtiles.slice(); L.mask.owned.clear(); L.mask.ver++; } return L; }); }
 function restoreSnapshot(s) {

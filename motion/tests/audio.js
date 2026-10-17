@@ -73,7 +73,7 @@ const VL = LM.comp().layers.find(l => l.type === 'video'); LM.comp().layers.find
 ok('video layer audio', !!LM.media.get(VL.asset).audio && LM.layerHasAudio(VL, LM.comp()) && rms(LM.audio.mix(LM.comp(), 0, 2)[0], SR * .7, SR * 1.3) > .3);
 ok('video layer has Audio Levels', !!LM.findNode(VL, 'au.level'));
 // save / load round trip keeps audio
-const json = LM.serialize(); ok('serialize audio', json.includes('data:audio/wav;base64,') && JSON.parse(json).version === 2);
+const json = LM.serialize(); ok('serialize audio', json.includes('data:audio/wav;base64,') && JSON.parse(json).version >= 2);
 await LM.loadProject(json, 'a.lmot'); await sleep(100); document.querySelectorAll('.aero-modal').forEach(x => x.remove());
 const A3 = LM.comp().layers.find(l => l.type === 'audio'); ok('reload audio', !!A3 && !!LM.media.get(A3.asset)?.audio && A3.au.on === false && !!LM.media.get(LM.comp().layers.find(l => l.type === 'video').asset).audio);
 ok('no errors', errors.length === 0, errors.slice(0, 5));

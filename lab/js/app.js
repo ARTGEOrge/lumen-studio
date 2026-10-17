@@ -11,6 +11,8 @@
     hist: [], hpos: null, hprefix: '',
     busy: false, ws: [], snap: null, curFig: null, selFile: null, selVar: null,
     fontSize: 13, inputMode: false, names: [], lastRunName: null,
+    bps: new Map(),        // breakpoints: file stem → Map(line → condition ('' = always))
+    stopOnError: false, debug: null, // debug: the 'paused' message while stopped at K>>
   };
   const ext = n => (n.match(/\.([^.]+)$/) || [, ''])[1].toLowerCase();
   // next frame, or a short timer when the window is hidden (requestAnimationFrame does not run then)
@@ -43,9 +45,13 @@
       case 'clc': $('cwOut').innerHTML = ''; break;
       case 'input': enterInputMode(m.prompt); break;
       case 'saveFigure': exportFigure(m.id, m.name); break;
+      case 'paused': enterDebug(m); break;
+      case 'resumed': leaveDebug(true); break;
+      case 'profile': showProfile(m.report); break;
       case 'value': case 'complete': case 'wsjson': { const w = waiters.get(m.req); if (w) { waiters.delete(m.req); w(m); } break; }
       case 'done': {
-        clearTimeout(stopTimer); setBusy(false); leaveInputMode();
+        clearTimeout(stopTimer); leaveDebug(false); setBusy(false); leaveInputMode();
+        if (m.dbg) applyDbg(m.dbg);
         S.ws = m.workspace || []; renderWs(); refreshVarTabs();
         if (m.files) mergeFiles(m.files);
         $('st4').textContent = `format ${m.format || 'short'} · ${S.ws.length} variable${S.ws.length === 1 ? '' : 's'}`;
@@ -68,12 +74,12 @@
     const id = ++runSeq; setBusy(true, name);
     S.lastRunName = name;
     clearErrors();
-    return new Promise(res => { waiters.set(id, res); W.postMessage({ type: 'run', id, code, name, files: filesObj(), width: cwColumns(), quiet }); });
+    return new Promise(res => { waiters.set(id, res); W.postMessage({ type: 'run', id, code, name, files: filesObj(), width: cwColumns(), quiet, dbg: dbgJSON() }); });
   }
   function stop() {
     if (!S.busy) return;
     if (ctrl) {
-      Atomics.store(ctrl, 0, 1); Atomics.notify(ctrl, 3); if (S.inputMode) { Atomics.store(ctrl, 2, -1); Atomics.store(ctrl, 1, 1); Atomics.notify(ctrl, 1); }
+      Atomics.store(ctrl, 0, 1); Atomics.notify(ctrl, 3); if (S.inputMode || S.debug) { Atomics.store(ctrl, 2, -1); Atomics.store(ctrl, 1, 1); Atomics.notify(ctrl, 1); }
       stopTimer = setTimeout(() => restartWorker('The engine did not stop in time and was restarted. The workspace was cleared.'), 2500);
     } else restartWorker('Stopped. The workspace was cleared (stopping needs a cross-origin isolated page).');
   }
@@ -113,6 +119,12 @@
   async function submit() {
     const code = cwIn.value;
     if (S.inputMode) { replyInput(code); return; }
+    if (S.debug) {
+      if (code.trim() && incomplete(code)) { insertAtCursor(cwIn, '\n'); autosize(); return; }
+      cwIn.value = ''; autosize(); hideComplete(); S.hpos = null;
+      if (code.trim() && S.hist[S.hist.length - 1] !== code) { S.hist.push(code); saveLater(); }
+      debugSend(code.trim() ? code : '', `K>> ${code}`); return;
+    }
     if (S.busy) { Aero.toast('Still running — press Stop (Ctrl+C) to interrupt.'); return; }
     if (code.trim() && incomplete(code)) { insertAtCursor(cwIn, '\n'); autosize(); return; }
     cwIn.value = ''; autosize(); hideComplete();
@@ -235,8 +247,11 @@
     let i = S.tabs.findIndex(t => t.kind === 'file' && t.name === name);
     if (i < 0) {
       const f = S.files.get(name); if (!f) return;
-      const ed = LabEditor.create($('editors'), { onChange: text => { const ff = S.files.get(currentName()); if (ff) { ff.text = text; tabDirty(); saveLater(); } }, onCursor: (l, c) => { $('st2').textContent = `Ln ${l}, Col ${c}`; }, onKey: editorKey });
-      ed.set(f.text); S.eds.set(name, ed);
+      const ed = LabEditor.create($('editors'), { onChange: text => { const ff = S.files.get(currentName()); if (ff) { ff.text = text; tabDirty(); saveLater(); } }, onCursor: (l, c) => { $('st2').textContent = `Ln ${l}, Col ${c}`; }, onKey: editorKey,
+        onGutter: (line, e) => { const fn = edFile(ed); if (fn) { if (e.shiftKey || e.button === 2) conditionalBreakpoint(fn, line); else toggleBreakpoint(fn, line); } },
+        onLineShift: (from, d) => { const fn = edFile(ed); if (fn) shiftBreakpoints(fn, from, d); } });
+      ed.set(f.text); S.eds.set(name, ed); ed.setBreakpoints(S.bps.get(stem(name)));
+      if (S.debug && S.debug.file === stem(name)) ed.setDebugLine(S.debug.line);
       S.tabs.push({ kind: 'file', name }); i = S.tabs.length - 1;
     }
     activate(i);
@@ -290,6 +305,7 @@
   // ---------- running ----------
   function isFunctionFile(text) { return /^\s*(%[^\n]*\n\s*)*function\b/.test(text); }
   async function runFile() {
+    if (S.debug) return debugCmd('dbcont');
     const n = currentName(); if (!n) return Aero.toast('Open a script to run it — or type commands in the Command Window.');
     if (ext(n) !== 'm') return Aero.toast('Only .m files can be run.');
     const name = stem(n), text = S.files.get(n).text;
@@ -312,6 +328,118 @@
   function runSelection() {
     const n = currentName(); if (!n) return; const t = S.eds.get(n).selection(); if (!t.trim()) return Aero.toast('Select some code first.');
     run(t, { echo: t.length > 200 ? t.slice(0, 200) + '…' : t });
+  }
+
+  // ---------- debugger ----------
+  const edFile = ed => { for (const [n, e] of S.eds) if (e === ed) return ext(n) === 'm' ? n : null; return null; };
+  function dbgJSON() { const bps = {}; S.bps.forEach((m, f) => { bps[f] = [...m]; }); return { bps, err: S.stopOnError }; }
+  function applyDbg(j) { // the engine changed breakpoints (dbstop / dbclear typed as commands)
+    S.bps = new Map(); for (const f in (j.bps || {})) S.bps.set(f, new Map(j.bps[f])); S.stopOnError = !!j.err;
+    renderBreakpoints(); saveLater();
+  }
+  function renderBreakpoints() { S.eds.forEach((ed, n) => ed.setBreakpoints(S.bps.get(stem(n)))); }
+  function syncDbg() {
+    renderBreakpoints(); saveLater();
+    if (S.debug) debugSend('\u0001' + JSON.stringify(dbgJSON()), null);
+    else if (!S.busy && W) W.postMessage({ type: 'dbsync', dbg: dbgJSON() });
+  }
+  function setBreakpoint(file, line, cond) {
+    const n = file + '.m', text = S.files.get(n) ? S.files.get(n).text : '';
+    const at = LabDebug.snapLine(text, line);
+    if (at === null) return Aero.toast(`Line ${line} has no code after it — a breakpoint can't stop there.`);
+    if (!S.bps.has(file)) S.bps.set(file, new Map());
+    S.bps.get(file).set(at, cond || ''); syncDbg(); return at;
+  }
+  function toggleBreakpoint(name, line) {
+    const file = stem(name), m = S.bps.get(file);
+    if (m && m.has(line)) { m.delete(line); if (!m.size) S.bps.delete(file); syncDbg(); return; }
+    setBreakpoint(file, line, '');
+  }
+  async function conditionalBreakpoint(name, line) {
+    const file = stem(name), m = S.bps.get(file), cur = m && m.get(line);
+    const c = await Aero.prompt('Conditional breakpoint', `Stop at line ${line} of ${file}.m only when this is true (leave empty to always stop):`, cur || ''); if (c === null) return;
+    if (c.trim()) { try { LabLang.parse(c); } catch (e) { return Aero.alert('Conditional breakpoint', `“${c}” is not a valid expression: ${e.message}`); } }
+    setBreakpoint(file, line, c.trim());
+  }
+  function breakpointAtCursor(cond) { const n = currentName(); if (!n || ext(n) !== 'm') return Aero.toast('Open a script or function to set breakpoints.'); const l = S.eds.get(n).cursorLine(); cond ? conditionalBreakpoint(n, l) : toggleBreakpoint(n, l); }
+  function shiftBreakpoints(name, from, d) {
+    const file = stem(name), m = S.bps.get(file); if (!m) return;
+    const out = new Map(); m.forEach((c, l) => { if (l <= from) out.set(l, c); else if (d > 0 || l > from - d) out.set(l + d, c); });
+    S.bps.set(file, out); if (!out.size) S.bps.delete(file);
+    clearTimeout(shiftBreakpoints.t); shiftBreakpoints.t = setTimeout(syncDbg, 300);
+  }
+  function clearBreakpoints() { S.bps.clear(); syncDbg(); Aero.toast('All breakpoints cleared.'); }
+  function toggleStopOnError() { S.stopOnError = !S.stopOnError; syncDbg(); Aero.toast(S.stopOnError ? 'The debugger will stop where an uncaught error happens.' : 'Stop on errors is off.'); }
+  // send text to the paused engine (null echo = quiet)
+  function debugSend(text, echo) {
+    if (!S.debug || !ctrl) return;
+    if (echo != null) cwPrint(echo + '\n', 'echo');
+    if (!text) return;
+    if (Atomics.load(ctrl, 1) !== 0) { setTimeout(() => debugSend(text, null), 30); return; }
+    const n = Math.min(text.length, 65535); for (let i = 0; i < n; i++) inbuf[i] = text.charCodeAt(i);
+    Atomics.store(ctrl, 2, n); Atomics.store(ctrl, 1, 1); Atomics.notify(ctrl, 1);
+  }
+  function debugCmd(cmd) { if (!S.debug) return Aero.toast('The debugger is not paused.'); debugSend(cmd, `K>> ${cmd}`); }
+  function enterDebug(m) {
+    flushCw();
+    const first = !S.debug; S.debug = m;
+    if (m.dbg) applyDbg(m.dbg);
+    $('prompt').textContent = 'K>>'; $('cmdwin').querySelector('.cw-line').classList.add('debug'); $('cmdwin').classList.remove('busy');
+    $('cmd').classList.add('debugging'); $('busy').textContent = 'Paused';
+    S.ws = m.workspace || []; renderWs();
+    S.eds.forEach(ed => ed.setDebugLine(null));
+    const n = m.file ? m.file + '.m' : null;
+    if (n && S.files.has(n)) { openTab(n); S.eds.get(n).setDebugLine(m.line); }
+    const where = m.file ? `${m.name !== m.file && m.name !== 'base' ? m.name + ' in ' : ''}${m.file}.m, line ${m.line}` : `the Command Window code, line ${m.line}`;
+    $('st1').textContent = `Paused — ${where}`;
+    $('dbgStack').innerHTML = m.stack.filter(f => f.name !== 'base' || f.src).map((f, i) => `<option value="${i}">${esc(f.name)}${f.src && f.src !== f.name ? ` (${esc(f.src)}.m)` : ''} : ${f.line}</option>`).join('');
+    $('dbgStack').selectedIndex = Math.max(0, m.view);
+    if (first || m.reason) cwPrint(m.reason === 'error' ? `Stopped on the error above — ${where}. Inspect variables, then dbcont or dbquit.\n` : m.reason === 'keyboard' ? '' : `Stopped at ${where}.\n`, 'info');
+    setTimeout(() => cwIn.focus(), 0);
+  }
+  function leaveDebug(resumed) {
+    if (!S.debug) return;
+    S.debug = null; $('prompt').textContent = '>>'; $('cmdwin').querySelector('.cw-line').classList.remove('debug'); $('cmd').classList.remove('debugging');
+    S.eds.forEach(ed => ed.setDebugLine(null));
+    if (resumed) { $('cmdwin').classList.add('busy'); $('busy').textContent = 'Busy'; $('st1').textContent = 'Running…'; }
+  }
+  // Stack dropdown: pick a frame to inspect (dbup / dbdown under the hood)
+  $('dbgStack').addEventListener('change', () => {
+    if (!S.debug) return; const want = $('dbgStack').selectedIndex, cur = S.debug.view, d = want - cur;
+    if (!d) return; const cmd = Array(Math.abs(d)).fill(d > 0 ? 'dbup' : 'dbdown').join('; ');
+    debugSend(cmd, `K>> ${cmd}`);
+  });
+  async function runAndTime() {
+    const n = currentName(); if (!n || ext(n) !== 'm') return Aero.toast('Open a script to profile it.');
+    const name = stem(n); if (!/^[A-Za-z]\w*$/.test(name)) return Aero.alert('Run and time', `“${n}” isn't a valid script name.`);
+    if (isFunctionFile(S.files.get(n).text)) {
+      const m = S.files.get(n).text.match(/function\s+(?:\[[^\]]*\]\s*=\s*|\w+\s*=\s*)?\w+\s*\(([^)]*)\)/), params = m && m[1].trim();
+      let call = name; if (params) { const args = await Aero.prompt('Run and time', `Arguments for ${name}(${params})`, ''); if (args === null) return; call = `${name}(${args})`; }
+      return run(`profile on\n${call}\nprofile viewer`, { echo: `profile on; ${call}; profile viewer` });
+    }
+    return run(`profile on\n${name}\nprofile viewer`, { echo: `profile on; ${name}; profile viewer` });
+  }
+
+  // ---------- profiler report ----------
+  let lastProfile = null;
+  function showProfile(r) {
+    lastProfile = r = r || lastProfile; if (!r) return Aero.toast('No profile yet — use Run → Run and time, or type profile on … profile viewer.');
+    const fmtT = t => t >= 1 ? t.toFixed(3) + ' s' : (t * 1000).toFixed(t < 0.01 ? 3 : 1) + ' ms', maxT = Math.max(1e-12, ...r.functions.map(f => f.total));
+    const rows = r.functions.map((f, i) => `<tr data-fn="${i}"><td title="${esc(f.name)}"><b>${esc(f.name)}</b></td><td class="n">${f.calls}</td><td class="n">${fmtT(f.total)}</td><td class="n">${fmtT(f.self)}</td><td><span class="bar" style="width:${Math.max(1, Math.round(f.total / maxT * 90))}px"></span></td><td class="dim">${esc(f.type)}</td></tr>`).join('');
+    const html = `<div class="prof"><p class="meta">${r.functions.length} function${r.functions.length === 1 ? '' : 's'} · ${fmtT(r.total)} profiled · click a function to see where its time went</p>
+      <div class="tbl"><table><thead><tr><th>Function</th><th>Calls</th><th>Total time</th><th>Self time</th><th>Total time plot</th><th>Type</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="dim">Nothing was profiled.</td></tr>'}</tbody></table></div><div id="profLines"></div></div>`;
+    const d = Aero.dialog({ title: 'Profile summary', instruction: 'Where the time went', html, noCancel: true, ok: 'Close', width: 760 });
+    const box = d.el, lines = box.querySelector('#profLines');
+    const showLines = i => {
+      const f = r.functions[i]; box.querySelectorAll('tr[data-fn]').forEach(tr => tr.classList.toggle('sel', +tr.dataset.fn === i));
+      const L = r.lines[f.file] || [], file = S.files.get(f.file + '.m'), src = file && typeof file.text === 'string' ? file.text.split('\n') : [];
+      if (!f.file || !L.length) { lines.innerHTML = `<h4>${esc(f.name)}</h4><p class="meta">${f.type === 'built-in' ? 'A built-in function — no line data.' : 'No line data.'}</p>`; return; }
+      const hot = L.slice().sort((a, b) => b[2] - a[2] || b[1] - a[1]).slice(0, 12), tmax = Math.max(1e-12, ...hot.map(x => x[2]));
+      lines.innerHTML = `<h4>Busiest lines in ${esc(f.file)}.m</h4><div class="tbl"><table><thead><tr><th>Line</th><th>Code</th><th>Calls</th><th>Time</th><th></th></tr></thead><tbody>${hot.map(([l, c, t]) => `<tr data-go="${l}"><td class="n">${l}</td><td class="code">${esc((src[l - 1] || '').trim().slice(0, 70))}</td><td class="n">${c}</td><td class="n">${fmtT(t)}</td><td><span class="bar" style="width:${Math.max(1, Math.round(t / tmax * 70))}px"></span></td></tr>`).join('')}</tbody></table></div>`;
+      lines.querySelectorAll('tr[data-go]').forEach(tr => { tr.style.cursor = 'pointer'; tr.title = 'Double-click to open the line in the editor'; tr.ondblclick = () => { const nm = f.file + '.m'; if (S.files.has(nm)) { d.close ? d.close() : null; openTab(nm); S.eds.get(nm).gotoLine(+tr.dataset.go); } }; });
+    };
+    box.querySelectorAll('tr[data-fn]').forEach(tr => { tr.onclick = () => showLines(+tr.dataset.fn); });
+    const firstUser = r.functions.findIndex(f => f.type !== 'built-in'); if (r.functions.length) showLines(firstUser >= 0 ? firstUser : 0);
   }
 
   // ---------- workspace ----------
@@ -493,7 +621,7 @@
     q.oninput = () => { l.innerHTML = list(q.value.trim().toLowerCase()); }; setTimeout(() => q.focus(), 50);
     l.ondblclick = e => { const it = e.target.closest('[data-fn]'); if (it) { cwIn.value += it.dataset.fn + '('; autosize(); cwIn.focus(); } };
   }
-  const SHORTCUTS = 'F5 — run the script · Ctrl+Enter — run the current %% section (Ctrl+Shift+Enter: and advance)\nF9 — run the selected code · Ctrl+Break or Ctrl+C in the Command Window — stop\nCtrl+N / Ctrl+O / Ctrl+S — new, open, save · Ctrl+W — close tab\nCtrl+R / Ctrl+T — comment / uncomment · Ctrl+/ — toggle comment · Tab / Shift+Tab — indent\nCtrl+F, F3 — find · Ctrl+G — go to line\nCommand Window: ↑/↓ — history (filtered by what you typed) · Tab — complete · Esc — clear · Shift+Enter — new line\nFigures: drag a 3-D plot to rotate · drag a 2-D plot to pan · wheel to zoom · double-click to reset';
+  const SHORTCUTS = 'F5 — run the script · Ctrl+Enter — run the current %% section (Ctrl+Shift+Enter: and advance)\nF9 — run the selected code · Ctrl+Break or Ctrl+C in the Command Window — stop\nCtrl+N / Ctrl+O / Ctrl+S — new, open, save · Ctrl+W — close tab\nCtrl+R / Ctrl+T — comment / uncomment · Ctrl+/ — toggle comment · Tab / Shift+Tab — indent\nCtrl+F, F3 — find · Ctrl+G — go to line\nDebugging: click a line number or F12 — breakpoint · Shift+click or Shift+F12 — conditional breakpoint\nWhile paused (K>>): F5 — continue · F10 — step · F11 — step in · Shift+F11 — step out · Shift+F5 — quit debugging\nCommand Window: ↑/↓ — history (filtered by what you typed) · Tab — complete · Esc — clear · Shift+Enter — new line\nFigures: drag a 3-D plot to rotate · drag a 2-D plot to pan · wheel to zoom · double-click to reset';
 
   // ---------- find ----------
   let lastFind = '';
@@ -512,12 +640,16 @@
 
   // ---------- autosave ----------
   let saveT = 0;
-  function saveLater() { clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem(AUTOSAVE, JSON.stringify({ v: 1, files: [...S.files].map(([k, f]) => [k, f.text, f.saved, f.path]), tabs: S.tabs, active: S.active, hist: S.hist.slice(-200), font: S.fontSize, layout: { left: work.style.getPropertyValue('--left-w'), fig: work.style.getPropertyValue('--fig-w'), cmd: $('center').style.getPropertyValue('--cmd-h'), files: $('left').style.getPropertyValue('--files-h') } })); } catch (e) { } }, 500); }
+  function saveLater() { clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem(AUTOSAVE, JSON.stringify({ v: 1, files: [...S.files].map(([k, f]) => [k, f.text, f.saved, f.path]), tabs: S.tabs, active: S.active, hist: S.hist.slice(-200), font: S.fontSize, dbg: dbgJSON(), layout: { left: work.style.getPropertyValue('--left-w'), fig: work.style.getPropertyValue('--fig-w'), cmd: $('center').style.getPropertyValue('--cmd-h'), files: $('left').style.getPropertyValue('--files-h') } })); } catch (e) { } }, 500); }
   function restore() {
     let st = null; try { st = JSON.parse(localStorage.getItem(AUTOSAVE) || 'null'); } catch (e) { }
     if (!st || !st.files) return false;
     st.files.forEach(([k, text, saved, path]) => S.files.set(k, { text, saved: saved ?? text, path: path || null }));
-    S.hist = st.hist || []; if (st.font) { S.fontSize = st.font; document.documentElement.style.setProperty('--code-size', S.fontSize + 'px'); }
+    S.hist = st.hist || [];
+    if (st.dbg && typeof st.dbg === 'object') { // validate: names, positive integer lines, string conditions
+      for (const f in (st.dbg.bps || {})) { if (!/^[A-Za-z]\w*$/.test(f) || !Array.isArray(st.dbg.bps[f])) continue; const m = new Map(st.dbg.bps[f].filter(e => Array.isArray(e) && Number.isInteger(e[0]) && e[0] > 0).map(e => [e[0], typeof e[1] === 'string' ? e[1] : ''])); if (m.size) S.bps.set(f, m); }
+      S.stopOnError = !!st.dbg.err;
+    } if (st.font) { S.fontSize = st.font; document.documentElement.style.setProperty('--code-size', S.fontSize + 'px'); }
     const L = st.layout || {}; if (L.left) work.style.setProperty('--left-w', L.left); if (L.fig) work.style.setProperty('--fig-w', L.fig); if (L.cmd) $('center').style.setProperty('--cmd-h', L.cmd); if (L.files) $('left').style.setProperty('--files-h', L.files);
     renderFiles();
     (st.tabs || []).forEach(t => { if (t.kind === 'file' && S.files.has(t.name)) openTab(t.name); else if (t.kind === 'var') S.tabs.push(t); });
@@ -527,6 +659,7 @@
 
   // ---------- wiring ----------
   $('bRun').onclick = runFile; $('bSection').onclick = () => runSection(false); $('bStop').onclick = stop;
+  $('bCont').onclick = () => debugCmd('dbcont'); $('bStep').onclick = () => debugCmd('dbstep'); $('bStepIn').onclick = () => debugCmd('dbstep in'); $('bStepOut').onclick = () => debugCmd('dbstep out'); $('bQuit').onclick = () => debugCmd('dbquit');
   $('bNew').onclick = () => newScript(false); $('bOpen').onclick = openDialog; $('bSave').onclick = () => save(false); $('bImport').onclick = importData;
   $('bClearWs').onclick = () => run('clear', { echo: 'clear' }); $('bCloseFigs').onclick = () => closeFigure(true);
   $('fNew').onclick = () => newScript(false); $('fFunc').onclick = () => newScript(true); $('fRename').onclick = renameFile; $('fDel').onclick = deleteFile;
@@ -537,8 +670,12 @@
     if (document.querySelector('.aero-modal:not(.aero-busy)')) return;
     // F-keys outside text fields come from the menu shortcuts; inside the Command Window handle them here
     const typing = e.target.matches && e.target.matches('input,textarea');
-    if (!typing && /^F\d$/.test(e.key)) return;
-    if (e.key === 'F5') { e.preventDefault(); runFile(); }
+    if (!typing && /^F\d+$/.test(e.key)) return;
+    if (e.key === 'F5' && e.shiftKey) { e.preventDefault(); debugCmd('dbquit'); }
+    else if (e.key === 'F5') { e.preventDefault(); runFile(); }
+    else if (e.key === 'F10') { e.preventDefault(); debugCmd('dbstep'); }
+    else if (e.key === 'F11') { e.preventDefault(); debugCmd(e.shiftKey ? 'dbstep out' : 'dbstep in'); }
+    else if (e.key === 'F12') { e.preventDefault(); breakpointAtCursor(e.shiftKey); }
     else if (e.key === 'F9') { e.preventDefault(); runSelection(); }
     else if (e.key === 'F3') { e.preventDefault(); findNext(e.shiftKey); }
     else if (e.key === 'Pause' || e.key === 'Cancel') { e.preventDefault(); stop(); }
@@ -557,12 +694,18 @@
         { label: 'Comment', key: 'Ctrl+R', fn: () => { const n = currentName(); n && S.eds.get(n).comment(true); } }, { label: 'Uncomment', key: 'Ctrl+T', fn: () => { const n = currentName(); n && S.eds.get(n).comment(false); } }, '-',
         ['Clear Command Window', '', () => { $('cwOut').innerHTML = ''; }], ['Clear workspace', '', () => run('clear', { echo: 'clear' })], ['Clear command history', '', () => { S.hist = []; saveLater(); Aero.toast('History cleared.'); }]],
       Run: [['Run script', 'F5', runFile], ['Run section', 'Ctrl+Enter', () => runSection(false)], ['Run section and advance', 'Ctrl+Shift+Enter', () => runSection(true)], ['Run selection', 'F9', runSelection], '-',
-        ['Stop', 'Ctrl+Pause', stop], ['Restart engine (clears the workspace)', '', () => restartWorker('Engine restarted. The workspace was cleared.')]],
+        ['Stop', 'Ctrl+Pause', stop], ['Restart engine (clears the workspace)', '', () => restartWorker('Engine restarted. The workspace was cleared.')], '-', '#Profiler',
+        ['Run and time', '', runAndTime], ['Show last profile report', '', () => showProfile()]],
+      Debug: [{ label: 'Continue', key: 'F5', fn: () => debugCmd('dbcont'), noShortcut: true, disabled: () => !S.debug }, { label: 'Step', key: 'F10', fn: () => debugCmd('dbstep'), disabled: () => !S.debug },
+        { label: 'Step in', key: 'F11', fn: () => debugCmd('dbstep in'), disabled: () => !S.debug }, { label: 'Step out', key: 'Shift+F11', fn: () => debugCmd('dbstep out'), disabled: () => !S.debug },
+        { label: 'Quit debugging', key: 'Shift+F5', fn: () => debugCmd('dbquit'), disabled: () => !S.debug }, '-', '#Breakpoints',
+        ['Set / clear breakpoint', 'F12', () => breakpointAtCursor(false)], ['Set conditional breakpoint…', 'Shift+F12', () => breakpointAtCursor(true)], ['Clear all breakpoints', '', clearBreakpoints],
+        { label: 'Stop on errors', checked: () => S.stopOnError, fn: toggleStopOnError }, ['List breakpoints', '', () => { const r = []; S.bps.forEach((m, f) => [...m].sort((a, b) => a[0] - b[0]).forEach(([l, c]) => r.push(`${f}.m, line ${l}${c ? ` — if ${c}` : ''}`))); if (S.stopOnError) r.push('Stop on errors'); Aero.alert('Breakpoints', r.join('\n') || 'No breakpoints are set. Click a line number in the editor (or press F12) to add one.'); }]],
       View: [['Larger text', 'Ctrl+=', () => zoom(1)], ['Smaller text', 'Ctrl+-', () => zoom(-1)], ['Default text size', 'Ctrl+0', () => zoom(0)], '-',
         { label: 'Long number format', checked: () => /long/.test($('st4').textContent), fn: () => run(/long/.test($('st4').textContent) ? 'format short' : 'format long') }, '-',
         ['Reset figure view', '', resetView], ['Close all figures', '', () => closeFigure(true)], '-', ['Focus Command Window', 'Ctrl+Shift+C', () => cwIn.focus()], ['Focus editor', 'Ctrl+Shift+E', () => { const n = currentName(); n && S.eds.get(n).focus(); }]],
       Help: [['Function reference', 'F1', functionBrowser], ['Keyboard shortcuts', '', () => Aero.alert('Keyboard shortcuts', SHORTCUTS)],
-        ['About Lumen Lab', '', () => Aero.alert('About Lumen Lab', 'Lumen Lab 1.0 — free numeric computing in the spirit of MATLAB.\n\nA MATLAB-compatible language (matrices, indexing with end and logical masks, element-wise and matrix operators, if/for/while/switch/try, functions in .m files and anonymous functions), linear algebra (inv, det, \\, eig, svd, qr, lu, chol), statistics, FFT, polynomials, interpolation, ode45/ode23, fzero, fminsearch, integral and 2-D/3-D plotting.\n\nEverything runs on your computer; nothing is sent anywhere.')]],
+        ['About Lumen Lab', '', () => Aero.alert('About Lumen Lab', 'Lumen Lab 1.2 — free numeric computing in the spirit of MATLAB.\n\nA MATLAB-compatible language (matrices, indexing with end and logical masks, element-wise and matrix operators, if/for/while/switch/try, functions in .m files and anonymous functions), linear algebra (inv, det, \\, eig, svd, qr, lu, chol), statistics, FFT, polynomials, interpolation, ode45/ode23, fzero, fminsearch, integral and 2-D/3-D plotting.\n\nNew in 1.2: a debugger (breakpoints, conditional breakpoints, stop on errors, stepping, K>> prompt), a profiler, linprog / intlinprog / quadprog / fmincon, and periodogram / pwelch / spectrogram.\n\nEverything runs on your computer; nothing is sent anywhere.')]],
     },
   });
 
@@ -570,7 +713,7 @@
   renderTabs(); renderFiles(); renderWs(); renderFigs();
   startWorker();
   const restored = restore();
-  cwPrint('Lumen Lab 1.0 — type commands here, e.g.  A = magic(4), plot(sin(0:0.1:10)) or help.\n', 'info');
+  cwPrint('Lumen Lab 1.2 — type commands here, e.g.  A = magic(4), plot(sin(0:0.1:10)) or help.\n', 'info');
   if (!restored) loadSample();
   ready.then(() => { $('st1').textContent = 'Ready'; $('st4').textContent = 'format short · 0 variables'; if (!sab) cwPrint('Note: Stop and input() need a cross-origin isolated page; here Stop restarts the engine.\n', 'warn'); });
   setTimeout(() => cwIn.focus(), 100);

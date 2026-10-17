@@ -108,8 +108,11 @@
   }
 
   /* ---------- values & math ---------- */
-  class Fn { constructor(f) { this.f = f; } }          // callable built-in
+  class Fn { constructor(f, members) { this.f = f; if (members) this.m = new Map(Object.entries(members)); } }   // callable built-in (optionally with members)
   class NS { constructor(map) { this.m = new Map(Object.entries(map)); } }   // namespace (Math, thisComp…)
+  class Lazy { constructor(f) { this.f = f; } }        // namespace member computed when it is read
+  class Prop { constructor(get, at) { this.get = get; this.at = at; } }   // reference to another property (value, valueAtTime, velocity)
+  const V = x => x instanceof Prop ? x.get() : x;
   const isArr = Array.isArray;
   function num(v) { if (typeof v === 'number') return v; if (typeof v === 'boolean') return +v; if (isArr(v)) return num(v[0]); throw new TypeError('Expected a number'); }
   function vecOp(a, b, f, name) {
@@ -161,6 +164,54 @@
   /* ---------- evaluation ----------
      ctx: { value, time, fps, seed, layerIndex, inPoint, outPoint, comp:{width,height,duration,fps}, valueAtTime(t), loop(type,dir,n) } */
   class Restart { constructor(t) { this.t = t; } }
+  const SOFT = new Set(['transform', 'effect', 'position', 'scale', 'rotation', 'opacity', 'anchorPoint', 'marker', 'toComp', 'fromComp']);
+  const TR_NAMES = { anchorPoint: 'anchor', position: 'position', scale: 'scale', rotation: 'rotation', zRotation: 'rotation', opacity: 'opacity', zPosition: 'posZ', xRotation: 'rotX', yRotation: 'rotY' };
+  const lc = s => String(s).trim().toLowerCase();
+  // read-only references to other layers, their properties and effects, and markers of the same composition
+  function refScope(ctx) {
+    const C = ctx.compObj, depth = (ctx.depth || 0) + 1, cache = new Map();
+    const prop = p => new Prop(() => LM.val(p, ctx.time, depth), t => LM.val(p, t, depth));
+    const markers = (list, off) => {
+      const ms = (isArr(list) ? list : []).slice().sort((a, b) => a.t - b.t);
+      const key = i => { i = Math.round(num(i)); const m = ms[i - 1]; if (!m) throw new RangeError(`Marker ${i} does not exist`); return new NS({ time: m.t + off, index: i, comment: m.name || '', name: m.name || '', duration: m.dur || 0 }); };
+      return new NS({ numKeys: ms.length, key: new Fn(key), nearestKey: new Fn(t => { if (!ms.length) throw new RangeError('There are no markers'); t = num(t); let bi = 0; ms.forEach((m, i) => { if (Math.abs(m.t + off - t) < Math.abs(ms[bi].t + off - t)) bi = i; }); return key(bi + 1); }) });
+    };
+    function effectFn(L) {
+      return new Fn(sel => {
+        let fx;
+        if (typeof sel === 'number') fx = L.effects[Math.round(sel) - 1];
+        else { const s = lc(sel); fx = L.effects.find(f => lc(f.name || LM.FX[f.type].name) === s) || L.effects.find(f => lc(LM.FX[f.type].name) === s); }
+        if (!fx) throw new ReferenceError(`Effect ${typeof sel === 'number' ? sel : '“' + sel + '”'} not found on “${L.name}”`);
+        const D = LM.FX[fx.type], params = D.params.filter(q => !q.static);
+        return new Fn(ps => {
+          const q = typeof ps === 'number' ? params[Math.round(ps) - 1] : params.find(q => lc(q.label) === lc(ps) || lc(q.k) === lc(ps));
+          if (!q) throw new ReferenceError(`“${fx.name || D.name}” has no parameter ${typeof ps === 'number' ? ps : '“' + ps + '”'}`);
+          return prop(fx.p[q.k]);
+        }, { name: fx.name || D.name, active: !!fx.on });
+      });
+    }
+    const M2 = p => { if (!isArr(p) || p.length < 2) throw new TypeError('Expected a point [x, y]'); return [num(p[0]), num(p[1])]; };
+    function layerNS(L) {
+      if (cache.has(L)) return cache.get(L);
+      const tr = L.tr, T = {}; Object.entries(TR_NAMES).forEach(([k, id]) => { if (tr[id]) T[k] = new Lazy(() => prop(tr[id])); });
+      const mat = () => LM.layerMatrix(L, ctx.time, C);
+      const ns = new NS(Object.assign({
+        name: L.name, index: C.layers.indexOf(L) + 1, inPoint: L.in, outPoint: L.out, startTime: L.start, hasParent: !!L.parent,
+        parent: new Lazy(() => { const P = L.parent && C.layers.find(x => x.id === L.parent); if (!P) throw new ReferenceError(`“${L.name}” has no parent`); return layerNS(P); }),
+        transform: new NS(T), effect: effectFn(L), marker: new Lazy(() => markers(L.markers, L.start)),
+        toComp: new Fn(p => { const q = M2(p); return LM.M.apply(mat(), q[0], q[1]); }),
+        fromComp: new Fn(p => { const q = M2(p); return LM.M.apply(LM.M.inv(mat()), q[0], q[1]); }),
+      }, T));
+      cache.set(L, ns); return ns;
+    }
+    const layerBy = sel => {
+      if (!C) throw new ReferenceError('No composition');
+      const L = typeof sel === 'number' ? C.layers[Math.round(sel) - 1] : C.layers.find(l => l.name === String(sel)) || C.layers.find(l => lc(l.name) === lc(sel));
+      if (!L) throw new ReferenceError(`Layer ${typeof sel === 'number' ? sel : '“' + sel + '”'} not found`);
+      return layerNS(L);
+    };
+    return { layerNS, layerBy, markers };
+  }
   function makeScope(ctx) {
     let rngState = ctx.seed >>> 0;
     const rnd = () => { rngState = (rngState + 0x6D2B79F5) >>> 0; let t = rngState; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -171,11 +222,13 @@
       const w = d => { let s = 0, a = 1, f = 1, norm = 0; for (let o = 0; o < oct; o++) { s += vnoise(ctx.seed + d * 131 + o * 17, t * freq * f + d * 3.7) * a; norm += a; a *= mult; f *= 2; } return s / (oct > 1 ? norm : 1) * amp; };
       const v = ctx.value; return isArr(v) ? v.map((x, d) => x + w(d)) : num(v) + w(0);
     };
+    const C = ctx.compObj, Lr = ctx.layer, refs = refScope(ctx);
     const B = {
       Math: MATH,
       time: ctx.time, value: ctx.value, index: ctx.layerIndex, inPoint: ctx.inPoint, outPoint: ctx.outPoint,
-      thisComp: new NS({ width: ctx.comp.width, height: ctx.comp.height, duration: ctx.comp.duration, frameDuration: 1 / ctx.fps, fps: ctx.fps, numLayers: ctx.comp.numLayers }),
-      thisLayer: new NS({ index: ctx.layerIndex, inPoint: ctx.inPoint, outPoint: ctx.outPoint, name: ctx.layerName || '' }),
+      thisComp: new NS({ width: ctx.comp.width, height: ctx.comp.height, duration: ctx.comp.duration, frameDuration: 1 / ctx.fps, fps: ctx.fps, numLayers: ctx.comp.numLayers,
+        layer: new Fn(refs.layerBy), marker: new Lazy(() => refs.markers(C && C.markers, 0)) }),
+      thisLayer: Lr && C ? refs.layerNS(Lr) : new NS({ index: ctx.layerIndex, inPoint: ctx.inPoint, outPoint: ctx.outPoint, name: ctx.layerName || '' }),
       wiggle: new Fn(wiggle),
       loopOut: new Fn((type = 'cycle', n = 0) => ctx.loop(String(type), 'out', num(n))),
       loopIn: new Fn((type = 'cycle', n = 0) => ctx.loop(String(type), 'in', num(n))),
@@ -194,39 +247,51 @@
       dot: new Fn((a, b) => a.reduce((s, x, i) => s + x * (b[i] ?? 0), 0)),
       Number: new Fn(x => +x), parseFloat: new Fn(x => parseFloat(x)), isNaN: new Fn(x => Number.isNaN(+x)),
     };
+    // layer-scope shorthands as in After Effects (transform.position, effect("Slider Control")("Slider"), marker…); a var may shadow them
+    if (Lr && C) { const me = B.thisLayer; SOFT.forEach(k => { if (me.m.has(k)) B[k] = me.m.get(k); }); }
     return B;
   }
   const MAX_STEPS = 20000;
   function run(ast, ctx) {
     const builtins = makeScope(ctx), locals = new Map();
     let steps = 0, last;
-    const look = n => { if (locals.has(n)) return locals.get(n); if (Object.prototype.hasOwnProperty.call(builtins, n)) return builtins[n]; throw new ReferenceError(`${n} is not defined`); };
+    const look = n => { if (locals.has(n)) return locals.get(n); if (Object.prototype.hasOwnProperty.call(builtins, n)) { const b = builtins[n]; return b instanceof Lazy ? b.f() : b; } throw new ReferenceError(`${n} is not defined`); };
+    const evv = n => V(ev(n));
     function ev(n) {
       if (++steps > MAX_STEPS) throw new Error('Expression too complex');
       switch (n.k) {
         case 'num': case 'str': return n.v;
         case 'id': return look(n.name);
-        case 'arr': return n.items.map(i => { const v = ev(i); if (isArr(v)) throw new TypeError('Nested arrays are not supported'); return v; });
-        case 'un': { const v = ev(n.e); if (n.op === '!') return !truthy(v); if (n.op === '-') return isArr(v) ? v.map(x => -x) : -num(v); return isArr(v) ? v : +num(v); }
+        case 'arr': return n.items.map(i => { const v = evv(i); if (isArr(v)) throw new TypeError('Nested arrays are not supported'); if (!(typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string')) throw new TypeError('Arrays can only hold numbers'); return v; });
+        case 'un': { const v = evv(n.e); if (n.op === '!') return !truthy(v); if (n.op === '-') return isArr(v) ? v.map(x => -x) : -num(v); return isArr(v) ? v : +num(v); }
         case 'bin': {
-          if (n.op === '&&') { const a = ev(n.l); return truthy(a) ? ev(n.r) : a; }
-          if (n.op === '||') { const a = ev(n.l); return truthy(a) ? a : ev(n.r); }
-          return binop(n.op, ev(n.l), ev(n.r));
+          if (n.op === '&&') { const a = evv(n.l); return truthy(a) ? evv(n.r) : a; }
+          if (n.op === '||') { const a = evv(n.l); return truthy(a) ? a : evv(n.r); }
+          return binop(n.op, evv(n.l), evv(n.r));
         }
-        case 'cond': return truthy(ev(n.test)) ? ev(n.a) : ev(n.b);
+        case 'cond': return truthy(evv(n.test)) ? ev(n.a) : ev(n.b);
         case 'mem': {
-          const o = ev(n.o);
-          if (o instanceof NS) { if (!o.m.has(n.name)) throw new ReferenceError(`${n.name} is not available`); return o.m.get(n.name); }
+          let o = ev(n.o);
+          if (o instanceof NS || (o instanceof Fn && o.m)) { if (!o.m.has(n.name)) throw new ReferenceError(`${n.name} is not available`); const v = o.m.get(n.name); return v instanceof Lazy ? v.f() : v; }
+          if (o instanceof Prop) {
+            if (n.name === 'value') return o.get();
+            if (n.name === 'valueAtTime') return new Fn(t => o.at(num(t)));
+            const vel = t => { const h = 1 / (ctx.fps * 4); return binop('/', binop('-', o.at(t + h), o.at(t - h)), 2 * h); };
+            if (n.name === 'velocity') return vel(ctx.time);
+            if (n.name === 'speed') { const d = vel(ctx.time); return isArr(d) ? Math.hypot(...d) : Math.abs(num(d)); }
+            if (n.name === 'velocityAtTime') return new Fn(t => vel(num(t)));
+            o = o.get();
+          }
           if ((isArr(o) || typeof o === 'string') && n.name === 'length') return o.length;
           if (isArr(o) && (n.name === 'x' || n.name === 'y')) return o[n.name === 'x' ? 0 : 1];
           throw new ReferenceError(`.${n.name} is not available`);
         }
-        case 'idx': { const o = ev(n.o), i = num(ev(n.i)); if (isArr(o) || typeof o === 'string') { const v = o[Math.floor(i)]; if (v === undefined) throw new RangeError('Index out of range'); return v; } throw new TypeError('Only arrays can be indexed'); }
+        case 'idx': { const o = evv(n.o), i = num(evv(n.i)); if (isArr(o) || typeof o === 'string') { const v = o[Math.floor(i)]; if (v === undefined) throw new RangeError('Index out of range'); return v; } throw new TypeError('Only arrays can be indexed'); }
         case 'call': {
           const f = ev(n.f);
           if (!(f instanceof Fn)) throw new TypeError('Not a function');
-          const r = f.f(...n.args.map(ev));
-          if (typeof r === 'number' || typeof r === 'boolean' || typeof r === 'string' || isArr(r)) return r;
+          const r = f.f(...n.args.map(evv));
+          if (typeof r === 'number' || typeof r === 'boolean' || typeof r === 'string' || isArr(r) || r instanceof NS || r instanceof Fn || r instanceof Prop) return r;
           if (r === undefined) return 0;
           throw new TypeError('Invalid result');
         }
@@ -235,20 +300,20 @@
     }
     function exec(s) {
       switch (s.k) {
-        case 'var': s.decls.forEach(d => { if (Object.prototype.hasOwnProperty.call(builtins, d.name) && d.name !== 'value') throw new SyntaxError(`Cannot redefine ${d.name}`); locals.set(d.name, d.init ? ev(d.init) : 0); }); last = undefined; return;
+        case 'var': s.decls.forEach(d => { if (Object.prototype.hasOwnProperty.call(builtins, d.name) && d.name !== 'value' && !SOFT.has(d.name)) throw new SyntaxError(`Cannot redefine ${d.name}`); locals.set(d.name, d.init ? ev(d.init) : 0); }); last = undefined; return;
         case 'assign': {
           let v = ev(s.value);
-          if (s.op !== '=') v = binop(s.op[0], look(s.name), v);
-          if (!locals.has(s.name)) { if (s.name === 'value' || !Object.prototype.hasOwnProperty.call(builtins, s.name)) { locals.set(s.name, v); last = v; return; } throw new SyntaxError(`Cannot assign to ${s.name}`); }
+          if (s.op !== '=') v = binop(s.op[0], V(look(s.name)), V(v));
+          if (!locals.has(s.name)) { if (s.name === 'value' || SOFT.has(s.name) || !Object.prototype.hasOwnProperty.call(builtins, s.name)) { locals.set(s.name, v); last = v; return; } throw new SyntaxError(`Cannot assign to ${s.name}`); }
           locals.set(s.name, v); last = v; return;
         }
-        case 'if': { if (truthy(ev(s.test))) exec(s.cons); else if (s.alt) exec(s.alt); return; }
+        case 'if': { if (truthy(evv(s.test))) exec(s.cons); else if (s.alt) exec(s.alt); return; }
         case 'block': s.body.forEach(exec); return;
         case 'expr': last = ev(s.e); return;
       }
     }
     ast.body.forEach(exec);
-    return last;
+    return V(last);
   }
 
   const cache = new Map();

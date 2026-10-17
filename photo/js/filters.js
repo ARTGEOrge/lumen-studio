@@ -50,14 +50,133 @@ const lutRGB = (s, lr, lg, lb) => pixels(s, d => { for (let i = 0; i < d.length;
 const pct = v => Math.round(v) + '%';
 const IDENT = Uint8ClampedArray.from({ length: 256 }, (_, i) => i);
 
+/* ---------- Levels / Curves presets & graphs, Gradient Map stops ---------- */
+const LEVELS_PRESETS = {
+  default: { lo: 0, g: 1, hi: 255, olo: 0, ohi: 255 }, darker: { lo: 15, g: 0.7, hi: 255, olo: 0, ohi: 255 }, lighter: { lo: 0, g: 1.4, hi: 235, olo: 0, ohi: 255 },
+  contrast1: { lo: 10, g: 1, hi: 245, olo: 0, ohi: 255 }, contrast2: { lo: 20, g: 1, hi: 235, olo: 0, ohi: 255 }, contrast3: { lo: 30, g: 1, hi: 225, olo: 0, ohi: 255 },
+  shadows: { lo: 0, g: 1.6, hi: 255, olo: 0, ohi: 255 }, midbright: { lo: 0, g: 1.25, hi: 255, olo: 0, ohi: 255 }, middark: { lo: 0, g: 0.8, hi: 255, olo: 0, ohi: 255 },
+  matte: { lo: 0, g: 1, hi: 255, olo: 28, ohi: 240 }
+};
+const LEVELS_PRESET_OPTS = [['custom', 'Custom'], ['auto', 'Auto (clip 0.1%)'], ['default', 'Default'], ['darker', 'Darker'], ['lighter', 'Lighter'], ['contrast1', 'Increase Contrast 1'], ['contrast2', 'Increase Contrast 2'], ['contrast3', 'Increase Contrast 3'], ['shadows', 'Lighten Shadows'], ['midbright', 'Midtones Brighter'], ['middark', 'Midtones Darker'], ['matte', 'Matte (faded)']];
+const CURVES_PRESETS = {
+  linear: { b0: 0, p1: 64, p2: 128, p3: 192, w0: 255 }, medium: { b0: 0, p1: 56, p2: 128, p3: 200, w0: 255 }, strong: { b0: 0, p1: 44, p2: 128, p3: 212, w0: 255 },
+  lighter: { b0: 0, p1: 88, p2: 160, p3: 220, w0: 255 }, darker: { b0: 0, p1: 40, p2: 96, p3: 164, w0: 255 }, matte: { b0: 34, p1: 76, p2: 130, p3: 190, w0: 238 },
+  highkey: { b0: 18, p1: 100, p2: 172, p3: 226, w0: 255 }, lowkey: { b0: 0, p1: 34, p2: 88, p3: 160, w0: 236 }, sshadow: { b0: 0, p1: 84, p2: 140, p3: 196, w0: 255 }
+};
+const CURVES_PRESET_OPTS = [['custom', 'Custom'], ['auto', 'Auto (clip 0.1%)'], ['linear', 'Default (linear)'], ['medium', 'Medium Contrast'], ['strong', 'Strong Contrast'], ['lighter', 'Lighter'], ['darker', 'Darker'], ['sshadow', 'Lift Shadows'], ['matte', 'Matte Film'], ['highkey', 'High Key'], ['lowkey', 'Low Key']];
+let adjSrc = null, adjGraph = null;   // source canvas of the open Levels/Curves dialog (for Auto and the histogram)
+// Luminance (or one channel) histogram of a canvas, sampled on at most ~512×512 pixels; skips transparent pixels
+function histogramOf(src, ch = 'rgb') {
+  const h = new Uint32Array(256); if (!src) return h;
+  const s = Math.min(1, 512 / Math.max(src.width, src.height)), w = Math.max(1, Math.round(src.width * s)), hh = Math.max(1, Math.round(src.height * s));
+  const t = mk(w, hh), c = cx(t); c.drawImage(src, 0, 0, w, hh);
+  const d = c.getImageData(0, 0, w, hh).data, k = { r: 0, g: 1, b: 2 }[ch];
+  for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 8) h[k == null ? Math.round(.299 * d[i] + .587 * d[i + 1] + .114 * d[i + 2]) : d[i + k]]++;
+  return h;
+}
+function autoRange(hist, clip = 0.001) {
+  const tot = hist.reduce((a, b) => a + b, 0); if (!tot) return [0, 255];
+  let lo = 0, hi = 255, acc = 0;
+  for (; lo < 255; lo++) { acc += hist[lo]; if (acc > tot * clip) break; }
+  acc = 0; for (; hi > 0; hi--) { acc += hist[hi]; if (acc > tot * clip) break; }
+  return hi - lo < 8 ? [0, 255] : [lo, hi];
+}
+function presetInput(key, v, set, presets, keys) {
+  if (key === 'preset') {
+    if (v.preset === 'auto') {
+      const [lo, hi] = autoRange(histogramOf(adjSrc, v.ch || 'rgb'));
+      if (keys[0] === 'lo') { set('lo', lo); set('hi', hi); set('g', 1); set('olo', 0); set('ohi', 255); }
+      else setCurveStretch(set, lo, hi);
+    } else if (presets[v.preset]) Object.entries(presets[v.preset]).forEach(([k, x]) => set(k, x));
+  } else if (keys.includes(key) && v.preset !== 'custom') set('preset', 'custom');
+}
+// Curves points sit at fixed inputs 0/64/128/192/255: express a lo..hi linear stretch on them
+function setCurveStretch(set, lo, hi) {
+  const f = x => clamp(Math.round((x - lo) * 255 / Math.max(1, hi - lo)), 0, 255);
+  set('b0', clamp(f(0), 0, 128)); set('p1', f(64)); set('p2', f(128)); set('p3', f(192)); set('w0', clamp(f(255), 128, 255));
+}
+function graphCanvas(box, cls, w, h) {
+  const cv = mk(w * 2, h * 2); cv.className = 'adjgraph ' + cls; cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  box.insertBefore(cv, box.querySelector('.btns')); return cv;
+}
+function drawHist(c, hist, x0, W, H, color) {   // bars over [x0, x0 + W], baseline at y = H
+  const mx = Math.max(1, Array.from(hist).sort((a, b) => b - a)[2] || 0);   // ignore the 2 tallest spikes when scaling
+  c.fillStyle = color;
+  for (let i = 0; i < 256; i++) { const v = Math.min(1, hist[i] / mx) * H * 0.92; c.fillRect(x0 + i / 256 * W, H - v, W / 256 + 0.6, v); }
+}
+function curvesGraph(box, set, v0, src) {
+  const W = 512, H = 512, P = 12, cv = graphCanvas(box, 'curves', 256, 256), c = cx(cv), X = [0, 64, 128, 192, 255], K = ['b0', 'p1', 'p2', 'p3', 'w0'];
+  const gx = x => P + x / 255 * (W - 2 * P), gy = y => H - P - y / 255 * (H - 2 * P);
+  cv.title = 'Drag a point up or down';
+  let cur = { ...v0 }, hist = null, histCh = null, drag = -1;
+  const pts = () => K.map((k, i) => ({ x: X[i], y: cur[k] }));
+  const redraw = v => {
+    if (v) cur = { ...v };
+    if (histCh !== cur.ch) { hist = histogramOf(src, cur.ch); histCh = cur.ch; }
+    c.fillStyle = '#fbfdff'; c.fillRect(0, 0, W, H);
+    drawHist(c, hist, P, W - 2 * P, H - P, '#d6dee8');
+    c.strokeStyle = '#c3cfdc'; c.lineWidth = 1; c.beginPath(); for (let i = 0; i <= 4; i++) { const t = i * 255 / 4; c.moveTo(gx(t), gy(0)); c.lineTo(gx(t), gy(255)); c.moveTo(gx(0), gy(t)); c.lineTo(gx(255), gy(t)); } c.stroke();
+    c.strokeStyle = '#aab7c6'; c.setLineDash([6, 6]); c.beginPath(); c.moveTo(gx(0), gy(0)); c.lineTo(gx(255), gy(255)); c.stroke(); c.setLineDash([]);
+    const lut = monoLUT(X, K.map(k => cur[k])), col = { r: '#d0302a', g: '#2c9a3a', b: '#2a62d0' }[cur.ch] || '#1d2f45';
+    c.strokeStyle = col; c.lineWidth = 3; c.beginPath(); for (let x = 0; x < 256; x++) x ? c.lineTo(gx(x), gy(lut[x])) : c.moveTo(gx(x), gy(lut[x])); c.stroke();
+    pts().forEach((p, i) => { c.beginPath(); c.arc(gx(p.x), gy(p.y), i === drag ? 11 : 9, 0, 7); c.fillStyle = '#fff'; c.fill(); c.lineWidth = 3; c.strokeStyle = col; c.stroke(); });
+  };
+  const at = e => { const r = cv.getBoundingClientRect(); return { x: ((e.clientX - r.left) / r.width * W - P) / (W - 2 * P) * 255, y: (H - P - (e.clientY - r.top) / r.height * H) / (H - 2 * P) * 255 }; };
+  const move = e => {
+    if (drag < 0) return;
+    const k = K[drag], lim = k === 'b0' ? [0, 128] : k === 'w0' ? [128, 255] : [0, 255], y = clamp(Math.round(at(e).y), lim[0], lim[1]);
+    cur[k] = y; set(k, y); if (cur.preset !== 'custom') { cur.preset = 'custom'; set('preset', 'custom'); } redraw();
+  };
+  cv.onpointerdown = e => {
+    const p = at(e); drag = X.reduce((b, x, i) => Math.abs(x - p.x) < Math.abs(X[b] - p.x) ? i : b, 0);
+    try { cv.setPointerCapture(e.pointerId); } catch (err) { }
+    move(e);
+  };
+  cv.onpointermove = e => { if (e.buttons & 1) move(e); };
+  cv.onpointerup = () => { drag = -1; redraw(); };
+  adjGraph = { redraw, cv }; redraw();
+}
+function levelsGraph(box, set, v0, src) {
+  const W = 512, H = 200, P = 12, cv = graphCanvas(box, 'levels', 256, 100), c = cx(cv), hist = histogramOf(src), gx = x => P + x / 255 * (W - 2 * P);
+  let cur = { ...v0 };
+  const redraw = v => {
+    if (v) cur = { ...v };
+    c.fillStyle = '#fbfdff'; c.fillRect(0, 0, W, H); drawHist(c, hist, P, W - 2 * P, H - 18, '#7d8fa6');
+    const tri = (x, fill) => { const px = gx(x); c.beginPath(); c.moveTo(px, H - 18); c.lineTo(px - 8, H - 2); c.lineTo(px + 8, H - 2); c.closePath(); c.fillStyle = fill; c.fill(); c.strokeStyle = '#333'; c.lineWidth = 1.5; c.stroke(); };
+    const mid = cur.lo + (cur.hi - cur.lo) * Math.pow(0.5, cur.g);
+    c.fillStyle = 'rgba(40,70,110,.12)'; c.fillRect(P, 0, gx(cur.lo) - P, H - 18); c.fillRect(gx(cur.hi), 0, W - P - gx(cur.hi), H - 18);
+    tri(cur.lo, '#000'); tri(mid, '#888'); tri(cur.hi, '#fff');
+  };
+  adjGraph = { redraw, cv }; redraw();
+}
+const GM_DEFAULT = JSON.stringify([{ p: 0, c: '#1b1036', a: 1 }, { p: 1, c: '#ffd9a0', a: 1 }]);
+const gmFromAB = p => JSON.stringify([{ p: 0, c: HEX6.test(p?.a) ? p.a : '#1b1036', a: 1 }, { p: 1, c: HEX6.test(p?.b) ? p.b : '#ffd9a0', a: 1 }]);
+function gmStops(v) {
+  let s = null; try { s = typeof v.g === 'string' ? JSON.parse(v.g) : null; } catch (e) { }
+  return sanitizeStops(s, JSON.parse(gmFromAB(v)));
+}
+function gmLUT(stops, rev) {   // 256 × [r, g, b, mix 0..1]
+  const lut = new Float32Array(1024);
+  for (let i = 0; i < 256; i++) { const t = i / 255, o = sampleStops(stops, rev ? 1 - t : t), c = hexToRgb(o.c); lut.set([c[0], c[1], c[2], o.a], i * 4); }
+  return lut;
+}
+function gradientMapWidget(box, set, v0) {
+  const host = document.createElement('div'), btns = box.querySelector('.btns'); box.insertBefore(host, btns);
+  const grad = { stops: gmStops(v0) };
+  gradientWidget(host, grad, g => set('g', JSON.stringify(g.stops.map(s => ({ p: +s.p.toFixed(4), c: s.c, a: +s.a.toFixed(3) })))));
+  box.insertBefore(Object.assign(document.createElement('p'), { className: 'dnote', textContent: 'Left of the bar = shadows, right = highlights. Stop opacity sets how strongly that tone is recolored.' }), btns);
+}
+
 const FILTERS = {
   'Brightness/Contrast…': { adj: 1, fields: [{ key: 'b', label: 'Brightness', type: 'range', min: -100, max: 100, value: 0 }, { key: 'c', label: 'Contrast', type: 'range', min: -100, max: 100, value: 0 }], fn: (s, v) => cssFilter(s, `brightness(${1 + v.b / 100}) contrast(${1 + v.c / 100})`) },
   'Levels…': {
-    adj: 1, fields: [{ key: 'lo', label: 'Input black', type: 'range', min: 0, max: 254, value: 0 }, { key: 'g', label: 'Gamma', type: 'range', min: 0.1, max: 3, step: 0.01, value: 1 }, { key: 'hi', label: 'Input white', type: 'range', min: 1, max: 255, value: 255 }, { key: 'olo', label: 'Output black', type: 'range', min: 0, max: 255, value: 0 }, { key: 'ohi', label: 'Output white', type: 'range', min: 0, max: 255, value: 255 }],
+    adj: 1, fields: [{ key: 'preset', label: 'Preset', type: 'select', value: 'custom', options: LEVELS_PRESET_OPTS }, { key: 'lo', label: 'Input black', type: 'range', min: 0, max: 254, value: 0 }, { key: 'g', label: 'Gamma', type: 'range', min: 0.1, max: 3, step: 0.01, value: 1 }, { key: 'hi', label: 'Input white', type: 'range', min: 1, max: 255, value: 255 }, { key: 'olo', label: 'Output black', type: 'range', min: 0, max: 255, value: 0 }, { key: 'ohi', label: 'Output white', type: 'range', min: 0, max: 255, value: 255 }],
+    onInput: (k, v, set) => presetInput(k, v, set, LEVELS_PRESETS, ['lo', 'g', 'hi', 'olo', 'ohi']), mount: (box, set, v, src) => levelsGraph(box, set, v, src), onDialog: v => adjGraph?.redraw(v),
     fn: (s, v) => { const lut = new Uint8ClampedArray(256), hi = Math.max(v.hi, v.lo + 1); for (let i = 0; i < 256; i++) lut[i] = v.olo + (v.ohi - v.olo) * Math.pow(clamp((i - v.lo) / (hi - v.lo), 0, 1), 1 / v.g); return lutRGB(s, lut, lut, lut); }
   },
   'Curves…': {
-    adj: 1, fields: [{ key: 'ch', label: 'Channel', type: 'select', value: 'rgb', options: [['rgb', 'RGB'], ['r', 'Red'], ['g', 'Green'], ['b', 'Blue']] },
+    adj: 1, onInput: (k, v, set) => presetInput(k, v, set, CURVES_PRESETS, ['b0', 'p1', 'p2', 'p3', 'w0']), mount: (box, set, v, src) => curvesGraph(box, set, v, src), onDialog: v => adjGraph?.redraw(v),
+    fields: [{ key: 'preset', label: 'Preset', type: 'select', value: 'custom', options: CURVES_PRESET_OPTS }, { key: 'ch', label: 'Channel', type: 'select', value: 'rgb', options: [['rgb', 'RGB'], ['r', 'Red'], ['g', 'Green'], ['b', 'Blue']] },
       { key: 'b0', label: 'Black point', type: 'range', min: 0, max: 128, value: 0 }, { key: 'p1', label: 'Shadows (64)', type: 'range', min: 0, max: 255, value: 64 }, { key: 'p2', label: 'Midtones (128)', type: 'range', min: 0, max: 255, value: 128 }, { key: 'p3', label: 'Highlights (192)', type: 'range', min: 0, max: 255, value: 192 }, { key: 'w0', label: 'White point', type: 'range', min: 128, max: 255, value: 255 }],
     fn: (s, v) => { const lut = monoLUT([0, 64, 128, 192, 255], [v.b0, v.p1, v.p2, v.p3, v.w0]); return lutRGB(s, v.ch === 'rgb' || v.ch === 'r' ? lut : IDENT, v.ch === 'rgb' || v.ch === 'g' ? lut : IDENT, v.ch === 'rgb' || v.ch === 'b' ? lut : IDENT); }
   },
@@ -69,8 +188,21 @@ const FILTERS = {
     fn: (s, v) => { const o = clone(s), c = cx(o); c.globalCompositeOperation = 'multiply'; c.globalAlpha = v.d / 100; c.fillStyle = v.c; c.fillRect(0, 0, o.width, o.height); c.globalAlpha = 1; c.globalCompositeOperation = 'destination-in'; c.drawImage(s, 0, 0); return o; }
   },
   'Gradient Map…': {
-    adj: 1, fields: [{ key: 'a', label: 'Shadows', type: 'color', value: '#1b1036' }, { key: 'b', label: 'Highlights', type: 'color', value: '#ffd9a0' }],
-    fn: (s, v) => { const A = hexToRgb(v.a), B = hexToRgb(v.b); return pixels(s, d => { for (let i = 0; i < d.length; i += 4) { const t = (.299 * d[i] + .587 * d[i + 1] + .114 * d[i + 2]) / 255; d[i] = A[0] + (B[0] - A[0]) * t; d[i + 1] = A[1] + (B[1] - A[1]) * t; d[i + 2] = A[2] + (B[2] - A[2]) * t; } }); }
+    // g = JSON stops [{p,c,a}] (stop opacity = how strongly that tone is remapped); old files only have colors a -> b
+    adj: 1, fields: [{ key: 'g', type: 'hidden', value: GM_DEFAULT }, { key: 'rev', label: 'Reverse', type: 'checkbox', value: false }, { key: 'dither', label: 'Dither (smoother)', type: 'checkbox', value: false }],
+    fieldsFor: p => [{ key: 'g', type: 'hidden', value: typeof p?.g === 'string' ? p.g : gmFromAB(p) }, { key: 'rev', label: 'Reverse', type: 'checkbox', value: !!p?.rev }, { key: 'dither', label: 'Dither (smoother)', type: 'checkbox', value: !!p?.dither }],
+    mount: (box, set, v) => gradientMapWidget(box, set, v),
+    fn: (s, v) => {
+      const lut = gmLUT(gmStops(v), !!v.rev);
+      return pixels(s, d => {
+        for (let i = 0, n = 0; i < d.length; i += 4, n++) {
+          let t = .299 * d[i] + .587 * d[i + 1] + .114 * d[i + 2];
+          if (v.dither) t += ((n * 0.618034 + (n / s.width | 0) * 0.381966) % 1) - 0.5;
+          const j = clamp(Math.round(t), 0, 255) * 4, a = lut[j + 3];
+          for (let k = 0; k < 3; k++) d[i + k] += (lut[j + k] - d[i + k]) * a;
+        }
+      });
+    }
   },
   'Black & White': { adj: 1, fn: s => pixels(s, d => { for (let i = 0; i < d.length; i += 4) { const y = .299 * d[i] + .587 * d[i + 1] + .114 * d[i + 2]; d[i] = d[i + 1] = d[i + 2] = y; } }) },
   'Invert': { adj: 1, fn: s => pixels(s, d => { for (let i = 0; i < d.length; i += 4) { d[i] = 255 - d[i]; d[i + 1] = 255 - d[i + 1]; d[i + 2] = 255 - d[i + 2]; } }) },
@@ -116,12 +248,18 @@ function runFilter(name) {
   const orig = clone(t.canvas);
   if (!F.fields && !F.fieldsFor) { putResult(t, orig, F.fn(orig, {})); pushHistory(plainName(name)); recordStep({ type: 'filter', name, params: {} }); return; }
   const fields = fieldsOf(F, null, orig), init = defaultsOf({ fields });
+  adjSrc = orig; adjGraph = null;
   showDialog({
-    title: plainName(name), fields, html: noteHtml(F), onInput: F.onInput,
+    title: plainName(name), fields, html: noteHtml(F), onInput: F.onInput, onMount: F.mount ? (box, set) => F.mount(box, set, init, orig) : null,
     onChange: v => { F.onDialog?.(v, false, init); putResult(t, orig, F.fn(orig, v)); requestRender(); },
     onOK: v => { F.onDialog?.(v, true, init); putResult(t, orig, F.fn(orig, v)); pushHistory(plainName(name)); recordStep({ type: 'filter', name, params: v }); },
     onCancel: () => { putResult(t, orig, orig); requestRender(); }
   });
+}
+// What an adjustment layer receives: the composite of everything below it (used for histograms / Auto)
+function inputBelow(L) {
+  const i = doc.layers.indexOf(L), t = mk(doc.w, doc.h);
+  renderNodes(t, buildTree(doc.layers.slice(0, Math.max(0, i))), false); return t;
 }
 // Non-destructive adjustment layer
 function addAdjustmentLayer(kind) {
@@ -138,8 +276,10 @@ function addAdjustmentLayer(kind) {
 function editAdjustment(L, isNew) {
   const F = FILTERS[L.adjust.kind], old = { ...L.adjust.params };
   if (!F.fields && !F.fieldsFor) return toast('This adjustment has no settings');
+  const fields = fieldsOf(F, L.adjust.params), below = F.mount ? inputBelow(L) : null;
+  adjSrc = below; adjGraph = null;
   showDialog({
-    title: plainName(L.adjust.kind) + ' (adjustment layer)', fields: fieldsOf(F, L.adjust.params), html: noteHtml(F), onInput: F.onInput,
+    title: plainName(L.adjust.kind) + ' (adjustment layer)', fields, html: noteHtml(F), onInput: F.onInput, onMount: F.mount ? (box, set) => F.mount(box, set, defaultsOf({ fields }), below) : null,
     onChange: v => { F.onDialog?.(v, false, old); L.adjust.params = { ...v }; requestRender(); },
     onOK: v => { F.onDialog?.(v, true, old); L.adjust.params = { ...v }; pushHistory(isNew ? 'New ' + plainName(L.adjust.kind) : 'Edit Adjustment'); if (isNew) recordStep({ type: 'adjLayer', kind: L.adjust.kind, params: v }); },
 

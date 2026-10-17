@@ -40,6 +40,7 @@
     ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
     for (const ln of lines) {
       if (ln.block) { drawBlock(ctx, ln.block, env); continue; }
+      if (ln.rules) for (const ru of ln.rules) { ctx.fillStyle = Color.css(ru.color); ctx.fillRect(ru.x0, ln.y + ru.dy - ru.w / 2, ru.x1 - ru.x0, ru.w); }
       if (ln.drop) { setFont(ctx, ln.drop.st); ctx.fillStyle = Color.css(ln.drop.st.color); ctx.fillText(ln.drop.text, ln.drop.x, ln.drop.y); }
       for (const r of ln.runs) {
         const st = r.st; setFont(ctx, st); ctx.fillStyle = Color.css(st.color);

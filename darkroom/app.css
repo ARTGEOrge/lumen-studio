@@ -105,6 +105,15 @@
 #navc{max-width:100%;max-height:100%}
 #histlist{height:170px;flex:none}
 #histlist .aero-item{font-size:11.5px}
+#snaplist{max-height:118px;flex:none;overflow:auto}
+#snaplist .aero-item{font-size:11.5px;gap:5px}
+#snaplist .aero-item .ic{width:14px;height:14px;flex:none}
+#snaplist .aero-item .grow{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#snaplist .aero-item .x{border:0;background:none;color:#24476e;padding:0 3px;visibility:hidden;cursor:pointer}
+#snaplist .aero-item .x.del{color:#a33}
+#snaplist .aero-item:hover .x{visibility:visible}
+#sn-new{min-width:0;padding:0 7px}
+#dhist{cursor:default}
 #presetlist .grp{padding:4px 6px 2px;font-weight:600;color:var(--navy);font-size:11px;display:flex;align-items:center;gap:4px}
 #presetlist .aero-item .x{margin-left:auto;border:0;background:none;color:#a33;padding:0 3px;visibility:hidden}
 #presetlist .aero-item:hover .x{visibility:visible}
