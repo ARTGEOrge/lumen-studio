@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Slides</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <linearGradient id="gBlue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd0ff"/><stop offset=".5" stop-color="#3a8fe0"/><stop offset="1" stop-color="#1c5fb4"/></linearGradient>
+  <linearGradient id="gGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b8f28a"/><stop offset=".5" stop-color="#4cb82c"/><stop offset="1" stop-color="#2a7f14"/></linearGradient>
+  <linearGradient id="gRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9a8a"/><stop offset=".5" stop-color="#e0402c"/><stop offset="1" stop-color="#a81c10"/></linearGradient>
+  <linearGradient id="gPaper" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d8e4f0"/></linearGradient>
+  <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9a0"/><stop offset="1" stop-color="#e3a21a"/></linearGradient>
+  <symbol id="i-new" viewBox="0 0 16 16"><path d="M3 1.5h6l3.5 3.5v9.5H3z" fill="url(#gPaper)" stroke="#5a7a9a"/><circle cx="11.5" cy="11.5" r="3.6" fill="url(#gGreen)" stroke="#2a6a14" stroke-width=".8"/><path d="M11.5 9.6v3.8M9.6 11.5h3.8" stroke="#fff" stroke-width="1.4"/></symbol>
+  <symbol id="i-dup" viewBox="0 0 16 16"><path d="M5 4.5h8v10H5z" fill="url(#gPaper)" stroke="#5a7a9a"/><path d="M3 1.5h8v10H3z" fill="url(#gPaper)" stroke="#5a7a9a"/></symbol>
+  <symbol id="i-up" viewBox="0 0 16 16"><path d="M8 2 14 9h-3.5v5h-5V9H2z" fill="url(#gBlue)" stroke="#174a85" stroke-linejoin="round"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="M8 14 2 7h3.5V2h5v5H14z" fill="url(#gBlue)" stroke="#174a85" stroke-linejoin="round"/></symbol>
+  <symbol id="i-del" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" fill="url(#gRed)" stroke="#8a1a10"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" fill="url(#gPaper)" stroke="#5a7a9a"/><circle cx="8" cy="8" r="2.4" fill="url(#gBlue)" stroke="#174a85"/></symbol>
+  <symbol id="i-play" viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z" fill="url(#gGreen)" stroke="#2a6a14" stroke-linejoin="round"/></symbol>
+  <symbol id="i-star" viewBox="0 0 16 16"><path d="M8 1.5l1.9 4.1 4.5.5-3.3 3 .9 4.4L8 11.3l-4 2.2.9-4.4-3.3-3 4.5-.5z" fill="url(#gGold)" stroke="#8a5a0a" stroke-linejoin="round"/></symbol>
+  <symbol id="i-master" viewBox="0 0 16 16"><path d="M2 2.5h12v11H2z" fill="url(#gPaper)" stroke="#5a7a9a"/><path d="M2 2.5h12v3H2z" fill="url(#gGold)" stroke="#8a5a0a" stroke-width=".7"/><text x="8" y="12.4" font-size="6.5" font-family="Segoe UI" font-weight="700" text-anchor="middle" fill="#1e395b">A</text></symbol>
+</defs></svg>
+<div class="aero-app">
+  <div class="aero-body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd"></div>
+      <div class="aero-work" id="work">
+        <div class="aero-side left" id="leftside">
+          <div class="aero-ph"><span class="phi" style="background:linear-gradient(#fff,#cfdcec)"></span><span id="lefttitle">Slides</span><span class="right" id="scount"></span></div>
+          <div class="aero-list" id="slides" tabindex="0"></div>
+          <div class="aero-iconbar" id="slidebar">
+            <button class="aero-iconbtn" id="sl-add" title="New slide (Ctrl+M)"><svg><use href="#i-new"/></svg></button>
+            <button class="aero-iconbtn" id="sl-dup" title="Duplicate slide (Ctrl+Shift+D)"><svg><use href="#i-dup"/></svg></button>
+            <button class="aero-iconbtn" id="sl-up" title="Move slide up"><svg><use href="#i-up"/></svg></button>
+            <button class="aero-iconbtn" id="sl-down" title="Move slide down"><svg><use href="#i-down"/></svg></button>
+            <button class="aero-iconbtn" id="sl-hide" title="Hide / show slide in the slide show"><svg><use href="#i-eye"/></svg></button>
+            <span style="flex:1"></span>
+            <button class="aero-iconbtn" id="sl-del" title="Delete slide"><svg><use href="#i-del"/></svg></button>
+          </div>
+        </div>
+        <div class="center" id="center">
+          <div class="aero-stage" id="stage">
+            <div id="stagewrap"><canvas id="cv" tabindex="-1"></canvas>
+              <div id="masterbar" class="aero-pill" hidden><b>Slide Master view</b><span id="mastername"></span><button class="aero-btn small" id="mb-close">Close Master View</button></div>
+            </div>
+            <div id="sorter" hidden></div>
+          </div>
+          <div id="notesplit" title="Drag to resize the notes pane"></div>
+          <div id="notesbox"><textarea id="notes" placeholder="Click to add speaker notes" spellcheck="true"></textarea></div>
+        </div>
+        <div class="aero-side" id="rightside">
+          <div class="aero-tabs" id="rtabs"><div class="aero-tab on" data-p="tp-format">Format</div><div class="aero-tab" data-p="tp-anim">Animations</div><div class="aero-tab" data-p="tp-design">Design</div><div class="aero-tab" data-p="tp-hist">History</div></div>
+          <div class="tabpane" id="tp-format"><div id="props"></div></div>
+          <div class="tabpane" id="tp-anim" hidden><div id="anim"></div></div>
+          <div class="tabpane" id="tp-design" hidden><div id="design"></div></div>
+          <div class="tabpane" id="tp-hist" hidden><div class="aero-list grow" id="hist"></div></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st-slide"></span><span id="st-zoom"></span><span id="st-pos"></span><span id="st-sel"></span><span id="st-theme"></span></div>
+    </div>
+  </div>
+</div>
+<div id="show" hidden><canvas id="showcv"></canvas><div id="showbar"><button data-c="prev" title="Previous (←)">◀</button><span id="shownum"></span><button data-c="next" title="Next (→ / Space / click)">▶</button><button data-c="pres" title="Presenter view">Presenter</button><button data-c="end" title="End show (Esc)">End</button></div></div>
+<div id="pres" hidden>
+  <div class="pres-top"><span class="pres-timer" id="ptimer">0:00:00</span><button class="aero-btn small" id="p-pause">Pause</button><button class="aero-btn small" id="p-reset">Reset</button><span class="pres-clock" id="pclock"></span><span style="flex:1"></span><span id="pnum"></span><span style="flex:1"></span><button class="aero-btn small" id="p-aud" title="Open the audience view in a second window (drag it to the projector and press F)">Open audience window</button><button class="aero-btn small" id="p-swap" title="Show the slide full screen in this window">Full-screen show</button><button class="aero-btn small" id="p-end">End show</button></div>
+  <div class="pres-main"><div class="pres-cur"><canvas id="pcur"></canvas><div class="pres-nav"><button class="aero-btn" id="p-prev">◀ Previous</button><button class="aero-btn" id="p-black" title="Black screen (B)">Black</button><button class="aero-btn pri" id="p-next">Next ▶</button></div></div>
+    <div class="pres-side"><div class="pres-lbl">Next</div><canvas id="pnext"></canvas><div class="pres-lbl">Notes <span style="flex:1"></span><button class="aero-btn small" id="p-fminus" title="Smaller notes">A−</button><button class="aero-btn small" id="p-fplus" title="Larger notes">A+</button></div><div id="pnotes"></div></div></div>
+</div>
+<script src="../kit/aero.js"></script>
+<script src="vendor/fflate.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="js/xml.js"></script>
+<script src="js/model.js"></script>
+<script src="js/render.js"></script>
+<script src="js/fonts.js"></script>
+<script src="js/player.js"></script>
+<script src="js/pptx-write.js"></script>
+<script src="js/pptx-read.js"></script>
+<script src="js/app.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/io.js"></script>
+<script src="js/present.js"></script>
+<script src="js/sample.js"></script>
+<script src="js/main.js"></script>
+</body></html>

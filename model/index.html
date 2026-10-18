@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen 3D</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client" id="client">
+      <div class="aero-cmdbar" id="cmd">
+        <select id="modeSel" title="Interaction mode (Tab)"><option value="object">Object Mode</option><option value="edit">Edit Mode</option></select>
+        <button class="aero-btn sm" data-sm="vert" title="Vertex select (1)"><svg viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" fill="none" stroke="currentColor" stroke-dasharray="2 2"/><circle cx="2.5" cy="13.5" r="2.4" fill="currentColor"/></svg></button><button class="aero-btn sm" data-sm="edge" title="Edge select (2)"><svg viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" fill="none" stroke="currentColor" stroke-dasharray="2 2"/><path d="M2 14 14 14" stroke="currentColor" stroke-width="2.6"/></svg></button><button class="aero-btn sm" data-sm="face" title="Face select (3)"><svg viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" fill="currentColor" fill-opacity=".55" stroke="currentColor"/></svg></button>
+        <span class="sep"></span>
+        <button class="aero-btn" id="addBtn" title="Add an object (Shift+A for options)">＋ Add ▾</button>
+        <span class="sep editonly"></span>
+        <button class="aero-btn editonly" data-op="extrude" title="Extrude (E)">Extrude</button><button class="aero-btn editonly" data-op="inset" title="Inset faces (I)">Inset</button><button class="aero-btn editonly" data-op="bevel" title="Bevel edges (Ctrl+B)">Bevel</button><button class="aero-btn editonly" data-op="loopcut" title="Loop cut (Ctrl+R)">Loop Cut</button><button class="aero-btn editonly" data-op="subdivide" title="Subdivide selected faces">Subdivide</button><button class="aero-btn editonly" data-op="merge" title="Merge (M)">Merge</button>
+        <span class="sep"></span>
+        <select id="orientSel" title="Transform orientation"><option value="global">Global</option><option value="local">Local</option></select>
+        <label title="Snap to increments while moving, rotating and scaling (hold Ctrl to invert)"><input type="checkbox" id="snapChk"> Snap</label>
+        <label title="Select through the mesh (Alt+X)"><input type="checkbox" id="xrayChk"> X-ray</label>
+        <span class="sep"></span>
+        <button class="aero-btn shade" data-shade="wire" title="Wireframe (Alt+Z)"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor"/><ellipse cx="8" cy="8" rx="6" ry="2.4" fill="none" stroke="currentColor"/><ellipse cx="8" cy="8" rx="2.4" ry="6" fill="none" stroke="currentColor"/></svg></button><button class="aero-btn shade" data-shade="solid" title="Solid (Shift+Z)"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#e9eef3" stroke="currentColor"/><circle cx="6" cy="6" r="2" fill="#fff"/></svg></button><button class="aero-btn shade" data-shade="material" title="Material preview (Z)"><svg viewBox="0 0 16 16"><defs><radialGradient id="mg" cx=".35" cy=".3"><stop offset="0" stop-color="#fff"/><stop offset=".35" stop-color="#f08a3c"/><stop offset="1" stop-color="#5a1d06"/></radialGradient></defs><circle cx="8" cy="8" r="6" fill="url(#mg)" stroke="currentColor" stroke-width=".6"/></svg></button>
+        <span class="grow"></span>
+        <button class="aero-btn render" id="renderBtn" title="Render the active camera with the path tracer (F12)">📷 Render</button>
+      </div>
+      <div class="aero-work" style="grid-template-columns:232px 1fr 300px">
+        <div class="aero-side left">
+          <div class="aero-ph"><span class="phi"></span>Scene<span class="right" id="oCount"></span></div>
+          <div class="aero-list" id="outliner" style="flex:1"></div>
+          <div class="aero-iconbar"><button class="aero-iconbtn" id="oAdd" title="Add object">＋</button><button class="aero-iconbtn" id="oDup" title="Duplicate (Shift+D)">⧉</button><button class="aero-iconbtn" id="oDel" title="Delete (X)">✕</button><span class="grow"></span><button class="aero-iconbtn" id="oFocus" title="Frame selected (Numpad .)">⌖</button><button class="aero-iconbtn" id="oCam" title="Look through the camera (Numpad 0)">🎥</button></div>
+          <div class="aero-ph"><span class="phi"></span>History</div>
+          <div class="aero-list" id="hist" style="height:150px;flex:none"></div>
+        </div>
+        <div class="aero-stage m3-stage" id="stage"><canvas id="cv"></canvas>
+          <div class="navbtns"><button data-view="persp" title="Perspective view">Persp</button><button data-view="front" title="Front (Numpad 1)">Front</button><button data-view="right" title="Right (Numpad 3)">Right</button><button data-view="top" title="Top (Numpad 7)">Top</button><button data-view="ortho" title="Orthographic (Numpad 5)">Ortho</button><button data-view="camera" title="Camera (Numpad 0)">Camera</button><button data-view="frame" title="Frame selected (Numpad .)">Frame</button></div>
+          <div class="boxsel" id="boxsel"></div><div class="mhint" id="mhint"></div>
+          <div class="axes-ind"><span class="ax x">X</span><span class="ax y">Y</span><span class="ax z">Z</span></div>
+        </div>
+        <div class="aero-side">
+          <div class="aero-tabs" id="tabs"><div class="aero-tab on" data-tab="object">Object</div><div class="aero-tab" data-tab="mods">Modifiers</div><div class="aero-tab" data-tab="mat">Material</div><div class="aero-tab" data-tab="world">World</div><div class="aero-tab" data-tab="render">Render</div></div>
+          <div class="aero-pane props" id="props"></div>
+        </div>
+      </div>
+      <div class="m3-timeline" id="timeline">
+        <div class="tlbar">
+          <button class="aero-btn small" id="tlStartBtn" title="Jump to start (Shift+Left)">⏮</button><button class="aero-btn small" id="tlPrev" title="Previous keyframe">◆◀</button><button class="aero-btn small pri" id="tlPlay" title="Play / pause (Space)">▶</button><button class="aero-btn small" id="tlNext" title="Next keyframe">▶◆</button><button class="aero-btn small" id="tlEndBtn" title="Jump to end (Shift+Right)">⏭</button>
+          <label>Frame <input type="number" id="tlFrame" step="1"></label>
+          <span class="tsep"></span><button class="aero-btn small key" id="tlKey" title="Insert keyframe for location, rotation and scale (I)">◆ Key</button><button class="aero-btn small" id="tlUnkey" title="Delete keyframe on this frame (Alt+I)">◇ Delete</button>
+          <span class="grow"></span>
+          <label>Start <input type="number" id="tlStart" step="1"></label><label>End <input type="number" id="tlEnd" step="1"></label><label>FPS <input type="number" id="tlFps" step="1" min="1" max="240"></label>
+        </div>
+        <canvas id="tlCanvas"></canvas>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span id="st2"></span><span id="st3"></span></div>
+    </div>
+  </div>
+</div>
+<div class="addmenu" id="addMenu">
+  <div class="aero-mhead">Mesh</div>
+  <div class="aero-mi" data-add="cube"><span>Cube</span></div><div class="aero-mi" data-add="plane"><span>Plane</span></div><div class="aero-mi" data-add="grid"><span>Grid</span></div><div class="aero-mi" data-add="uvsphere"><span>UV Sphere</span></div><div class="aero-mi" data-add="icosphere"><span>Ico Sphere</span></div><div class="aero-mi" data-add="cylinder"><span>Cylinder</span></div><div class="aero-mi" data-add="cone"><span>Cone</span></div><div class="aero-mi" data-add="torus"><span>Torus</span></div>
+  <div class="aero-msep"></div><div class="aero-mhead">Light &amp; camera</div>
+  <div class="aero-mi" data-add="point"><span>Point Light</span></div><div class="aero-mi" data-add="sun"><span>Sun Light</span></div><div class="aero-mi" data-add="camera"><span>Camera</span></div>
+</div>
+<script src="../kit/aero.js"></script>
+<script src="vendor/three-cad.min.js"></script><script src="vendor/fflate.js"></script><script src="vendor/mp4-muxer.js"></script>
+<script src="js/mesh.js"></script><script src="js/scene.js"></script><script src="js/io.js"></script><script src="js/pt.js"></script>
+<script src="js/viewport.js"></script><script src="js/render.js"></script><script src="js/sample.js"></script><script src="js/app.js"></script>
+</body></html>

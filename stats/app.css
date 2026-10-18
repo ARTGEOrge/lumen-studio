@@ -1,0 +1,174 @@
+/* Lumen Stats */
+#cmd{overflow:hidden;flex-wrap:nowrap;gap:10px}
+#cmd>*{flex:none;white-space:nowrap}
+#cmd .aero-btn{padding:2px 10px}
+.st-work{display:grid;grid-template-columns:minmax(0,1fr) 262px;min-height:0;min-width:0;background:#fff}
+.st-main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.st-tabs{position:relative}
+.st-tabs .aero-tab b{font-weight:400;color:var(--dim);margin-left:3px}
+.tab-right{margin-left:auto;align-self:center;display:flex;gap:10px;align-items:center;padding:0 4px 3px;color:var(--navy)}
+.tab-right label{display:flex;gap:4px;align-items:center}
+.tab-right .chip{background:#fff3d6;border:1px solid #e3c06b;border-radius:9px;padding:0 8px;color:#6a4b00}
+.view{flex:1;min-height:0;min-width:0;position:relative;display:flex}
+.view>*{flex:1;min-width:0;min-height:0}
+
+/* ---------- data grid ---------- */
+.dg{position:relative;overflow:auto;outline:none;background:#fff;font:12px/1 var(--font);cursor:cell}
+.dg-space{position:relative}
+.dg-layer{position:absolute;left:0;top:0}
+.dg .c,.dg .h,.dg .rn,.dg .corner{position:absolute;height:22px;line-height:21px;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-right:1px solid #e3e8ee;border-bottom:1px solid #e3e8ee}
+.dg .c{text-align:right;color:#111}
+.dg .c.s{text-align:left}
+.dg .c.lab{text-align:left;color:#173a66}
+.dg .c.um{color:#b25a00}
+.dg .c.ghost{background:#fafbfc}
+.dg .c.off{color:#9aa3ad;background:#f7f7f7}
+.dg .h{top:0;height:26px;line-height:25px;z-index:3;font-weight:600;color:var(--navy);background:linear-gradient(#fbfdff,#e3ecf6);border-color:#c5d5e8;text-align:center;cursor:default}
+.dg .h.ghost{color:#9aa8b8;font-weight:400}
+.dg .h.on{background:linear-gradient(#e9f4ff,#c4ddf7)}
+.dg .h .ty{display:inline-block;width:13px;height:13px;line-height:13px;margin-right:5px;border-radius:2px;font-size:8.5px;color:#fff;vertical-align:1px;text-align:center}
+.dg .rn{z-index:2;text-align:right;color:var(--navy);background:linear-gradient(90deg,#fbfdff,#e8f0f8);border-color:#c5d5e8;cursor:default;font-variant-numeric:tabular-nums}
+.dg .rn.on{background:linear-gradient(90deg,#e9f4ff,#c4ddf7)}
+.dg .rn.off{color:#a3acb7;text-decoration:line-through}
+.dg .corner{z-index:4;top:0;height:26px;background:linear-gradient(#fbfdff,#e3ecf6);border-color:#c5d5e8}
+.dg .selr{position:absolute;z-index:1;background:rgba(51,136,255,.12);border:1px solid rgba(51,136,255,.55);pointer-events:none}
+.dg .cur{position:absolute;z-index:1;border:2px solid #2a6fd0;pointer-events:none}
+.dg input.ed{position:absolute;z-index:5;height:22px;border:2px solid #2a6fd0;padding:0 5px;font:12px var(--font);outline:none;border-radius:0;text-align:right}
+.dg input.ed.s{text-align:left}
+.ty.numeric{background:linear-gradient(#7fb2ff,#2f6fd1)}
+.ty.string{background:linear-gradient(#c5ccd6,#7c8796)}
+.ty.date{background:linear-gradient(#ffb36b,#e3711b)}
+.ty.categorical{background:linear-gradient(#6fcf8f,#2e8b4e)}
+
+/* ---------- variable view ---------- */
+.vv-wrap{overflow:auto;background:#fff}
+.vv{border-collapse:collapse;font-size:12px;min-width:100%}
+.vv th{position:sticky;top:0;z-index:1;font-weight:600;color:var(--navy);padding:4px 6px;text-align:left;background:linear-gradient(#fbfdff,#e3ecf6);border:1px solid #c5d5e8;white-space:nowrap}
+.vv td{border:1px solid #e3e8ee;padding:1px 3px;height:25px;white-space:nowrap}
+.vv td.rn{background:linear-gradient(90deg,#fbfdff,#e8f0f8);color:var(--navy);text-align:right;padding:0 8px;width:44px;border-color:#c5d5e8}
+.vv tr.on td{background:#eef6ff}
+.vv tr.on td.rn{background:linear-gradient(90deg,#e9f4ff,#c4ddf7)}
+.vv input[type=text],.vv input[type=number],.vv select{border-color:transparent;background:transparent;width:100%;height:22px;padding:0 4px}
+.vv input:hover,.vv select:hover{border-color:#c5d5e8}
+.vv input:focus{background:#fff;border-color:#3c7fb1}
+.vv input.bad{background:#ffecec;border-color:#d55}
+.vv .cellbtn{display:flex;align-items:center;gap:4px;min-width:150px;max-width:260px}
+.vv .cellbtn span{flex:1;overflow:hidden;text-overflow:ellipsis;color:#333;padding-left:4px}
+.vv .cellbtn span.none{color:#9aa3ad}
+.vv .cellbtn button{border:1px solid #b8c6d6;background:linear-gradient(#fff,#e8eef5);border-radius:3px;padding:0 6px;height:20px;cursor:default}
+.vv .cellbtn button:hover{border-color:#3c7fb1}
+.vv .nm{font-weight:600}
+.vv tr.add td{color:var(--dim);font-style:italic;cursor:default}
+.vv-foot{padding:8px 12px;color:var(--dim)}
+
+/* ---------- side panel ---------- */
+.st-side{min-width:0}
+.st-side>div{display:flex;flex-direction:column;min-height:0;flex:1}
+#sideData{display:grid;grid-template-rows:auto auto minmax(80px,1fr) auto auto;min-height:0}
+.vi{background:linear-gradient(#7fb2ff,#2f6fd1)!important}
+.si{background:linear-gradient(#b8f0b0,#3f9e47)!important}
+.oi-i{background:linear-gradient(#ffe39a,#e0a52b)!important}
+.vsearch{margin:5px 6px;width:calc(100% - 12px)}
+.vlist .aero-item{gap:7px}
+.vlist .aero-item .ty{flex:none;width:15px;height:15px;border-radius:3px;color:#fff;font-size:8.5px;display:grid;place-items:center;font-weight:600;box-shadow:inset 0 0 0 1px rgba(0,0,0,.2)}
+.vlist .aero-item .lab{color:var(--dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.vlist .aero-item .grow{flex:none;max-width:52%}
+.vsum{padding:6px 10px 10px;min-height:220px;max-height:46vh;overflow:auto;background:#fff;border-top:1px solid var(--line)}
+.vsum .k{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:2px 0 6px}
+.vsum .k span:nth-child(odd){color:var(--dim)}
+.vsum .k span:nth-child(even){text-align:right;font-variant-numeric:tabular-nums}
+.vsum svg{width:100%;height:auto;margin-top:2px}
+.vsum .vt{font-weight:600;color:var(--navy);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vsum .empty{color:var(--dim);padding:18px 4px;text-align:center}
+.olist{flex:1}
+.olist .aero-item{gap:6px}
+.olist .aero-item .ic{flex:none;width:14px;height:14px;border-radius:3px;background:linear-gradient(#ffe39a,#e0a52b);box-shadow:inset 0 0 0 1px rgba(0,0,0,.2)}
+.olist .aero-item .ic.chart{background:linear-gradient(#b8f0b0,#3f9e47)}
+.olist .aero-item .ic.model{background:linear-gradient(#d9c2ff,#7a53d1)}
+#sideOut .aero-iconbtn{font-size:11.5px;padding:0 6px}
+
+/* ---------- output ---------- */
+.report-scroll{overflow:auto;background:linear-gradient(#e9eef4,#dfe6ee)}
+.report{max-width:1060px;margin:14px auto 40px;background:#fff;padding:22px 30px 10px;box-shadow:0 1px 4px rgba(20,40,70,.25);min-height:calc(100% - 54px);user-select:text}
+.report .oi{position:relative;border-bottom:1px dashed #dde4ec;margin-bottom:22px}
+.report .oi.sel{box-shadow:-12px 0 0 -9px #2a78d6}
+.report .oi .otools{position:absolute;right:0;top:0;display:none;gap:4px}
+.report .oi:hover .otools{display:flex}
+.report .oi .otools button{border:1px solid #b8c6d6;background:linear-gradient(#fff,#e8eef5);border-radius:3px;padding:1px 8px;font-size:11px;cursor:default;color:var(--navy)}
+.report .oi .otools button:hover{border-color:#3c7fb1}
+.report .oc svg .hv:hover{opacity:.75}
+.out-empty{color:var(--dim);text-align:center;padding:80px 20px;font-size:13px;line-height:1.7}
+.out-empty b{display:block;font-size:16px;color:var(--navy);font-weight:600;margin-bottom:6px}
+
+/* ---------- welcome ---------- */
+.welcome{position:absolute;inset:0;display:grid;place-items:center;background:var(--work-bg);z-index:6}
+.welcome .card{background:#fff;border:1px solid #a9bcd3;border-radius:6px;box-shadow:0 8px 30px rgba(20,40,70,.25);padding:24px 30px;width:min(560px,92%)}
+.welcome h2{margin:0 0 4px;color:var(--navy);font-weight:400;font-size:20px}
+.welcome p{color:var(--dim);margin:0 0 16px;line-height:1.5}
+.welcome .btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.welcome .btns .aero-btn{text-align:left;padding:7px 12px}
+.welcome .btns .aero-btn small{display:block;color:var(--dim);font-size:11px}
+
+/* ---------- dialogs ---------- */
+.aero-box.wide{max-width:min(760px,96vw)}
+.vp{display:grid;grid-template-columns:200px 34px 1fr;gap:8px 6px;margin:6px 0 4px}
+.vp .src{grid-row:1 / span 20;display:flex;flex-direction:column;min-height:0}
+.vp .src .aero-list{height:262px;border:1px solid #b9c7d8;flex:1}
+.vp .src input{margin-bottom:4px}
+.vp .aero-item{padding:2px 5px;gap:6px}
+.vp .aero-item .ty{flex:none;width:14px;height:14px;border-radius:3px;color:#fff;font-size:8px;display:grid;place-items:center;font-weight:600}
+.vp .aero-item .grow{white-space:nowrap}
+.vp .aero-item.dis{opacity:.4}
+.vp .mv{align-self:center;width:30px;height:26px;border:1px solid #707070;border-radius:3px;background:linear-gradient(#f2f2f2,#ebebeb 50%,#ddd 50%,#cfcfcf);cursor:default;font-size:13px}
+.vp .mv:hover{border-color:#3c7fb1;background:linear-gradient(#eaf6fd,#d9f0fc 50%,#bee6fd 50%,#a7d9f5)}
+.vp .tgt label{display:block;color:var(--navy);margin-bottom:2px}
+.vp .tgt .aero-list{border:1px solid #b9c7d8;min-height:26px}
+.vp .tgt.multi .aero-list{height:96px}
+.vp .tgt.single .aero-list{height:28px;overflow:hidden}
+.vp .tgt .sub{display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap}
+.vp .tgt .sub select,.vp .tgt .sub input{max-width:150px}
+.opts{display:flex;flex-wrap:wrap;gap:6px 18px;margin:10px 0 2px;padding:8px 10px;border:1px solid #d5dee8;border-radius:4px;background:#f8fafc}
+.opts .og{display:flex;flex-direction:column;gap:4px}
+.opts .og b{color:var(--navy);font-weight:600;font-size:11.5px}
+.opts label{display:flex;gap:5px;align-items:center;white-space:nowrap}
+.opts input[type=number]{width:70px}
+.opts input[type=text]{width:120px}
+.dlg-err{color:#b00020;margin:4px 0 0;min-height:16px}
+.xbox{display:grid;grid-template-columns:200px 1fr;gap:8px 10px;margin-top:6px}
+.xbox .aero-list{height:200px;border:1px solid #b9c7d8}
+.xbox textarea{width:100%;height:96px;font:12.5px/1.45 var(--mono);color:#00007f;resize:vertical}
+.xbox .row{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+.xbox .row input[type=text]{flex:1}
+.xbox .fns{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px;max-height:96px;overflow:auto}
+.xbox .fns button{border:1px solid #c5d5e8;background:#f4f8fc;border-radius:3px;font:11px var(--mono);padding:1px 5px;cursor:default}
+.xbox .fns button:hover{border-color:#3c7fb1;background:#e5f1fd}
+.xbox .prev{font:11.5px var(--mono);color:var(--dim);min-height:16px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rules{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+.rules fieldset{border:1px solid #d5dee8;border-radius:4px;padding:6px 10px;margin:0}
+.rules legend{color:var(--navy);padding:0 4px}
+.rules fieldset label{display:flex;gap:6px;align-items:center;margin:3px 0}
+.rules fieldset input[type=text]{width:70px}
+.rulelist{grid-column:1 / span 2;display:grid;grid-template-columns:1fr auto;gap:6px}
+.rulelist .aero-list{height:110px;border:1px solid #b9c7d8}
+.rulelist .bb{display:flex;flex-direction:column;gap:4px}
+.vlt{width:100%;border-collapse:collapse;margin-top:6px}
+.vlt td{padding:2px}
+.vlt input{width:100%}
+.vlt td:first-child{width:90px}
+.vlt td:last-child{width:28px}
+.vlt button{border:1px solid #c5d5e8;background:#f4f8fc;border-radius:3px;width:24px;height:22px;cursor:default}
+.vltwrap{max-height:300px;overflow:auto;border:1px solid #d5dee8;padding:4px;border-radius:3px}
+.ctx{position:fixed;z-index:900;display:block!important}
+.pop{position:fixed!important;display:block!important;top:auto;left:auto;z-index:800}
+
+@media print{
+  html,body{overflow:visible!important;height:auto!important;background:#fff!important}
+  .aero-app{display:block!important;padding:0!important;border:0!important;background:none!important;box-shadow:none!important}
+  .aero-titlebar,.aero-menubar,.aero-cmdbar,.aero-status,.st-side,.st-tabs,#vData,#vVars,.otools,.aero-toast{display:none!important}
+  .aero-client,.st-work,.st-main,.view,#vOut,.report-scroll{display:block!important;overflow:visible!important;border:0!important;box-shadow:none!important;background:#fff!important}
+  #vOut[hidden]{display:block!important}
+  .report{box-shadow:none;margin:0;padding:0;max-width:none}
+  .oc,.ot{break-inside:avoid}
+}
+.vv select[data-k=type]{min-width:112px}
+.vv select[data-k=measure]{min-width:92px}

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Stats</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body no-toolbox">
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd">
+        <button class="aero-btn" id="bOpen" title="Open a project, CSV or Excel file (Ctrl+O)">Open…</button>
+        <button class="aero-btn" id="bSave" title="Save the project (Ctrl+S)">Save</button>
+        <span class="sep"></span>
+        <button class="aero-btn" id="bCompute" title="Compute a variable from an expression">ƒx Compute</button>
+        <button class="aero-btn" id="bRecode" title="Recode values">⇄ Recode</button>
+        <button class="aero-btn" id="bSelect" title="Select cases with a condition (filter)">⧩ Select cases</button>
+        <span class="sep"></span>
+        <button class="aero-btn" id="bDesc" title="Descriptive statistics">Descriptives</button>
+        <button class="aero-btn" id="bFreq" title="Frequency tables">Frequencies</button>
+        <button class="aero-btn" id="bXtab" title="Crosstabs with chi-square">Crosstabs</button>
+        <button class="aero-btn drop" id="bMeans" title="t-tests and ANOVA">Compare means ▾</button>
+        <button class="aero-btn drop" id="bReg" title="Correlation and regression">Regression ▾</button>
+        <button class="aero-btn drop" id="bChart" title="Charts">Charts ▾</button>
+        <span class="hint" id="hint"></span>
+      </div>
+      <div class="st-work">
+        <div class="st-main">
+          <div class="aero-tabs st-tabs" id="tabs">
+            <span class="aero-tab on" data-v="data">Data View</span><span class="aero-tab" data-v="vars">Variable View</span><span class="aero-tab" data-v="output">Output <b id="outCount"></b></span>
+            <span class="tab-right" id="tabRight"></span>
+          </div>
+          <div class="view" id="vData"><div class="dg" id="grid" tabindex="0"></div></div>
+          <div class="view" id="vVars" hidden><div class="vv-wrap" id="varView"></div></div>
+          <div class="view" id="vOut" hidden><div class="report-scroll" id="reportScroll"><div class="report" id="report"></div></div></div>
+        </div>
+        <div class="aero-side st-side" id="side">
+          <div id="sideData">
+            <div class="aero-ph"><span class="phi vi"></span>Variables<span class="right" id="nVars"></span></div>
+            <input type="search" class="vsearch" id="vSearch" placeholder="Find variable…">
+            <div class="aero-list vlist" id="vList"></div>
+            <div class="aero-ph"><span class="phi si"></span>Summary<span class="right" id="sumName"></span></div>
+            <div class="vsum" id="vSum"></div>
+          </div>
+          <div id="sideOut" hidden>
+            <div class="aero-ph"><span class="phi oi-i"></span>Output<span class="right" id="nOut"></span></div>
+            <div class="aero-list olist" id="oList"></div>
+            <div class="aero-iconbar">
+              <button class="aero-iconbtn" id="oUp" title="Move the selected output up">▲</button>
+              <button class="aero-iconbtn" id="oDown" title="Move the selected output down">▼</button>
+              <button class="aero-iconbtn" id="oDel" title="Delete the selected output (Delete)">Delete</button>
+              <button class="aero-iconbtn" id="oHtml" title="Export the output as an HTML report">HTML</button>
+              <button class="aero-iconbtn" id="oPdf" title="Export the output as a PDF report">PDF</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span id="st2"></span><span id="st3"></span><span id="st4"></span></div>
+    </div>
+  </div>
+</div>
+<script src="../kit/aero.js"></script>
+<script src="js/dist.js"></script><script src="js/stats.js"></script><script src="js/data.js"></script><script src="js/charts.js"></script>
+<script src="js/analyses.js"></script><script src="js/report.js"></script><script src="js/samples.js"></script>
+<script src="js/grid.js"></script><script src="js/dialogs.js"></script><script src="js/app.js"></script>
+</body></html>

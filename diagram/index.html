@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Diagram</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd">
+        <span class="tname" id="toolName">Select</span>
+        <button class="aero-btn" id="bUndo" title="Undo (Ctrl+Z)">↶</button>
+        <button class="aero-btn" id="bRedo" title="Redo (Ctrl+Y)">↷</button>
+        <span class="sep"></span>
+        <label title="Route for new connectors">Connector
+          <select id="cRoute"><option value="orthogonal">Orthogonal</option><option value="straight">Straight</option><option value="curved">Curved</option></select></label>
+        <label title="Arrowhead for new connectors">End <select id="cArrow"></select></label>
+        <span class="sep"></span>
+        <label><input type="checkbox" id="cSnap" checked> Snap</label>
+        <label><input type="checkbox" id="cGrid" checked> Grid</label>
+        <span class="sep"></span>
+        <label>Zoom <select id="cZoom"><option value="fit">Fit</option><option value="0.25">25%</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option><option value="custom" hidden></option></select></label>
+        <span class="hint" id="hint"></span>
+      </div>
+      <div class="aero-work dia-work">
+        <div class="aero-side left" id="libPane">
+          <div class="aero-ph"><span class="phi"></span>Shapes<span class="right" id="libCount"></span></div>
+          <div class="libsearch"><input type="search" id="libSearch" placeholder="Search shapes…"></div>
+          <div class="lib" id="lib"></div>
+        </div>
+        <div class="aero-stage dia-stage" id="stage">
+          <svg id="cv" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <pattern id="gridMinor" patternUnits="userSpaceOnUse" width="10" height="10"><path id="gridMinorP" d="M10 0 L0 0 0 10" fill="none" stroke="#e8edf3" stroke-width="1"/></pattern>
+              <pattern id="gridMajor" patternUnits="userSpaceOnUse" width="50" height="50"><rect id="gridMinorR" width="50" height="50" fill="url(#gridMinor)"/><path id="gridMajorP" d="M50 0 L0 0 0 50" fill="none" stroke="#d3dce7" stroke-width="1"/></pattern>
+            </defs>
+            <rect id="bgRect" x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+            <rect id="gridRect" x="0" y="0" width="100%" height="100%" fill="url(#gridMajor)"/>
+            <g id="vp"><g id="cells"></g><g id="ov"></g><g id="hov"></g></g>
+          </svg>
+          <textarea id="ted" class="ted" spellcheck="false" hidden></textarea>
+          <div class="pagetabs" id="pageTabs"></div>
+          <div class="ctxmenu" id="ctx" hidden></div>
+        </div>
+        <div class="aero-side" id="sidePane">
+          <div class="aero-tabs" id="sideTabs"><span class="aero-tab on" data-t="style">Style</span><span class="aero-tab" data-t="arrange">Arrange</span><span class="aero-tab" data-t="layers">Layers</span></div>
+          <div class="sidebody" id="sideBody"></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span id="st2"></span><span id="st3"></span><span id="st4"></span></div>
+    </div>
+  </div>
+</div>
+<script src="../kit/aero.js"></script>
+<script src="vendor/fflate.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="js/metrics.js"></script><script src="js/geom.js"></script><script src="js/shapes.js"></script><script src="js/model.js"></script>
+<script src="js/route.js"></script><script src="js/render.js"></script><script src="js/layout.js"></script><script src="js/xml.js"></script>
+<script src="js/drawio.js"></script><script src="js/pdfexport.js"></script><script src="js/sample.js"></script>
+<script src="js/app.js"></script><script src="js/ui.js"></script>
+</body></html>

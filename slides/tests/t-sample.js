@@ -1,0 +1,10 @@
+await new Promise(r => setTimeout(r, 500));
+const { doc, assets } = await Sample.build();
+setDocument(doc, assets, 'Lumen Product Launch', null);
+await new Promise(r => setTimeout(r, 300));
+await Render.imagesReady(S.assets);
+UI.goSlide(+(window.__slide || 0));
+await new Promise(r => setTimeout(r, 400));
+UI.thumbsSoon(true);
+await new Promise(r => setTimeout(r, 400));
+return JSON.stringify({ slides: S.doc.slides.length, cur: S.cur, errs: window.__errs || [] });

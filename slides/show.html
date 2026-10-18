@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Slides – Audience</title>
+<link rel="icon" href="../kit/icons/slides.png">
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden;font:14px "Segoe UI",sans-serif;color:#cfd8e2}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+#msg{position:absolute;left:0;right:0;bottom:24px;text-align:center;opacity:.75;transition:opacity .4s;pointer-events:none}
+body.idle{cursor:none}
+</style>
+</head><body>
+<canvas id="cv"></canvas><div id="msg">Waiting for the presenter… · F = full screen · ← → navigate</div>
+<script src="js/xml.js"></script>
+<script src="js/model.js"></script>
+<script src="js/render.js"></script>
+<script src="js/fonts.js"></script>
+<script src="js/player.js"></script>
+<script>
+'use strict';
+// Audience view: renders what the presenter window shows. Every command arrives over a BroadcastChannel; the
+// document itself is passed through Model.sanitize before use.
+(() => {
+  const sid = location.hash.slice(1).replace(/[^a-z0-9]/gi, '');
+  const msg = document.getElementById('msg');
+  if (!sid) { msg.textContent = 'Open this window from Lumen Slides → Presenter View → Open audience window.'; return; }
+  const chan = new BroadcastChannel('lumen-slides-show-' + sid);
+  let doc = null, assets = {}, player = null, idle = 0;
+  const send = (c, arg) => chan.postMessage({ t: 'key', c, arg });
+  chan.onmessage = async e => {
+    const m = e.data || {};
+    if (m.t === 'doc') {
+      try { doc = Model.sanitize(m.doc); assets = Model.sanitizeAssets(m.assets); } catch (err) { msg.textContent = 'Could not read the presentation.'; return; }
+      await Fonts.ready; await Render.imagesReady(assets);
+      player = new Player({ canvas: document.getElementById('cv'), getDoc: () => doc, getAssets: () => assets, loop: !!m.loop, autoAdvance: false, onChange: () => {}, onEnd: () => {} });
+      player.start(m.slide || 0, m.step || 0);
+      msg.style.opacity = 0; setTimeout(() => msg.style.opacity = 0, 2500);
+      document.title = 'Lumen Slides – Audience';
+    } else if (m.t === 'cmd' && player) {
+      if (m.c === 'next') player.next(); else if (m.c === 'prev') player.prev(); else if (m.c === 'goto') player.gotoSlide(m.arg, false);
+      else if (m.c === 'first') player.gotoSlide(0, false); else if (m.c === 'last') player.gotoSlide(player.list().length - 1, false);
+      else if (m.c === 'black') player.setBlank('#000'); else if (m.c === 'white') player.setBlank('#fff');
+    } else if (m.t === 'sync' && player && !player.playing && !player.trans) {
+      if (m.si !== player.si || m.step !== player.step) { player.si = m.si; player.step = m.step; player.draw(); }
+      if (!!m.blank !== !!player.blank) { player.blank = m.blank || null; player.draw(); }
+      player.ended = !!m.ended; if (m.ended) player.draw();
+    } else if (m.t === 'end') { msg.textContent = 'The slide show has ended.'; msg.style.opacity = 1; if (player) player.stop(); player = null; const c = document.getElementById('cv'); c.getContext('2d').clearRect(0, 0, c.width, c.height); setTimeout(() => window.close(), 1200); }
+  };
+  chan.postMessage({ t: 'hello' });
+  addEventListener('beforeunload', () => chan.postMessage({ t: 'closed' }));
+  addEventListener('resize', () => { if (player) { player.cacheA = player.cacheB = null; player.draw(); } });
+  addEventListener('keydown', e => {
+    const k = e.key;
+    if (k === 'f' || k === 'F' || k === 'F11') { e.preventDefault(); if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); return; }
+    const map = { ArrowRight: 'next', ArrowDown: 'next', PageDown: 'next', ' ': 'next', Enter: 'next', ArrowLeft: 'prev', ArrowUp: 'prev', PageUp: 'prev', Backspace: 'prev', Home: 'first', End: 'last', b: 'black', B: 'black', w: 'white', W: 'white' };
+    if (map[k]) { e.preventDefault(); send(map[k]); }
+  });
+  document.getElementById('cv').addEventListener('click', () => send('next'));
+  document.getElementById('cv').addEventListener('contextmenu', e => { e.preventDefault(); send('prev'); });
+  addEventListener('mousemove', () => { document.body.classList.remove('idle'); clearTimeout(idle); idle = setTimeout(() => document.body.classList.add('idle'), 2000); });
+})();
+</script>
+</body></html>

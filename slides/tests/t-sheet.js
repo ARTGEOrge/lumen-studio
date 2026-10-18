@@ -1,0 +1,10 @@
+await new Promise(r => setTimeout(r, 400));
+const { doc, assets } = await Sample.build();
+setDocument(doc, assets, 'Sample', null);
+await Render.imagesReady(S.assets);
+await new Promise(r => setTimeout(r, 300));
+const W = 640, H = 360, cols = 2, rows = Math.ceil(S.doc.slides.length / cols);
+const sheet = document.createElement('canvas'); sheet.width = W * cols + 10 * (cols + 1); sheet.height = H * rows + 10 * (rows + 1);
+const c = sheet.getContext('2d'); c.fillStyle = '#888'; c.fillRect(0, 0, sheet.width, sheet.height);
+S.doc.slides.forEach((s, i) => { const cv = Render.slideCanvas(S.doc, s, S.assets, W, { slideNum: i + 1 }); c.drawImage(cv, 10 + (i % cols) * (W + 10), 10 + Math.floor(i / cols) * (H + 10)); });
+return sheet.toDataURL('image/png');

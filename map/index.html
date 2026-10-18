@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Map</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd">
+        <span class="tname" id="toolName">Pan</span>
+        <button class="aero-btn" id="bAdd" title="Add vector data (Ctrl+Shift+A)">＋ Add data</button>
+        <span class="sep"></span>
+        <button class="aero-btn" id="bFull" title="Zoom to all layers (Ctrl+Shift+F)">⤢ Full extent</button>
+        <button class="aero-btn" id="bZoomLayer" title="Zoom to the active layer">⌖ Layer</button>
+        <button class="aero-btn" id="bZoomSel" title="Zoom to the selection (Ctrl+J)">⌖ Selection</button>
+        <span class="sep"></span>
+        <button class="aero-btn" id="bSelAttr" title="Select by attributes (Ctrl+F3)">ƒ Select…</button>
+        <button class="aero-btn" id="bClearSel" title="Clear selection (Ctrl+Shift+N)">✕ Clear</button>
+        <button class="aero-btn" id="bTable" title="Show/hide the attribute table (F6)">▦ Table</button>
+        <span class="sep"></span>
+        <label title="Map coordinate reference system — layers are reprojected on the fly">CRS <select id="crsSel" style="max-width:210px"></select></label>
+        <label title="Map scale (type a value and press Enter)">1 : <input type="text" id="scaleIn" style="width:92px"></label>
+        <span class="hint" id="hint"></span>
+      </div>
+      <div class="map-work" id="work">
+        <div class="aero-side left" id="side">
+          <div class="aero-ph"><span class="phi"></span>Layers<span class="right" id="layerCount"></span></div>
+          <div class="aero-list" id="layers"></div>
+          <div class="aero-iconbar" id="layerBar"></div>
+          <div class="aero-pane layer-quick" id="layerQuick"></div>
+          <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe8b0,#e6a020)"></span><span id="infoTitle">Results</span><span class="right" id="infoRight"></span></div>
+          <div class="info" id="info"></div>
+        </div>
+        <div class="vsplit" id="vsplit"></div>
+        <div class="map-main" id="main">
+          <div class="aero-stage map-stage" id="stage">
+            <canvas id="map"></canvas><canvas id="overlay"></canvas>
+            <div class="map-scalebar" id="scalebar"></div>
+            <div class="map-north" id="north" title="North arrow (grid north differs from true north away from the central meridian)"><svg viewBox="0 0 24 40" width="22" height="36"><path d="M12 2 20 30 12 25 4 30z" fill="#1e395b"/><path d="M12 2 12 25 4 30z" fill="#7d9cc0"/><text x="12" y="39" text-anchor="middle" font-size="9" font-family="Segoe UI,Arial" fill="#1e395b" font-weight="bold">N</text></svg></div>
+            <div class="map-empty" id="empty"></div>
+          </div>
+          <div class="hsplit" id="hsplit"></div>
+          <div class="table-pane" id="tablePane">
+            <div class="tbar" id="tbar"></div>
+            <div class="twrap" id="twrap"></div>
+          </div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span id="st2"></span><span id="st3"></span><span id="st4"></span></div>
+    </div>
+  </div>
+</div>
+<div class="map-tip" id="tip"></div>
+<script src="../kit/aero.js"></script>
+<script src="vendor/paper-core.min.js"></script>
+<script src="vendor/fflate.min.js"></script>
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="vendor/svg2pdf.umd.min.js"></script>
+<script src="js/proj.js"></script><script src="js/geo.js"></script><script src="js/ops.js"></script><script src="js/expr.js"></script>
+<script src="js/classify.js"></script><script src="js/io.js"></script><script src="js/render.js"></script><script src="js/sample.js"></script>
+<script src="js/app.js"></script><script src="js/table.js"></script><script src="js/dialogs.js"></script><script src="js/layout.js"></script>
+<script src="js/main.js"></script>
+</body></html>

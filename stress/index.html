@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Stress</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd">
+        <label>Study <select id="studySel"><option value="stress">2-D plane stress</option><option value="strain">2-D plane strain</option><option value="axi">2-D axisymmetric</option><option value="3d">3-D solid (STL)</option></select></label>
+        <span class="sep"></span>
+        <button class="aero-btn" id="bMesh" title="Generate the mesh (Ctrl+M)">⊞ Mesh</button><button class="aero-btn pri" id="bSolve" title="Solve (F5)">▶ Solve</button>
+        <span class="sep"></span>
+        <label>Result <select id="resSel"></select></label>
+        <label>Deformation <select id="defSel"><option value="0">Undeformed</option><option value="1">True scale</option><option value="half">0.5 × auto</option><option value="auto">Auto scale</option><option value="x2">2 × auto</option><option value="x5">5 × auto</option></select></label>
+        <button class="aero-btn" id="bAnim" title="Animate (Space)">▶ Animate</button>
+        <label>Contours <select id="bandSel"><option value="9">9 bands</option><option value="12">12 bands</option><option value="0">Smooth</option></select></label>
+        <label><input type="checkbox" id="chkMesh"> Mesh</label>
+        <span class="hint" id="hint"></span>
+      </div>
+      <div class="aero-work" style="grid-template-columns:1fr 310px">
+        <div class="aero-stage stress-stage" id="stage">
+          <div class="welcome" id="welcome" hidden>
+            <h2>Lumen Stress</h2>
+            <p>Structural analysis: stress, deflection, safety factor and natural frequencies.</p>
+            <div class="wgrid">
+              <button class="aero-btn" data-w="rect">▭ Draw a 2-D outline</button>
+              <button class="aero-btn" data-w="dxf">Import a DXF outline…</button>
+              <button class="aero-btn" data-w="stl">Import an STL solid (3-D)…</button>
+            </div>
+            <p class="dim">or open a sample</p>
+            <div class="wgrid">
+              <button class="aero-btn small" data-w="lug">Lifting lug</button><button class="aero-btn small" data-w="hole">Plate with a hole</button><button class="aero-btn small" data-w="cyl">Thick cylinder</button>
+              <button class="aero-btn small" data-w="disc">Flywheel</button><button class="aero-btn small" data-w="beam">Beam frequencies</button><button class="aero-btn small" data-w="lug3d">3-D lug</button>
+            </div>
+          </div>
+          <div class="prog" id="prog" hidden><div class="aero-spin"></div><span id="progMsg">Working…</span><button class="aero-btn small" id="progCancel">Cancel</button></div>
+        </div>
+        <div class="aero-side">
+          <div class="aero-ph"><span class="phi"></span>Outline</div>
+          <div class="aero-list" id="tree"></div>
+          <div class="aero-ph"><span class="phi"></span>Details</div>
+          <div class="aero-pane details" id="details"></div>
+          <div class="aero-ph"><span class="phi"></span>Results</div>
+          <div class="aero-pane results" id="results"></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span id="st2"></span><span id="st3"></span></div>
+    </div>
+  </div>
+</div>
+<script src="../kit/aero.js"></script>
+<script src="vendor/three-cad.min.js"></script>
+<script src="js/sparse.js"></script><script src="js/fem.js"></script><script src="js/geom.js"></script><script src="js/mesh2d.js"></script><script src="js/voxel.js"></script><script src="js/study.js"></script>
+<script src="js/report.js"></script><script src="js/samples.js"></script><script src="js/view.js"></script><script src="js/app.js"></script>
+</body></html>

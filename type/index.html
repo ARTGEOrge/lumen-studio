@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Type</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body">
+    <div class="aero-toolbox" id="tools"></div>
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd"></div>
+      <div class="aero-work" id="work">
+        <div class="aero-side left" id="left">
+          <div class="aero-ph"><span class="phi"></span><span id="leftTitle">Glyphs</span><span class="right" id="leftCount"></span></div>
+          <div class="aero-list" id="leftList"></div>
+          <div class="aero-iconbar" id="leftBar"></div>
+        </div>
+        <div class="aero-stage" id="stage">
+          <div class="aero-tabs" id="viewTabs">
+            <span class="aero-tab on" data-v="font">Font</span><span class="aero-tab" data-v="glyph">Glyph</span><span class="aero-tab" data-v="kern">Kerning</span><span class="aero-tab" data-v="info">Font Info</span>
+            <span class="vt-fill"></span><span class="vt-doc" id="vtDoc"></span>
+          </div>
+          <div class="views">
+            <div class="view" id="vFont"><div class="gridScroll" id="gridScroll" tabindex="0"><canvas id="gridCv"></canvas><div id="gridSpace"></div></div></div>
+            <div class="view" id="vGlyph" hidden><canvas id="edCv" tabindex="0"></canvas><div class="ed-hud" id="edHud"></div></div>
+            <div class="view" id="vKern" hidden><div class="kern-top" id="kernTop"></div><canvas id="kernCv" tabindex="0"></canvas></div>
+            <div class="view" id="vInfo" hidden><div class="info-scroll" id="infoForm"></div></div>
+            <div id="welcome" hidden></div>
+          </div>
+          <div class="preview" id="preview">
+            <div class="pv-bar"><input type="text" id="pvText" spellcheck="false" title="Preview text — type /glyphname for unencoded glyphs"><select id="pvSize" title="Preview size"><option>24</option><option>36</option><option selected>48</option><option>72</option><option>96</option><option>144</option></select><label title="Apply kerning"><input type="checkbox" id="pvKern" checked> Kern</label><label title="Show glyph boxes"><input type="checkbox" id="pvBoxes"> Boxes</label><button class="aero-btn small" id="pvSamples" title="Sample texts">Texts ▾</button></div>
+            <canvas id="pvCv"></canvas>
+          </div>
+        </div>
+        <div class="aero-side" id="right">
+          <div class="aero-tabs" id="rightTabs"><span class="aero-tab on" data-r="props">Glyph</span><span class="aero-tab" data-r="pairs">Kerning Pairs</span><span class="aero-tab" data-r="hist">History</span></div>
+          <div class="pane-scroll" id="pProps"></div>
+          <div class="pairs" id="pPairs" hidden><div class="pairs-bar"><input type="search" id="pairFilter" placeholder="Filter pairs…"><select id="pairSort"><option value="l">Sort: left</option><option value="v">Sort: value</option><option value="r">Sort: right</option></select></div><div class="aero-list" id="pairList"></div></div>
+          <div class="aero-list" id="histList" hidden></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span id="st2"></span><span id="st3"></span><span id="st4"></span></div>
+    </div>
+  </div>
+</div>
+<script src="vendor/opentype.min.js"></script>
+<script src="vendor/fflate.min.js"></script>
+<script src="vendor/paper-core.min.js"></script>
+<script src="../kit/aero.js"></script>
+<script src="js/unidata.js"></script>
+<script src="js/model.js"></script>
+<script src="js/fontio.js"></script>
+<script src="js/sfnt.js"></script>
+<script src="js/overlap.js"></script>
+<script src="js/app.js"></script>
+<script src="js/render.js"></script>
+<script src="js/fontview.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/kerning.js"></script>
+<script src="js/info.js"></script>
+<script src="js/panels.js"></script>
+<script src="js/files.js"></script>
+<script src="js/main.js"></script>
+</body></html>

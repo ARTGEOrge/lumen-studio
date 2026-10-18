@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Write</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <linearGradient id="gBlue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd0ff"/><stop offset=".5" stop-color="#3a8fe0"/><stop offset="1" stop-color="#1c5fb4"/></linearGradient>
+  <linearGradient id="gGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b8f28a"/><stop offset=".5" stop-color="#4cb82c"/><stop offset="1" stop-color="#2a7f14"/></linearGradient>
+  <linearGradient id="gRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9a8a"/><stop offset=".5" stop-color="#e0402c"/><stop offset="1" stop-color="#a81c10"/></linearGradient>
+  <linearGradient id="gPaper" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d8e4f0"/></linearGradient>
+  <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9a0"/><stop offset="1" stop-color="#e3a21a"/></linearGradient>
+  <symbol id="i-new" viewBox="0 0 16 16"><path d="M3 1.5h6l3.5 3.5v9.5H3z" fill="url(#gPaper)" stroke="#5a7a9a"/><circle cx="11.5" cy="11.5" r="3.6" fill="url(#gGreen)" stroke="#2a6a14" stroke-width=".8"/><path d="M11.5 9.6v3.8M9.6 11.5h3.8" stroke="#fff" stroke-width="1.4"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 16 16"><path d="M3 13l1-3.5 7.5-7.5 2.5 2.5L6.5 12z" fill="url(#gGold)" stroke="#8a5a0a"/><path d="M3 13l1-3.5 2.5 2.5z" fill="#5a3a0a"/></symbol>
+  <symbol id="i-del" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" fill="url(#gRed)" stroke="#8a1a10"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-ok" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" fill="url(#gGreen)" stroke="#2a6a14"/><path d="M4.8 8.2l2.2 2.2 4.2-4.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-no" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" fill="url(#gRed)" stroke="#8a1a10"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 16 16"><path d="M10.5 2.5 4.5 8l6 5.5z" fill="url(#gBlue)" stroke="#174a85" stroke-linejoin="round"/></symbol>
+  <symbol id="i-next" viewBox="0 0 16 16"><path d="M5.5 2.5 11.5 8l-6 5.5z" fill="url(#gBlue)" stroke="#174a85" stroke-linejoin="round"/></symbol>
+  <symbol id="i-cmt" viewBox="0 0 16 16"><path d="M2 2.5h12v8H7l-3.5 3v-3H2z" fill="url(#gGold)" stroke="#8a5a0a" stroke-linejoin="round"/></symbol>
+</defs></svg>
+<div class="aero-app">
+  <div class="aero-body no-toolbox">
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd"></div>
+      <div class="aero-work" style="grid-template-columns:1fr 272px">
+        <div class="aero-stage" id="stage">
+          <div id="scroller">
+            <div id="canvas">
+              <div id="pages">
+                <div id="sheets"></div>
+                <div id="ed" contenteditable="true" spellcheck="false" aria-label="Document" role="textbox" aria-multiline="true"></div>
+                <div id="balloons"></div>
+                <div id="imgsel" hidden><i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i></div>
+              </div>
+            </div>
+          </div>
+          <div id="findbar" class="aero-pill" hidden>
+            <input id="f-q" type="text" placeholder="Find" spellcheck="false" aria-label="Find">
+            <button class="aero-btn small" id="f-prev" title="Previous (Shift+F3)">▲</button><button class="aero-btn small" id="f-next" title="Next (F3)">▼</button>
+            <span id="f-count" class="dim">0 / 0</span>
+            <label title="Match case"><input type="checkbox" id="f-case">Aa</label>
+            <label title="Whole words"><input type="checkbox" id="f-word">Word</label>
+            <label title="Regular expression"><input type="checkbox" id="f-re">.*</label>
+            <span class="f-rep"><input id="f-r" type="text" placeholder="Replace with" spellcheck="false" aria-label="Replace with"><button class="aero-btn small" id="f-one">Replace</button><button class="aero-btn small" id="f-all">All</button></span>
+            <button class="aero-btn small" id="f-close" title="Close (Esc)">✕</button>
+          </div>
+        </div>
+        <div class="aero-side">
+          <div class="aero-tabs" id="tabs"><div class="aero-tab on" data-p="nav">Navigator</div><div class="aero-tab" data-p="styles">Styles</div><div class="aero-tab" data-p="review">Review</div><div class="aero-tab" data-p="hist">History</div></div>
+          <div class="tabpane" id="tp-nav">
+            <div class="aero-ph"><span class="phi"></span>Headings<span class="right" id="nav-n"></span></div>
+            <div class="aero-list grow" id="nav"></div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#fff,#cfdcec)"></span>Document</div>
+            <div class="aero-pane docinfo" id="docinfo"></div>
+          </div>
+          <div class="tabpane" id="tp-styles" hidden>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#e3a21a)"></span>Paragraph Styles</div>
+            <div class="aero-list grow" id="pstyles"></div>
+            <div class="aero-iconbar">
+              <button class="aero-iconbtn" id="ps-new" title="New style from the current paragraph"><svg><use href="#i-new"/></svg></button>
+              <button class="aero-iconbtn" id="ps-edit" title="Modify style (or double-click)"><svg><use href="#i-edit"/></svg></button>
+              <span style="flex:1"></span>
+              <button class="aero-iconbtn" id="ps-del" title="Delete custom style"><svg><use href="#i-del"/></svg></button>
+            </div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffb8b0,#d9534f)"></span>Character Styles</div>
+            <div class="aero-list" id="cstyles" style="height:150px"></div>
+            <div class="aero-iconbar">
+              <button class="aero-iconbtn" id="cs-edit" title="Modify character style"><svg><use href="#i-edit"/></svg></button>
+            </div>
+          </div>
+          <div class="tabpane" id="tp-review" hidden>
+            <div class="rv-top">
+              <label class="rv-track"><input type="checkbox" id="rv-track"> Track changes</label>
+              <select id="rv-markup" title="Markup view"><option value="all">All markup</option><option value="final">No markup</option></select>
+            </div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#c8f0b0,#4cb82c)"></span>Changes<span class="right" id="rv-n"></span></div>
+            <div class="aero-list grow" id="changes"></div>
+            <div class="aero-iconbar">
+              <button class="aero-iconbtn" id="rv-prev" title="Previous change"><svg><use href="#i-prev"/></svg></button>
+              <button class="aero-iconbtn" id="rv-next" title="Next change"><svg><use href="#i-next"/></svg></button>
+              <button class="aero-iconbtn" id="rv-acc" title="Accept change"><svg><use href="#i-ok"/></svg></button>
+              <button class="aero-iconbtn" id="rv-rej" title="Reject change"><svg><use href="#i-no"/></svg></button>
+              <span style="flex:1"></span>
+              <button class="aero-btn small" id="rv-accall" title="Accept all changes">Accept All</button>
+              <button class="aero-btn small" id="rv-rejall" title="Reject all changes">Reject All</button>
+            </div>
+            <div class="aero-ph"><span class="phi" style="background:linear-gradient(#ffe9a0,#e3a21a)"></span>Comments<span class="right" id="cm-n"></span></div>
+            <div class="aero-list grow" id="comments"></div>
+            <div class="aero-iconbar">
+              <button class="aero-iconbtn" id="cm-new" title="New comment (Ctrl+Alt+M)"><svg><use href="#i-cmt"/></svg></button>
+              <button class="aero-iconbtn" id="cm-edit" title="Edit comment"><svg><use href="#i-edit"/></svg></button>
+              <span style="flex:1"></span>
+              <button class="aero-iconbtn" id="cm-del" title="Delete comment"><svg><use href="#i-del"/></svg></button>
+            </div>
+          </div>
+          <div class="tabpane" id="tp-hist" hidden><div class="aero-list grow" id="hist"></div></div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st-page"></span><span id="st-words"></span><span id="st-track" title="Click to turn change tracking on or off"></span><span id="st-msg" class="grow"></span><span id="st-zoom"><button class="zb" id="z-out" title="Zoom out">−</button><input type="range" id="z-range" min="25" max="300" step="5" value="100" aria-label="Zoom"><button class="zb" id="z-in" title="Zoom in">+</button><b id="z-val">100%</b></span></div>
+    </div>
+  </div>
+</div>
+<script src="../kit/aero.js"></script>
+<script src="vendor/fflate.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/marked.umd.js"></script>
+<script src="vendor/turndown.browser.umd.js"></script>
+<script src="vendor/mammoth.browser.min.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="vendor/fontkit.umd.min.js"></script>
+<script src="js/fonts.js"></script>
+<script src="js/model.js"></script>
+<script src="js/docx.js"></script>
+<script src="js/odt.js"></script>
+<script src="js/app.js"></script>
+<script src="js/paginate.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/review.js"></script>
+<script src="js/find.js"></script>
+<script src="js/pdf.js"></script>
+<script src="js/io.js"></script>
+<script src="js/sample.js"></script>
+<script src="js/ui.js"></script>
+</body></html>

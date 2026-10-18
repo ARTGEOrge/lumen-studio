@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>PDF check</title>
+<body style="margin:0;background:#888">
+<script type="module">
+// Test helper: renders tests/out/<file>.pdf pages side by side with pdf.js (dev-only, not part of the app).
+import * as pdfjs from '../../tools/deps/layout/node_modules/pdfjs-dist/build/pdf.min.mjs';
+pdfjs.GlobalWorkerOptions.workerSrc = '../../tools/deps/layout/node_modules/pdfjs-dist/build/pdf.worker.min.mjs';
+const q = new URLSearchParams(location.search), file = q.get('f') || 'demo.pdf', first = +(q.get('p') || 1), count = +(q.get('n') || 2);
+const doc = await pdfjs.getDocument('out/' + file).promise;
+window.pdfPages = doc.numPages;
+for (let p = first; p < first + count && p <= doc.numPages; p++) {
+  const page = await doc.getPage(p), vp = page.getViewport({ scale: 1.15 }), c = document.createElement('canvas');
+  c.width = vp.width; c.height = vp.height; c.style.margin = '4px'; document.body.appendChild(c);
+  await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+}
+window.pdfDone = true;
+</script>

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Sheets</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body no-toolbox">
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd"></div>
+      <div class="sh-work" id="work">
+        <div class="fbar-row">
+          <input id="nameBox" class="namebox" spellcheck="false" title="Name Box — type a cell, range or name and press Enter">
+          <button class="fx-btn" id="bCancelEdit" title="Cancel (Esc)">✕</button><button class="fx-btn" id="bOkEdit" title="Enter">✓</button>
+          <button class="fx-btn fx" id="bFx" title="Insert function (Shift+F3)"><i>f</i>x</button>
+          <textarea id="fbar" class="fbar" rows="1" spellcheck="false" autocomplete="off"></textarea>
+        </div>
+        <div class="grid-wrap" id="gridWrap">
+          <canvas id="grid"></canvas>
+          <div class="scroller" id="scroller"><div id="spacer"></div></div>
+          <div class="obj-layer" id="objLayer"></div>
+          <textarea id="editor" class="cell-editor" spellcheck="false" hidden></textarea>
+          <div id="acList" class="ac-list" hidden></div>
+          <div id="sigTip" class="sig-tip" hidden></div>
+          <textarea id="kbd" class="kbd-sink" aria-label="Spreadsheet grid"></textarea>
+          <div class="welcome" id="welcome" hidden></div>
+        </div>
+        <div class="tabs-row" id="tabsRow">
+          <button class="tab-nav" id="tabPrev" title="Previous sheet (Ctrl+PageUp)">◀</button><button class="tab-nav" id="tabNext" title="Next sheet (Ctrl+PageDown)">▶</button>
+          <div class="sheet-tabs" id="sheetTabs"></div>
+          <button class="tab-add" id="tabAdd" title="New sheet (Shift+F11)">＋</button>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span id="st2"></span><span id="st3"></span><span id="st4"></span></div>
+    </div>
+  </div>
+</div>
+<div id="findPanel" class="float-panel" hidden>
+  <div class="fp-head"><span>Find and Replace</span><button class="fp-x" id="fpClose" title="Close (Esc)">✕</button></div>
+  <div class="fp-body">
+    <label>Find what <input id="fpFind" spellcheck="false"></label>
+    <label>Replace with <input id="fpRepl" spellcheck="false"></label>
+    <div class="fp-opts">
+      <label><input type="checkbox" id="fpCase"> Match case</label>
+      <label><input type="checkbox" id="fpWhole"> Entire cell</label>
+      <label><input type="checkbox" id="fpAll"> All sheets</label>
+      <label><input type="checkbox" id="fpFormulas"> In formulas</label>
+    </div>
+    <div class="fp-btns"><button class="aero-btn" id="fpReplAll">Replace All</button><button class="aero-btn" id="fpRepl1">Replace</button><button class="aero-btn" id="fpFindAll">Find All</button><button class="aero-btn pri" id="fpNext">Find Next</button></div>
+    <div class="fp-results" id="fpResults"></div>
+  </div>
+</div>
+<div id="popup" class="sh-popup" hidden></div>
+<div id="dragTip" class="drag-tip" hidden></div>
+<script src="../kit/aero.js"></script>
+<script src="vendor/fflate.js"></script>
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="js/format.js"></script><script src="js/formula.js"></script><script src="js/functions.js"></script>
+<script src="js/model.js"></script><script src="js/pivot.js"></script><script src="js/paint.js"></script><script src="js/charts.js"></script>
+<script src="js/grid.js"></script><script src="js/io.js"></script><script src="js/sample.js"></script>
+<script src="js/app.js"></script>
+</body></html>
