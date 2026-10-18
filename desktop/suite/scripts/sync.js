@@ -1,6 +1,6 @@
 // Copies the web apps from C:/code/lumen-studio into ./apps for packaging (kit + each app + launcher).
 const fs = require('fs'), path = require('path');
-const SITE = path.resolve(__dirname, '..', '..', 'lumen-studio'), OUT = path.resolve(__dirname, '..', 'apps');
+const SITE = process.env.LUMEN_SITE ? path.resolve(process.env.LUMEN_SITE) : path.resolve(__dirname, '..', '..', 'lumen-studio'), OUT = path.resolve(__dirname, '..', 'apps');
 const apps = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'apps.json'), 'utf8'));
 const SKIP = /(^|[\\/])(node_modules|tools|_template|tests)([\\/]|$)|screenshot\.(png|jpg)$|\.map$/;
 fs.rmSync(OUT, { recursive: true, force: true }); fs.mkdirSync(OUT, { recursive: true });

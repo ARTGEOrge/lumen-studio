@@ -23,6 +23,10 @@ if (!app.isPackaged) app.setPath('userData', path.join(app.getPath('temp'), 'lum
 const fileArgs = argv => argv.slice(app.isPackaged ? 1 : 2).filter(a => !a.startsWith('-') && a !== '.' && fs.existsSync(a) && fs.statSync(a).isFile());
 const appForFile = f => { const ext = path.extname(f).slice(1).toLowerCase(); return (APPS.find(a => a.ext.includes(ext)) || APPS[0]).id; };
 
+// macOS hands double-clicked files to the app through open-file, not argv
+const earlyFiles = [];
+app.on('open-file', (e, f) => { e.preventDefault(); if (app.isReady()) openApp(SINGLE || appForFile(f), allow(f, true)); else earlyFiles.push(f); });
+
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', (_e, argv) => {
@@ -45,8 +49,9 @@ else {
     const ok = ['media', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen'];
     session.defaultSession.setPermissionRequestHandler((wc, perm, cb, details) => cb(String(details.requestingUrl || wc.getURL()).startsWith('app://lumen/') && ok.includes(perm)));
     session.defaultSession.setPermissionCheckHandler((wc, perm, origin) => String(origin || '').startsWith('app://lumen') && ok.includes(perm));
-    Menu.setApplicationMenu(null);
-    const files = fileArgs(process.argv);
+    // macOS needs an application menu for Cmd+Q and for Cmd+C/V/Z to reach text fields
+    Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]) : null);
+    const files = fileArgs(process.argv).concat(earlyFiles);
     if (files.length) files.forEach(f => openApp(appForFile(f), allow(f, true)));
     else if (SINGLE) openApp(SINGLE);
     else createLauncher();

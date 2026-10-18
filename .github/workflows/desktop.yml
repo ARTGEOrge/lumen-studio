@@ -1,0 +1,84 @@
+# Builds the macOS (.dmg, universal) and Ubuntu/Debian (.deb) installers for every Lumen app
+# and attaches them to the app's existing GitHub release. Windows installers are built locally.
+name: Desktop builds (macOS + Linux)
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'Comma-separated app ids to build (empty = all)'
+        required: false
+        default: ''
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        app:
+          - { id: photo, tag: photo-v5.1.0, ver: 5.1.0 }
+          - { id: vector, tag: v1.2.0, ver: 1.2.0 }
+          - { id: darkroom, tag: v1.2.0, ver: 1.2.0 }
+          - { id: paint, tag: v1.2.0, ver: 1.2.0 }
+          - { id: cut, tag: v1.2.0, ver: 1.2.0 }
+          - { id: motion, tag: v1.2.0, ver: 1.2.0 }
+          - { id: sound, tag: v1.2.0, ver: 1.2.0 }
+          - { id: layout, tag: v1.2.0, ver: 1.2.0 }
+          - { id: proto, tag: v1.2.0, ver: 1.2.0 }
+          - { id: pdf, tag: v1.2.0, ver: 1.2.0 }
+          - { id: plan, tag: plan-v1.2.0, ver: 1.2.0 }
+          - { id: lab, tag: lab-v1.2.0, ver: 1.2.0 }
+          - { id: pcb, tag: pcb-v1.2.0, ver: 1.2.0 }
+          - { id: cad, tag: cad-v1.2.0, ver: 1.2.0 }
+          - { id: flow, tag: flow-v1.2.0, ver: 1.2.0 }
+          - { id: beats, tag: beats-v1.0.0, ver: 1.0.0 }
+          - { id: model, tag: model-v1.0.0, ver: 1.0.0 }
+          - { id: type, tag: type-v1.0.0, ver: 1.0.0 }
+          - { id: sheets, tag: sheets-v1.0.0, ver: 1.0.0 }
+          - { id: slides, tag: slides-v1.0.0, ver: 1.0.0 }
+          - { id: write, tag: write-v1.0.0, ver: 1.0.0 }
+          - { id: diagram, tag: diagram-v1.0.0, ver: 1.0.0 }
+          - { id: draft, tag: draft-v1.0.0, ver: 1.0.0 }
+          - { id: spice, tag: spice-v1.0.0, ver: 1.0.0 }
+          - { id: stress, tag: stress-v1.0.0, ver: 1.0.0 }
+          - { id: stats, tag: stats-v1.0.0, ver: 1.0.0 }
+          - { id: map, tag: map-v1.0.0, ver: 1.0.0 }
+          - { id: suite, tag: v1.3.0, ver: 1.3.0 }
+    steps:
+      - name: Selected?
+        id: f
+        shell: bash
+        run: |
+          only=",${{ inputs.only }},"; only="${only// /}"
+          if [ "$only" = ",," ] || [[ "$only" == *",${{ matrix.app.id }},"* ]]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.f.outputs.run == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.f.outputs.run == 'true'
+        with:
+          node-version: 22
+      - name: Install build tools
+        if: steps.f.outputs.run == 'true'
+        working-directory: desktop/suite
+        run: npm ci
+      - name: Build installer
+        if: steps.f.outputs.run == 'true'
+        working-directory: desktop/suite
+        env:
+          LUMEN_SITE: ${{ github.workspace }}
+          TARGET: ${{ matrix.os == 'macos-latest' && 'mac' || 'linux' }}
+          APP_VERSION: ${{ matrix.app.ver }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: node scripts/build-apps.js ${{ matrix.app.id }}
+      - name: Upload to release ${{ matrix.app.tag }}
+        if: steps.f.outputs.run == 'true'
+        working-directory: desktop/suite
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(find dist dist-apps -maxdepth 2 \( -name '*.dmg' -o -name '*.deb' \) 2>/dev/null || true)
+          echo "$files"
+          test -n "$files"
+          gh release upload "${{ matrix.app.tag }}" $files --clobber -R "${{ github.repository }}"
