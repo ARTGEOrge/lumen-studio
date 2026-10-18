@@ -11,6 +11,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const APPS = JSON.parse(fs.readFileSync(path.join(ROOT, 'apps.json'), 'utf8'));
 const VER = process.env.APP_VERSION || pkg.version;
 const TARGET = process.env.TARGET || 'win';
+const HOME = 'https://lumen-studio-silk.vercel.app';   // the .deb format requires a homepage
 const ids = process.argv.slice(2).length ? process.argv.slice(2) : APPS.map(a => a.id).filter(id => id !== 'photo');
 const SKIP = /(^|[\\/])(node_modules|tools|_template|tests)([\\/]|$)|screenshot\.(png|jpg)$|\.map$/;
 const copy = (src, dst) => {
@@ -48,7 +49,7 @@ function platformConfig(id, name, slug) {
       if (id === 'suite') {
         name = 'Lumen Studio'; sync(); fs.rmSync(single, { force: true });
         files = pkg.build.files.concat(['build/icons512/suite.png']);
-        extra = { appId: pkg.build.appId, productName: name, extraMetadata: { version: VER }, fileAssociations: pkg.build.fileAssociations };
+        extra = { appId: pkg.build.appId, productName: name, extraMetadata: { version: VER, homepage: HOME }, fileAssociations: pkg.build.fileAssociations };
       } else {
         meta = APPS.find(a => a.id === id); if (!meta) throw new Error('unknown app ' + id);
         name = meta.name;
@@ -61,7 +62,7 @@ function platformConfig(id, name, slug) {
         files = ['main.js', 'preload.js', 'apps.json', 'single.json', 'apps/**/*', 'build/icons/' + id + '.png', 'package.json'];
         extra = {
           appId: 'com.lumenstudio.' + id, productName: name,
-          extraMetadata: { version: VER, name: 'lumen-' + id, productName: name, description: `${name} - ${meta.desc}` },
+          extraMetadata: { version: VER, homepage: HOME, name: 'lumen-' + id, productName: name, description: `${name} - ${meta.desc}` },
           fileAssociations: meta.ext.filter(e => !['pdf', 'svg', 'psd'].includes(e)).map(e => ({ ext: e, name: `${name} file`, role: 'Editor' }))
         };
       }
