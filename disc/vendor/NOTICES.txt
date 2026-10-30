@@ -1,0 +1,13 @@
+Lumen Disc bundles the following third-party software.
+
+ffmpeg.wasm core 0.12.10  (vendor/core/ffmpeg-core.js, vendor/core/ffmpeg-core.wasm)
+  FFmpeg compiled to WebAssembly by the ffmpeg.wasm project (https://github.com/ffmpegwasm/ffmpeg.wasm).
+  Licence: GPL-2.0-or-later (it includes GPL components such as x264).
+  The files are unmodified copies of the npm package @ffmpeg/core@0.12.10.
+  Corresponding source code:
+    ffmpeg.wasm build scripts: https://github.com/ffmpegwasm/ffmpeg.wasm/tree/v0.12.10
+    FFmpeg:                    https://git.ffmpeg.org/ffmpeg.git (the version pinned by the build scripts above)
+  The GNU General Public License v2: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+
+FFmpeg is a trademark of Fabrice Bellard. Lumen Disc is not affiliated with the FFmpeg project.
+The DVD authoring code in js/dvd.js is Lumen Disc's own.

@@ -37,7 +37,7 @@ function platformConfig(id, name, slug) {
   };
   return {
     targets: Platform.WINDOWS.createTarget(),
-    cfg: { win: { icon: id === 'suite' ? 'build/icon.ico' : `build/icons/${id}.ico`, target: [{ target: 'nsis', arch: ['x64'] }] },
+    cfg: { win: { icon: id === 'suite' ? 'build/icon.ico' : `build/icons/${id}.png`, target: [{ target: 'nsis', arch: ['x64'] }] },
            nsis: { ...pkg.build.nsis, shortcutName: name, artifactName: `${slug}-Setup-${VER}.exe` } }
   };
 }

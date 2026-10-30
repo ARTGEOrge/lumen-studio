@@ -17,6 +17,7 @@
   {"id": "beats", "name": "Lumen Beats", "like": "FL Studio", "desc": "Music making: sequencer, piano roll, synths and mixer", "ext": ["lbeat"]},
   {"id": "model", "name": "Lumen 3D", "like": "Blender", "desc": "3-D modelling, animation and path-traced rendering", "ext": ["l3d"]},
   {"id": "type", "name": "Lumen Type", "like": "Glyphs", "desc": "Font design: glyphs, kerning and TTF/OTF export", "ext": ["ltype"]},
+  {"id": "disc", "name": "Lumen Disc", "like": "DVD Flick", "desc": "Turn MP4 videos into a DVD-Video disc folder (VIDEO_TS / AUDIO_TS)", "ext": []},
   {"id": "sheets", "name": "Lumen Sheets", "like": "Excel", "desc": "Spreadsheets with formulas, charts and pivot tables", "ext": ["lsheet", "xlsx"]},
   {"id": "slides", "name": "Lumen Slides", "like": "PowerPoint", "desc": "Presentations with themes, animations and presenter view", "ext": ["lslides", "pptx"]},
   {"id": "write", "name": "Lumen Write", "like": "Word", "desc": "Word processing with pages, styles and tracked changes", "ext": ["lwrite", "docx"]},

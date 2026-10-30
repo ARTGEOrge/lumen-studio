@@ -5,3 +5,6 @@ dist/
 dist-apps/
 *.log
 slides/tests/shots/
+desktop/suite/apps/
+desktop/suite/build/icons/
+desktop/suite/single.json

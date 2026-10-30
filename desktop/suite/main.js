@@ -45,8 +45,8 @@ else {
         return new Response(body, { headers: { 'Content-Type': TYPES[path.extname(f).toLowerCase()] || 'application/octet-stream', 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Cross-Origin-Resource-Policy': 'same-origin', 'Cache-Control': 'no-cache' } });
       } catch { return new Response('Not found', { status: 404 }); }
     });
-    // microphone for Lumen Sound recording and clipboard for paste — only for our own pages
-    const ok = ['media', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen'];
+    // microphone for Lumen Sound recording, clipboard for paste and folder saving for Lumen Disc — only for our own pages
+    const ok = ['media', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen', 'fileSystem'];
     session.defaultSession.setPermissionRequestHandler((wc, perm, cb, details) => cb(String(details.requestingUrl || wc.getURL()).startsWith('app://lumen/') && ok.includes(perm)));
     session.defaultSession.setPermissionCheckHandler((wc, perm, origin) => String(origin || '').startsWith('app://lumen') && ok.includes(perm));
     // macOS needs an application menu for Cmd+Q and for Cmd+C/V/Z to reach text fields

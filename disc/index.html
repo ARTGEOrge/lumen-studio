@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Disc</title>
+<link rel="stylesheet" href="../kit/aero.css"><link rel="stylesheet" href="app.css">
+</head><body>
+<div class="aero-app">
+  <div class="aero-body no-toolbox">
+    <div class="aero-client">
+      <div class="aero-cmdbar" id="cmd">
+        <button class="aero-btn" id="badd" title="Add MP4 or other videos (Ctrl+O)">Add videos…</button>
+        <button class="aero-btn" id="bdel" title="Remove the selected video (Delete)">Remove</button>
+        <button class="aero-btn" id="bup" title="Move up (Alt+Up)">▲</button>
+        <button class="aero-btn" id="bdown" title="Move down (Alt+Down)">▼</button>
+        <span class="sep"></span>
+        <label title="TV system: NTSC for North America and Japan, PAL for Europe, Australia and most other places">TV
+          <select id="sstd"><option value="ntsc">NTSC</option><option value="pal">PAL</option></select></label>
+        <label title="Automatic picks widescreen 16:9 or standard 4:3 from your videos">Shape
+          <select id="sasp"><option value="auto">Auto</option><option value="16:9">16:9 wide</option><option value="4:3">4:3</option></select></label>
+        <label title="DVD-5 is a normal single-layer disc; DVD-9 is dual layer">Disc
+          <select id="sdisc"><option value="dvd5">4.7 GB</option><option value="dvd9">8.5 GB DL</option></select></label>
+        <label title="Best fit uses the highest bitrate that fits the disc (up to 8 Mbps). Standard is 6 Mbps, long play 3.5 Mbps.">Quality
+          <select id="squal"><option value="fit">Best fit</option><option value="6000">Standard</option><option value="3500">Long play</option></select></label>
+        <label>Chapters
+          <select id="schap"><option value="clip">Each video</option><option value="5">Every 5 min</option><option value="10">Every 10 min</option><option value="none">None</option></select></label>
+        <span class="sep"></span>
+        <button class="aero-btn pri" id="bmake" title="Encode and write the VIDEO_TS / AUDIO_TS folders (Ctrl+S)">Make DVD…</button>
+      </div>
+      <div class="aero-work" style="grid-template-columns:1fr 300px">
+        <div class="aero-stage" id="stage">
+          <div class="empty" id="empty">
+            <div class="disc-art" aria-hidden="true"></div>
+            <h2>Turn your videos into a DVD</h2>
+            <p>Drop MP4, MOV, MKV, WebM or AVI files here, or <button class="linkish" id="eadd">choose videos</button>.</p>
+            <p class="dim">Lumen Disc encodes them to DVD-Video and writes a disc folder with <span class="mono">VIDEO_TS</span>
+              and <span class="mono">AUDIO_TS</span>, ready to burn. Everything runs on this computer; nothing is uploaded.</p>
+            <p><button class="aero-btn" id="esample">Try the sample video</button></p>
+          </div>
+          <div class="clips" id="clips" role="listbox" aria-label="Videos on the disc"></div>
+        </div>
+        <div class="aero-side">
+          <div class="aero-ph"><span class="phi"></span>Disc</div>
+          <div class="aero-pane disc-pane">
+            <label class="title-row">Disc title <input type="text" id="ititle" maxlength="32" spellcheck="false"></label>
+            <div class="gauge" id="gauge"><div class="fill" id="gfill"></div></div>
+            <div class="gauge-cap"><span id="gused">0 GB</span><span id="gcap">of 4.7 GB</span></div>
+            <dl class="facts" id="facts"></dl>
+          </div>
+          <div class="aero-ph"><span class="phi"></span>Disc folder</div>
+          <div class="aero-pane tree mono" id="tree"></div>
+          <div class="aero-ph"><span class="phi"></span>Burning</div>
+          <div class="aero-pane burn">Burn the folder with any DVD-Video burner, for example ImgBurn (“Write files/folders to disc”,
+            then choose <b>DVD-Video</b>) or CDBurnerXP (“Video DVD”). Pick the folder that holds VIDEO_TS and AUDIO_TS.</div>
+        </div>
+      </div>
+      <div class="aero-status"><span id="st1">Ready</span><span id="st2"></span></div>
+    </div>
+  </div>
+</div>
+<input type="file" id="picker" accept="video/*,.mp4,.m4v,.mov,.mkv,.webm,.avi,.mpg,.mpeg,.ts,.mts,.m2ts,.wmv,.flv,.3gp" multiple hidden>
+<script src="../kit/aero.js"></script>
+<script type="module" src="js/app.js"></script>
+</body></html>
