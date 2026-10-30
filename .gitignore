@@ -8,3 +8,6 @@ slides/tests/shots/
 desktop/suite/apps/
 desktop/suite/build/icons/
 desktop/suite/single.json
+
+.vercel
+.env*
